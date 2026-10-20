@@ -1,0 +1,33 @@
+BananaSplit v2.5 Security Review
+Review date: 2026-10-21
+
+Scope
+-----
+Static source review of the v2.5 Windows package and the shared/Linux v2.5 source. The Windows package reviewed is version 2.5 in the repository's "version 2.5 Windows" folder. The Linux source reviewed was commit 4bbfe0299e70eb282132204a49b6bc841ec26839 (v2.5 dark mode).
+
+Summary
+-------
+No clear command-injection, cross-site scripting (XSS), or remote-code-execution path was identified in the source reviewed. This is a static review, not a security certification. No build or tests were run because Rust tooling was unavailable in the review environment.
+
+Finding: VBAN has no sender authentication or encryption
+---------------------------------------------------------
+When VBAN is enabled, the program binds its UDP listener to all IPv4 interfaces. Incoming streams are disabled by default and require configuration. If a stream is enabled with its sender set to "any", any host that can reach the configured UDP port can inject audio into that mixer input. This behavior is shared by Windows and Linux. It is an exposure of the intended VBAN feature, not an authentication bypass in the GUI.
+
+Recommendation: Keep VBAN disabled when unused. For each enabled incoming stream, configure a specific sender IP instead of "any" and use host/network firewall rules where appropriate.
+
+Code references: src/vban/mod.rs (FromAddr and stream defaults around lines 56-160; wildcard bind around line 488; receive and source matching around lines 580-603).
+
+Injection and web review
+------------------------
+- The GUI HTTP server binds to loopback and checks the Host header. State-changing requests require the X-BananaSplit header and reject cross-site requests; the server does not grant CORS preflight requests.
+- Request headers and bodies have size limits, and concurrent connections are capped.
+- The GUI uses textContent for dynamic names and labels; no innerHTML usage was found in the reviewed page.
+- Linux helper programs are started with argument arrays rather than shell command strings. The Windows browser launcher invokes cmd.exe, but the URL is constructed from a numeric port, so no user-controlled command injection path was identified in the current call chain.
+
+Code references: src/gui.rs (request limits, Host/CSRF checks, loopback binding); src/gui.html (dynamic text handling around line 479); src/cables.rs and src/lowlat.rs (Linux subprocess calls); src/gui.rs (Windows browser launcher around line 1315).
+
+Other review notes
+------------------
+- Cargo.toml declares no third-party Cargo dependencies.
+- The Windows WASAPI backend uses hand-declared COM/Windows FFI. Ownership wrappers and ABI layout tests are present, but the Windows build and runtime behavior were not verified in this review.
+- No claim is made that all vulnerabilities are absent. A full follow-up should build and run the Windows and Linux test suites, and exercise the Windows FFI on a supported Windows system.
