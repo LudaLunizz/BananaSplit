@@ -1,0 +1,15 @@
+BananaSplit 2.6.0 for Linux (x86-64, glibc 2.34 or newer)
+
+Debian, Ubuntu, Mint, Pop!_OS:
+    sudo apt install ./bananasplit_2.6.0_amd64.deb
+
+Any other distribution (Fedora, Arch, openSUSE, ...):
+    tar -xzf bananasplit-2.6.0-linux-x86_64.tar.gz
+    cd bananasplit-2.6.0-linux-x86_64 && ./install.sh
+    (./install.sh --uninstall removes it again)
+
+Then start BananaSplit from the app menu. Closing its window keeps the mixer
+running in the tray; quit it from the tray or the window's menu.
+
+bananasplit_2.6.tar.gz is the source with its git history (tag v2.6.0);
+src/bananasplit is the same source, unpacked. README.md explains everything.
