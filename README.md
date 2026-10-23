@@ -1,4 +1,4 @@
-# BananaSplit
+# BananaSplit.
 
 Virtual audio software for Linux and Windows. This is pre-alpha software; treat it as such.
 
