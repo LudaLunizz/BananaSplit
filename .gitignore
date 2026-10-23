@@ -1,0 +1,10 @@
+# Rust build output can appear in any archived release source tree.
+**/target/
+
+# Windows packaging output from BananaSplit.iss and release workflows.
+/dist/
+
+# OS-generated metadata.
+.DS_Store
+Thumbs.db
+Desktop.ini

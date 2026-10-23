@@ -1691,26 +1691,18 @@ pub fn open_window(url: &str) -> bool {
     false
 }
 
-/// Open the page in an app window (Edge/Chrome `--app`) or the default browser.
+/// Open the page in BananaSplit's own native desktop window.
 #[cfg(windows)]
 pub fn open_window(url: &str) -> bool {
-    let app = format!("--app={url}");
-    for exe in ["msedge.exe", "chrome.exe", "brave.exe"] {
-        let mut cmd = Command::new(exe);
-        cmd.arg(&app)
-            .arg("--window-size=1200,800")
-            .arg("--no-first-run")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        if cmd.spawn().is_ok() {
-            return true;
-        }
-    }
-    let mut cmd = Command::new("cmd");
-    cmd.args(["/C", "start", "", url]);
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    cmd.spawn().is_ok()
+    let Ok(exe) = std::env::current_exe() else { return false };
+    Command::new(exe)
+        .arg("--window")
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
 }
 
 /// Ask a running BananaSplit GUI to bring its window up. False if nothing

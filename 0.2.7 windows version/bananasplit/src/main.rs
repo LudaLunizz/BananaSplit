@@ -9,6 +9,9 @@ mod gui;
 mod tui;
 #[path = "win/mod.rs"]
 mod win;
+#[cfg(windows)]
+#[path = "win/window.rs"]
+mod app_window;
 
 #[path = "win/desktop.rs"]
 pub mod desktop;
@@ -35,15 +38,16 @@ const HELP: &str = "\
 BananaSplit 2.7.0 - 6-strip, 5-bus low-latency virtual audio mixer (Windows WASAPI)
 
 USAGE:
-    bananasplit [--config FILE] [--gui] [--headless] [--no-open] [--hidden]
+    bananasplit [--config FILE] [--gui] [--headless] [--no-open]
+    bananasplit --window URL
     bananasplit --list-devices
     bananasplit --print-default-config
     bananasplit --quit
 
 OPTIONS:
-    --gui                Run the browser GUI (default)
+    --gui                Run the desktop app window (default)
     --gui-port PORT      GUI port (default 8790)
-    --no-open, --hidden  Do not open the GUI in a browser
+    --no-open, --hidden  Do not open a window
     --headless           Run the audio engine without a UI
     --list-devices       List Windows audio endpoints
     --print-default-config
@@ -62,6 +66,7 @@ struct Args {
     list: bool,
     quit: bool,
     print_default: bool,
+    window_url: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -75,6 +80,7 @@ fn parse_args() -> Result<Args, String> {
         list: false,
         quit: false,
         print_default: false,
+        window_url: None,
     };
     while let Some(s) = args.next() {
         match s.as_str() {
@@ -85,6 +91,7 @@ fn parse_args() -> Result<Args, String> {
                 a.path = PathBuf::from(p);
             }
             "--gui" => {}
+            "--window" => a.window_url = Some(args.next().ok_or("missing URL after --window")?),
             "--headless" | "--no-gui" => a.headless = true,
             "--no-open" | "--hidden" => a.no_open = true,
             "--gui-port" => {
@@ -363,7 +370,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             scenes: &scene_list,
             autostart: hub.autostart.load(SeqCst),
             installed: hub.installed.load(SeqCst),
-            window: "browser",
+            window: "app",
             tray: false,
         };
         hub.publish(gui::state_json(
@@ -423,6 +430,16 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    #[cfg(windows)]
+    if let Some(url) = args.window_url.as_deref() {
+        return match app_window::run(url) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                desktop::error_dialog(&format!("BananaSplit could not open its desktop window.\n\n{e}\n\nInstall the Microsoft Edge WebView2 Runtime and try again."));
+                ExitCode::FAILURE
+            }
+        };
+    }
     if args.print_default {
         print!("{}", Config::default().to_ini());
         return ExitCode::SUCCESS;

@@ -6,10 +6,13 @@ description = "6-strip, 5-bus low-latency virtual audio mixer for Windows (WASAP
 license = "MIT"
 rust-version = "1.85"
 
-# Intentionally zero dependencies: this build talks to WASAPI and the Win32
-# APIs through hand-declared FFI (see src/win/ffi.rs), so the .exe is a single
-# self-contained file with no runtime DLLs besides the Windows system ones.
+# WASAPI and most Win32 APIs use hand-declared FFI (src/win/ffi.rs). The native
+# desktop window uses Tao/Wry and the installed Microsoft WebView2 Runtime.
 [dependencies]
+
+[target.'cfg(windows)'.dependencies]
+tao = "0.34"
+wry = "0.57"
 
 [lib]
 name = "bananasplit"
