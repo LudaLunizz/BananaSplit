@@ -3,7 +3,7 @@ Review date: 2026-10-21
 
 Scope
 -----
-Static source review of the v2.5 Windows package and the shared/Linux v2.5 source. The Windows package reviewed is version 2.5 in the repository's "version 2.5 Windows" folder. The Linux source reviewed was commit 4bbfe0299e70eb282132204a49b6bc841ec26839 (v2.5 dark mode).
+Static source review of the v2.5 Windows package and the shared/Linux v2.5 source. The Windows package reviewed is in the repository's "0.2.5 Windows" folder. The Linux source reviewed was commit 4bbfe0299e70eb282132204a49b6bc841ec26839 (v2.5 dark mode).
 
 Summary
 -------

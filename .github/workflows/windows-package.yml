@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'version 2.5 Windows/BananaSplit-v2.5-Windows.tar.gz'
+      - '0.2.5 Windows/BananaSplit-v2.5-Windows.tar.gz'
       - 'BananaSplit.iss'
       - '.github/workflows/windows-package.yml'
 
@@ -28,7 +28,7 @@ jobs:
         run: |
           $sourceRoot = Join-Path $env:RUNNER_TEMP 'bananasplit-source'
           New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
-          $archive = Join-Path $env:GITHUB_WORKSPACE 'version 2.5 Windows/BananaSplit-v2.5-Windows.tar.gz'
+          $archive = Join-Path $env:GITHUB_WORKSPACE '0.2.5 Windows/BananaSplit-v2.5-Windows.tar.gz'
           tar -xzf $archive -C $sourceRoot
           $manifest = Join-Path $sourceRoot 'bananasplit/Cargo.toml'
           $env:RUSTFLAGS = '-C target-feature=+crt-static'

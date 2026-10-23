@@ -6,7 +6,7 @@ Users do not need Rust, rustc, Cargo, Visual Studio, or a separate Rust runtime 
 
 VB-Audio VB-CABLE is optional. It is only needed when applications should use BananaSplit virtual audio endpoints. The app detects the cable endpoints and reports when they are missing; it does not download or install third-party drivers.
 
-The v2.5.0 packages are also checked into `version 2.5 Windows/` for direct download. The folder contains:
+The v2.5.0 packages are also checked into `0.2.5 Windows/` for direct download. The folder contains:
 - bananasplit.exe (portable)
 - BananaSplit-Setup-v2.5.0-x64.exe (installer)
 - SHA256SUMS.txt
