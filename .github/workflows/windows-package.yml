@@ -1,11 +1,10 @@
-name: Build Windows packages
+name: Build Windows 0.2.7
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '0.2.5 Windows/BananaSplit-v2.5-Windows.tar.gz'
-      - 'BananaSplit.iss'
+      - '0.2.7 windows version/bananasplit/**'
       - '.github/workflows/windows-package.yml'
 
 permissions:
@@ -23,49 +22,30 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Extract source and build portable executable
+      - name: Build portable executable
         shell: pwsh
         run: |
-          $sourceRoot = Join-Path $env:RUNNER_TEMP 'bananasplit-source'
-          New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
-          $archive = Join-Path $env:GITHUB_WORKSPACE '0.2.5 Windows/BananaSplit-v2.5-Windows.tar.gz'
-          tar -xzf $archive -C $sourceRoot
-          $manifest = Join-Path $sourceRoot 'bananasplit/Cargo.toml'
+          $sourceRoot = Join-Path $env:GITHUB_WORKSPACE '0.2.7 windows version/bananasplit'
+          $manifest = Join-Path $sourceRoot 'Cargo.toml'
           $env:RUSTFLAGS = '-C target-feature=+crt-static'
-          cargo test --locked --target x86_64-pc-windows-msvc --manifest-path $manifest
-          if ($LASTEXITCODE -ne 0) { throw "Windows tests failed with exit code $LASTEXITCODE" }
           cargo build --locked --release --target x86_64-pc-windows-msvc --manifest-path $manifest
           if ($LASTEXITCODE -ne 0) { throw "Windows release build failed with exit code $LASTEXITCODE" }
           New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
-          $exe = Join-Path $sourceRoot 'bananasplit/target/x86_64-pc-windows-msvc/release/bananasplit.exe'
+          $exe = Join-Path $sourceRoot 'target/x86_64-pc-windows-msvc/release/bananasplit.exe'
           if (-not (Test-Path -LiteralPath $exe)) { throw "Build did not produce bananasplit.exe: $exe" }
           Copy-Item -LiteralPath $exe -Destination 'dist/bananasplit.exe'
+          Copy-Item -LiteralPath '0.2.7 windows version/README.txt' -Destination 'dist/README.txt'
+          $hash = (Get-FileHash -LiteralPath 'dist/bananasplit.exe' -Algorithm SHA256).Hash
+          "$hash  bananasplit.exe" | Set-Content -LiteralPath 'dist/bananasplit.exe.sha256' -Encoding ascii
+          Compress-Archive -Path 'dist/bananasplit.exe', 'dist/bananasplit.exe.sha256', 'dist/README.txt' -DestinationPath 'dist/BananaSplit-0.2.7-windows-x64.zip' -Force
 
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup --yes --no-progress
-
-      - name: Build installer and checksums
-        shell: pwsh
-        run: |
-          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
-          if (-not (Test-Path -LiteralPath $iscc)) { throw "Inno Setup compiler not found: $iscc" }
-          & $iscc 'BananaSplit.iss'
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
-          $files = @('dist/bananasplit.exe', 'dist/BananaSplit-Setup-v2.5.0-x64.exe')
-          foreach ($file in $files) {
-            if (-not (Test-Path -LiteralPath $file)) { throw "Expected package missing: $file" }
-          }
-          Get-FileHash -Algorithm SHA256 $files | ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" } | Set-Content -LiteralPath 'dist/SHA256SUMS.txt' -Encoding ascii
-
-      - name: Upload portable executable and installer
+      - name: Upload portable package
         uses: actions/upload-artifact@v4
         with:
-          name: BananaSplit-Windows-v2.5.0
+          name: BananaSplit-Windows-0.2.7
           path: |
-            dist/bananasplit.exe
-            dist/BananaSplit-Setup-v2.5.0-x64.exe
-            dist/SHA256SUMS.txt
+            dist/BananaSplit-0.2.7-windows-x64.zip
+            dist/bananasplit.exe.sha256
           if-no-files-found: error
           retention-days: 90
 

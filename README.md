@@ -13,4 +13,4 @@ Linux packages require x86-64 and glibc 2.34 or newer. Debian, Ubuntu, Mint, and
 
 The Linux desktop app remains active in the system tray when its window is closed. Quit it from the tray icon or the window menu.
 
-The Windows 0.2.7 source now targets a native WASAPI desktop app window using Microsoft's WebView2 Runtime. The checked-in portable EXE is still the prior browser-based build pending a fresh build; see its [Windows release notes](0.2.7%20windows%20version/README.txt). The older [Windows installer notes](WINDOWS_INSTALLER.txt) apply to 0.2.5.
+The Windows 0.2.7 source targets a native WASAPI desktop app window using Microsoft's WebView2 Runtime. The checked-in portable EXE is still the earlier browser-based build pending a fresh build; see the [Windows release notes](0.2.7%20windows%20version/README.txt).
