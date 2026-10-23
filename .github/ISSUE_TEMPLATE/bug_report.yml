@@ -1,0 +1,42 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: BananaSplit version
+      description: Output of `bananasplit --version`
+      placeholder: BananaSplit 2.7.0
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Distribution or Windows version, audio server (PipeWire, JACK2, WASAPI) and desktop environment
+      placeholder: Arch Linux, PipeWire 1.4, KDE Plasma 6
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Terminal output of BananaSplit, ideally started with `bananasplit --gui` from a terminal
+      render: text

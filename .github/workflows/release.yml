@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish, e.g. v2.7.0
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  linux:
+    name: Linux packages
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: linux
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check tag matches crate version
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match linux/Cargo.toml version $version"
+            exit 1
+          fi
+
+      - name: Build and check packages
+        run: sh packaging/build-packages.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: linux/dist/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows executable
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Check tag matches crate version
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ("v$version" -ne $env:TAG) {
+            Write-Output "::error::Tag $env:TAG does not match windows/Cargo.toml version $version"
+            exit 1
+          }
+
+      - name: Build
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc
+
+      - name: Package
+        run: |
+          $version = $env:TAG.TrimStart('v')
+          $name = "bananasplit-$version-windows-x64"
+          $stage = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Force -Path $stage, dist | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/bananasplit.exe $stage
+          Copy-Item README.md, LICENSE $stage
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/$name.zip" -Force
+          Copy-Item target/x86_64-pc-windows-msvc/release/bananasplit.exe "dist/bananasplit-$version-windows-x64.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: windows/dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --title "BananaSplit ${TAG#v}" \
+            --generate-notes \
+            --prerelease \
+            --verify-tag
