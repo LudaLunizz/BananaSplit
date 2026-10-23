@@ -1,0 +1,25 @@
+BananaSplit 2.7.0 for Linux (x86-64, glibc 2.34 or newer)
+
+Debian, Ubuntu, Mint, Pop!_OS:
+    sudo apt install ./bananasplit_2.7.0_amd64.deb
+
+Any other distribution (Fedora, Arch, openSUSE, ...):
+    tar -xzf bananasplit-2.7.0-linux-x86_64.tar.gz
+    cd bananasplit-2.7.0-linux-x86_64 && ./install.sh
+    (./install.sh --uninstall removes it again)
+
+Then start BananaSplit from the app menu. Closing its window keeps the mixer
+running in the tray; quit it from the tray or the window's menu. Installing
+2.7 over 2.6 keeps your settings, scenes and recordings; if 2.6 is running,
+quit it and start BananaSplit again afterwards.
+
+New in 2.7: a menu on every channel (the button under its name) for its
+devices, apps and virtual cable; buses can be outputs, virtual microphones or
+both, and feed each other (TO row under each bus fader); all five outputs in
+the bottom bar; muted channels show their input greyed; VBAN shows this
+computer's IP addresses; the window scales to any size; recordings play at
+normal speed. README.md, "What's new in 2.7", has the details, including how
+to fix a take that 2.6 recorded too fast.
+
+bananasplit_2.7.tar.gz is the source with its git history (tag v2.7.0);
+src/bananasplit is the same source, unpacked. screenshots/ shows the app.

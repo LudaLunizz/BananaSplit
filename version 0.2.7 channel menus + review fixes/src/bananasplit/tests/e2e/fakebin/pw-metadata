@@ -1,0 +1,3 @@
+#!/bin/sh
+# Fake pw-metadata: logs its arguments to $PWMETA_LOG.
+echo "pw-metadata $*" >> "${PWMETA_LOG:-/dev/null}"
