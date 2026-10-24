@@ -1,0 +1,10 @@
+* text=auto
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.rs   text eol=lf
+*.conf text eol=lf
+linux/tests/e2e/fakebin/* text eol=lf
+
+*.png  binary
+*.argb binary
