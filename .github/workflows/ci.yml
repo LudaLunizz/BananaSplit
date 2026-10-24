@@ -108,6 +108,11 @@ jobs:
           npm install --no-save --no-package-lock playwright
           npx playwright install --with-deps chromium
 
+      # The page's first-choice font. Without it Chromium falls back to
+      # DejaVu Sans, which is too wide for the name-fitting checks.
+      - name: Install fonts
+        run: sudo apt-get install -y --no-install-recommends fonts-inter
+
       - name: Build mock JACK server
         run: gcc -shared -fPIC -O2 -o tests/e2e/libjack.so.0 tests/e2e/mockjack.c -lpthread -lm
 

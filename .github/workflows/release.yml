@@ -116,8 +116,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$TAG" dist/* \
-            --title "BananaSplit ${TAG#v}" \
-            --generate-notes \
-            --prerelease \
-            --verify-tag
+          # Re-running for a tag that already has a release replaces its files.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "BananaSplit ${TAG#v}" \
+              --generate-notes \
+              --prerelease \
+              --verify-tag
+          fi

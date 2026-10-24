@@ -1926,8 +1926,12 @@ mod tests {
     use std::sync::atomic::Ordering::Relaxed;
     use bananasplit::recorder::RecTap;
 
+    /// A hub in a folder of its own. Tests run in parallel and `hub_in`
+    /// starts by removing its folder, so two tests sharing one would delete
+    /// each other's recordings (on Windows, mid-take).
     fn hub() -> Arc<Hub> {
-        hub_in(&format!("{}", std::process::id()))
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        hub_in(&format!("{}-{}", std::process::id(), NEXT.fetch_add(1, Relaxed)))
     }
 
     /// A hub whose recorder folder and scenes live in a fresh folder.

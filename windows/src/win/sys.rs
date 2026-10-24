@@ -35,8 +35,9 @@ struct IpAdapterUnicastAddress {
     flags: u32,
     next: *mut IpAdapterUnicastAddress,
     addr: SocketAddress,
-    prefix: u8,
-    suffix: u8,
+    // IP_PREFIX_ORIGIN, IP_SUFFIX_ORIGIN and IP_DAD_STATE are C enums: 4 bytes each.
+    prefix: u32,
+    suffix: u32,
     dad: u32,
     valid_lifetime: u32,
     preferred_lifetime: u32,
@@ -127,14 +128,12 @@ pub fn local_ipv4() -> Vec<LocalIp> {
                     let ua = &*u;
                     let sa = ua.addr.sock as *const SockaddrIn;
                     if !sa.is_null() && (*sa).sin_family == 2 {
-                        let ip = (*sa).sin_addr;
-                        let b = ip as u32;
-                        let bytes = b.to_le_bytes();
-                        let ipv4 = Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3]);
-                        let prefix = ua.on_link_prefix_length;
-                        let mask = if prefix == 0 { 0 } else { (!0u32) << (32 - prefix.min(32)) };
-                        let broadcast = Ipv4Addr::from((b | (!mask)) as u32);
-                        out.push(LocalIp { iface: iface.clone(), ip: ipv4, broadcast: Some(broadcast) });
+                        // sin_addr is in network byte order: its bytes in memory are the octets.
+                        let ipv4 = Ipv4Addr::from((*sa).sin_addr.to_ne_bytes());
+                        if !ipv4.is_loopback() {
+                            let broadcast = broadcast_of(ipv4, ua.on_link_prefix_length);
+                            out.push(LocalIp { iface: iface.clone(), ip: ipv4, broadcast });
+                        }
                     }
                     u = ua.next;
                 }
@@ -143,6 +142,16 @@ pub fn local_ipv4() -> Vec<LocalIp> {
         }
         out
     }
+}
+
+/// The broadcast address of `ip`'s network, given its prefix length; none
+/// for a /31 or /32 (no room for one) or an impossible prefix.
+fn broadcast_of(ip: Ipv4Addr, prefix: u8) -> Option<Ipv4Addr> {
+    if prefix > 30 {
+        return None;
+    }
+    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - u32::from(prefix)) };
+    Some(Ipv4Addr::from(u32::from(ip) | !mask))
 }
 
 pub fn local_timestamp() -> String {
@@ -180,4 +189,30 @@ pub fn term_cols() -> Option<usize> {
 
 pub fn regex_match(_pattern: &str, _text: &str) -> Option<bool> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adapter_struct_matches_the_sdk() {
+        // IP_ADAPTER_UNICAST_ADDRESS_LH: OnLinkPrefixLength is at offset 56 on x64.
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(std::mem::offset_of!(IpAdapterUnicastAddress, on_link_prefix_length), 56);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(std::mem::offset_of!(IpAdapterAddresses, oper_status), 104);
+    }
+
+    #[test]
+    fn broadcast_addresses() {
+        let ip = Ipv4Addr::new(192, 168, 1, 23);
+        assert_eq!(broadcast_of(ip, 24), Some(Ipv4Addr::new(192, 168, 1, 255)));
+        assert_eq!(broadcast_of(ip, 16), Some(Ipv4Addr::new(192, 168, 255, 255)));
+        assert_eq!(broadcast_of(Ipv4Addr::new(10, 1, 0, 232), 20), Some(Ipv4Addr::new(10, 1, 15, 255)));
+        assert_eq!(broadcast_of(ip, 0), Some(Ipv4Addr::BROADCAST));
+        assert_eq!(broadcast_of(ip, 31), None);
+        assert_eq!(broadcast_of(ip, 32), None);
+        assert_eq!(broadcast_of(ip, 128), None);
+    }
 }

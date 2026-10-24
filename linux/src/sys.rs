@@ -209,7 +209,8 @@ fn virtual_iface(name: &str) -> bool {
         .any(|p| name.starts_with(p))
 }
 
-/// This computer's IPv4 addresses that are up, without loopback: the LAN
+/// This computer's IPv4 addresses that are up and running (an unplugged
+/// cable or an idle Docker bridge is skipped), without loopback: the LAN
 /// ones first (wired, then the rest), then container, VM and VPN interfaces.
 pub fn local_ipv4() -> Vec<LocalIp> {
     #[repr(C)]
@@ -237,6 +238,7 @@ pub fn local_ipv4() -> Vec<LocalIp> {
     const IFF_UP: std::ffi::c_uint = 0x1;
     const IFF_BROADCAST: std::ffi::c_uint = 0x2;
     const IFF_LOOPBACK: std::ffi::c_uint = 0x8;
+    const IFF_RUNNING: std::ffi::c_uint = 0x40;
     let mut out = Vec::new();
     let mut head: *mut IfAddrs = std::ptr::null_mut();
     // SAFETY: getifaddrs fills a linked list that freeifaddrs releases; every
@@ -249,7 +251,7 @@ pub fn local_ipv4() -> Vec<LocalIp> {
         while !p.is_null() {
             let i = &*p;
             p = i.next;
-            if i.addr.is_null() || (*i.addr).family != AF_INET || i.flags & IFF_UP == 0 || i.flags & IFF_LOOPBACK != 0 {
+            if i.addr.is_null() || (*i.addr).family != AF_INET || i.flags & (IFF_UP | IFF_RUNNING) != IFF_UP | IFF_RUNNING || i.flags & IFF_LOOPBACK != 0 {
                 continue;
             }
             let name = if i.name.is_null() { String::new() } else { std::ffi::CStr::from_ptr(i.name).to_string_lossy().into_owned() };
