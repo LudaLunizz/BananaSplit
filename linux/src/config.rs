@@ -75,11 +75,11 @@
 //!
 //! `connect` may be repeated. Each value is `@default` (the system's default
 //! input device for a strip / default output device for a bus, as chosen in
-//! the desktop's sound settings), `@physical` (a physical capture / playback
-//! device, preferring the default one), or a JACK port-name regular
-//! expression. The first two matching ports are connected to L/R; a single
-//! (mono) port is connected to both. An empty `connect =` line clears the
-//! list.
+//! the desktop's sound settings, and followed when it changes), `@physical`
+//! (a physical capture / playback device, preferring the default one), or a
+//! JACK port-name regular expression. The first two matching ports are
+//! connected to L/R; a single (mono) port is connected to both. An empty
+//! `connect =` line clears the list.
 //!
 //! Parsing is strict: unknown sections/keys and bad values are errors with a
 //! line number, so a typo can never be silently ignored. A file without a

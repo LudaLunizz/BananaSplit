@@ -326,7 +326,13 @@ async function until(pred, what, ms = 4000) {
   await untilDev((d) => d.ch[2].conn.includes("system"), "ticking system connects strip 3 to it");
   await until((s) => s.ch[2].m[0] > -20, "its tone reaches strip 3's meter");
   await until((s) => s.ch[2].dev === "system", "strip 3's menu button says what it takes in");
-  check(await menuItem("system").getAttribute("aria-checked") === "true", "the menu shows system ticked");
+  // (the menu is built again when the mixer's answer comes in: wait for it)
+  let ticked = false;
+  for (let i = 0; i < 40 && !ticked; i++) {
+    ticked = await menuItem("system").getAttribute("aria-checked", { timeout: 500 }).catch(() => null) === "true";
+    if (!ticked) await sleep(100);
+  }
+  check(ticked, "the menu shows system ticked");
   await page.keyboard.press("Escape");
   check(!(await page.locator("#cmenu").isVisible()), "Escape closes the menu");
   // ---- 2.7: a muted channel shows what comes in, greyed ----

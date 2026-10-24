@@ -6,14 +6,23 @@ $PACTL_LOG.modules (seeded with a stale BananaSplit cable, id 7, and a
 module that is not ours, id 9). With PACTL_DEVICES set it also reports the
 review's devices: a Razer Kiyo webcam and a Blue Yeti (mic + headphone
 output). Loaded null sinks show up as sinks (Audio/Sink) or sources
-(Audio/Source/Virtual), index 1000 + module id.
+(Audio/Source/Virtual), index 1000 + module id. With PACTL_REUSE_IDS set,
+the id unloaded last goes to the next module loaded, as in pipewire-pulse.
 
 With PACTL_STREAMS set, apps' streams are kept in $PACTL_LOG.streams
 (Discord and Firefox playing on the Yeti, OBS recording the Yeti), listed by
 `list sink-inputs` / `list source-outputs` and moved by `move-sink-input` /
 `move-source-output`; unloading a cable moves its streams to the default
 device, like PipeWire. `subscribe` prints an event whenever that state
-changes, until BananaSplit (its parent) is gone.
+changes, until BananaSplit (its parent) is gone, and writes the files it
+inherited to $PACTL_LOG.subscribe-fds.
+
+PACTL_MORE_DEVICES adds a second sound card ("system", an output and an
+input); `set-default-sink` / `set-default-source` change the defaults (kept
+in $PACTL_LOG.defaults), as the sound settings do. Writing
+$PACTL_LOG.restart ends `subscribe`, as a restart of pipewire-pulse does;
+PACTL_SUBSCRIBE_FAILS makes it end at once. While $PACTL_LOG.loadfail
+exists, `load-module` fails.
 """
 import json
 import os
@@ -65,7 +74,16 @@ FIXED = [
     (53, "alsa_output.usb-Blue_Yeti-00.analog-stereo.monitor", "Monitor of Yeti Stereo Microphone Analog Stereo", None, True,
      "alsa_output.usb-Blue_Yeti-00.analog-stereo"),
 ]
+if os.environ.get("PACTL_MORE_DEVICES"):  # the "system" sound card, a second output and input
+    FIXED += [
+        (60, "alsa_output.pci-0000_00_1f.3.analog-stereo", "system", None, False, None),
+        (61, "alsa_input.pci-0000_00_1f.3.analog-stereo", "system", None, True, None),
+    ]
 DEFAULT_SINK, DEFAULT_SOURCE = FIXED[0][1], FIXED[2][1]
+# what `set-default-sink` / `set-default-source` chose
+DEFAULTS = LOG + ".defaults"
+if os.path.exists(DEFAULTS):
+    DEFAULT_SINK, DEFAULT_SOURCE = open(DEFAULTS).read().split()[:2]
 
 
 def devices():
@@ -141,13 +159,22 @@ elif cmd == "list":
                 b += f"\t\tmedia.name = \"{s['media']}\"\n"
             blocks.append(b)
         sys.stdout.write("\n".join(blocks))
+elif cmd == "load-module" and os.path.exists(LOG + ".loadfail"):
+    fail("Connection refused")  # the server is not up again yet
 elif cmd == "load-module":
-    try:
-        n = int(open(LOG + ".n").read())
-    except (OSError, ValueError):
-        n = 100
-    with open(LOG + ".n", "w") as f:
-        f.write(str(n + 1))
+    free = open(LOG + ".free").read().split() if os.path.exists(LOG + ".free") else []
+    if os.environ.get("PACTL_REUSE_IDS") and free:
+        # like pipewire-pulse: the id unloaded last goes to the next module
+        n = int(free.pop())
+        with open(LOG + ".free", "w") as f:
+            f.write(" ".join(free))
+    else:
+        try:
+            n = int(open(LOG + ".n").read())
+        except (OSError, ValueError):
+            n = 100
+        with open(LOG + ".n", "w") as f:
+            f.write(str(n + 1))
     with open(MODS, "a") as f:
         f.write(f"{n}\t{args[1]}\t{' '.join(args[2:])}\n")
     print(n)
@@ -157,6 +184,8 @@ elif cmd == "unload-module":
     if not gone:
         fail("No such entity")
     write_modules([m for m in mods if m[0] != args[1]])
+    with open(LOG + ".free", "a") as f:
+        f.write(" " + args[1])
     # PipeWire moves what played into (or recorded from) it to the default device
     st = streams()
     if st:
@@ -164,6 +193,11 @@ elif cmd == "unload-module":
             if s["target"] == 1000 + int(args[1]):
                 s["target"] = 52 if s["rec"] else 51
         save_streams(st)
+elif cmd in ("set-default-sink", "set-default-source"):
+    sink, source = (args[1], DEFAULT_SOURCE) if cmd == "set-default-sink" else (DEFAULT_SINK, args[1])
+    with open(DEFAULTS + ".tmp", "w") as f:
+        f.write(f"{sink} {source}\n")
+    os.replace(DEFAULTS + ".tmp", DEFAULTS)
 elif cmd in ("move-sink-input", "move-source-output"):
     rec = cmd == "move-source-output"
     sid, name = int(args[1]), args[2]
@@ -176,9 +210,23 @@ elif cmd in ("move-sink-input", "move-source-output"):
         fail("No such entity")
     s[0]["target"] = dev[0][0]
     save_streams(st)
+elif cmd == "subscribe" and os.environ.get("PACTL_SUBSCRIBE_FAILS"):
+    sys.stderr.write("Connection failure: Connection terminated\n")
+    sys.exit(1)
 elif cmd == "subscribe":
+    # what it inherited from BananaSplit (it runs as long as BananaSplit does)
+    with open(LOG + ".subscribe-fds", "a") as f:
+        for fd in os.listdir("/proc/self/fd"):
+            try:
+                f.write(os.readlink(f"/proc/self/fd/{fd}") + "\n")
+            except OSError:
+                pass
     parent = os.getppid()
     last = None
+    # $PACTL_LOG.restart written: the server went away (pipewire-pulse
+    # restarted), and `pactl subscribe` ends, as the real one does
+    restart = LOG + ".restart"
+    restarted = os.path.getmtime(restart) if os.path.exists(restart) else 0
     while True:
         try:
             os.kill(parent, 0)
@@ -186,7 +234,10 @@ elif cmd == "subscribe":
             break
         if os.getppid() != parent:
             break
-        now = tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in (MODS, STREAMS))
+        if (os.path.getmtime(restart) if os.path.exists(restart) else 0) != restarted:
+            sys.stderr.write("Connection failure: Connection terminated\n")
+            sys.exit(1)
+        now = tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in (MODS, STREAMS, DEFAULTS))
         if last is not None and now != last:
             try:
                 print("Event 'change' on sink-input #0", flush=True)

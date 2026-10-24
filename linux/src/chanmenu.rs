@@ -17,7 +17,7 @@
 
 use crate::backend::Backend;
 use crate::cables::{CableSet, Cables, NUM_CHANNELS, pactl};
-use crate::devices::{Candidate, PulseInfo, Side, client_score};
+use crate::devices::{Candidate, Kind, PulseInfo, Side, client_score};
 use crate::gui::{ChanView, DevOp};
 use crate::jack::regex_escape;
 use crate::sys;
@@ -150,10 +150,14 @@ pub fn list_json(backend: &Backend, cfg: &Config, cables: &Cables, info: &PulseI
         }
         None => o.push_str("{\"ok\":true,\"why\":null}"),
     }
+    // On PipeWire every app that plays or records is a JACK client as well:
+    // it is listed with the apps (moved into the cable), not again as a
+    // JACK program (connecting that would play it twice).
+    let programs = |v: Vec<Candidate>| -> Vec<Candidate> { v.into_iter().filter(|c| c.kind != Kind::App || !info.is_stream(&c.client)).collect() };
     let _ = write!(o, ",\"pulse\":{pulse},\"strip\":");
-    cands_json(&mut o, &backend.candidates(cfg, cables, devs.clone(), Side::Strip));
+    cands_json(&mut o, &programs(backend.candidates(cfg, cables, devs.clone(), Side::Strip)));
     o.push_str(",\"bus\":");
-    cands_json(&mut o, &backend.candidates(cfg, cables, devs, Side::Bus));
+    cands_json(&mut o, &programs(backend.candidates(cfg, cables, devs, Side::Bus)));
     for (key, rec) in [("play", false), ("rec", true)] {
         let _ = write!(o, ",\"{key}\":[");
         let list = if rec { &info.recording } else { &info.playing };
@@ -212,6 +216,16 @@ fn reached(backend: &Backend, cfg: &Config, cables: &Cables, info: &PulseInfo, c
         .collect()
 }
 
+/// Like [`reached`], plus the device a `@default` / `@physical` line
+/// connected last (the desktop's default may have changed since).
+fn reached_now(backend: &Backend, cfg: &Config, cables: &Cables, info: &PulseInfo, ch: usize, pattern: &str, among: &[String]) -> Vec<String> {
+    let mut v = reached(backend, cfg, cables, info, ch, pattern, among);
+    if let Some(c) = backend.followed_client(ch, pattern).filter(|c| among.contains(c) && !v.contains(c)) {
+        v.push(c);
+    }
+    v
+}
+
 /// Switch channel `ch`'s virtual cable on (if it has none).
 fn cable_on(cfg: &mut Config, cables: &mut Cables, ch: usize) -> Result<String, String> {
     let mut spec = CableSet::for_config(cfg).spec(ch).cloned().ok_or("bad channel")?;
@@ -244,12 +258,18 @@ pub fn handle(op: DevOp, backend: &Backend, cfg: &mut Config, cables: &mut Cable
                 Ok(if ch < NUM_STRIPS { format!("{} takes in {client}", id(ch)) } else { format!("{} plays on {client}", id(ch)) })
             } else {
                 // every line that brings this client in goes, so it stays away
+                // (a `@default` line staying with it too)
                 let list = connect_list(cfg, ch).clone();
                 let keep: Vec<String> = list
                     .iter()
-                    .filter(|p| **p != pat && reached(backend, cfg, cables, info, ch, p, std::slice::from_ref(&client)).is_empty())
+                    .filter(|p| {
+                        **p != pat
+                            && reached(backend, cfg, cables, info, ch, p, std::slice::from_ref(&client)).is_empty()
+                            && !backend.stays_with(cfg, cables, info.devices.clone(), ch, p, &client)
+                    })
                     .cloned()
                     .collect();
+                backend.forget_followed(ch, &keep);
                 *connect_list(cfg, ch) = keep;
                 backend.disconnect_client(ch, &client)?;
                 Ok(format!("{} and {client} disconnected", id(ch)))
@@ -263,15 +283,17 @@ pub fn handle(op: DevOp, backend: &Backend, cfg: &mut Config, cables: &mut Cable
                 if !list.iter().any(|p| p == DEFAULT_DEVICE) {
                     list.push(DEFAULT_DEVICE.into());
                 }
+                // what this channel's line did (not another channel's)
                 let w = backend.autoconnect(cfg, cables);
-                Ok(match w.errs.into_iter().find(|e| e.contains(DEFAULT_DEVICE)) {
-                    Some(e) => e,
+                Ok(match w.problem_of(ch, DEFAULT_DEVICE) {
+                    Some(e) => e.to_string(),
                     None => format!("{} follows the desktop's {what}", id(ch)),
                 })
             } else {
                 let all: Vec<String> = backend.connected_clients(ch);
-                let was = reached(backend, cfg, cables, info, ch, DEFAULT_DEVICE, &all);
+                let was = reached_now(backend, cfg, cables, info, ch, DEFAULT_DEVICE, &all);
                 connect_list(cfg, ch).retain(|p| p != DEFAULT_DEVICE);
+                backend.forget_followed(ch, connect_list(cfg, ch));
                 unhook(backend, cfg, cables, info, ch, &was)?;
                 Ok(format!("{} no longer follows the desktop's {what}", id(ch)))
             }
@@ -279,19 +301,21 @@ pub fn handle(op: DevOp, backend: &Backend, cfg: &mut Config, cables: &mut Cable
         DevOp::Unpattern { ch, pattern } => {
             let ch = check(ch)?;
             let all: Vec<String> = backend.connected_clients(ch);
-            let was = reached(backend, cfg, cables, info, ch, &pattern, &all);
+            let was = reached_now(backend, cfg, cables, info, ch, &pattern, &all);
             let list = connect_list(cfg, ch);
             let before = list.len();
             list.retain(|p| *p != pattern);
             if list.len() == before {
                 return Err(format!("{} has no line \"connect = {pattern}\"", id(ch)));
             }
+            backend.forget_followed(ch, list);
             unhook(backend, cfg, cables, info, ch, &was)?;
             Ok(format!("removed \"connect = {pattern}\" from {}", id(ch)))
         }
         DevOp::Nothing { ch } => {
             let ch = check(ch)?;
             connect_list(cfg, ch).clear();
+            backend.forget_followed(ch, &[]);
             for c in backend.connected_clients(ch) {
                 if !is_own_cable(cables, ch, &c) {
                     backend.disconnect_client(ch, &c)?;
@@ -392,10 +416,11 @@ mod tests {
                 ],
             }),
             playing: vec![
-                Stream { id: 7, app: "Discord".into(), media: "Playback".into(), binary: String::new(), target: 51 },
-                Stream { id: 8, app: "Firefox".into(), media: "YouTube".into(), binary: String::new(), target: 50 },
+                Stream { id: 7, app: "Discord".into(), media: "Playback".into(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 51 },
+                Stream { id: 8, app: "Firefox".into(), media: "YouTube".into(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 50 },
             ],
-            recording: vec![Stream { id: 9, app: "OBS".into(), media: String::new(), binary: String::new(), target: 53 }],
+            recording: vec![Stream { id: 9, app: "OBS".into(), media: String::new(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 53 }],
+            other: Vec::new(),
         }
     }
 

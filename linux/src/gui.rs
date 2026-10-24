@@ -688,7 +688,7 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     jstr(&mut o, &recorder::expand_home(&s.folder).display().to_string());
     o.push_str(",\"secs\":");
     jnum(&mut o, st.seconds(), 2);
-    let _ = write!(o, ",\"dropped\":{},\"clipped\":{},\"files\":[", st.dropped, st.clipped);
+    let _ = write!(o, ",\"dropped\":{},\"clipped\":{},\"tracks\":{},\"files\":[", st.dropped, st.clipped, st.tracks);
     for (k, p) in st.files.iter().enumerate() {
         if k > 0 {
             o.push(',');

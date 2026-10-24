@@ -1371,10 +1371,13 @@ pub fn error_dialog(text: &str) {
         }
     }
     let plain: String = text.chars().map(|c| match c { '<' => '‹', '>' => '›', '&' => '+', c => c }).collect();
+    // "BananaSplit could not start." or "BananaSplit stopped.", then why
+    let (head, body) = text.split_once("\n\n").unwrap_or(("BananaSplit", text));
+    let head = head.trim_end_matches('.');
     let tries: [(&str, Vec<&str>); 3] = [
         ("zenity", vec!["--error", "--title=BananaSplit", "--text", &plain]),
         ("kdialog", vec!["--title", "BananaSplit", "--error", text]),
-        ("notify-send", vec!["--app-name=BananaSplit", "BananaSplit could not start", text]),
+        ("notify-send", vec!["--app-name=BananaSplit", head, body]),
     ];
     for (cmd, args) in tries {
         if std::process::Command::new(cmd).args(&args).stdin(std::process::Stdio::null()).status().is_ok() {

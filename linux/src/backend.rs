@@ -10,12 +10,12 @@
 use crate::cables::{CableSet, Cables};
 use crate::devices::{self, Resolver, Side, client_of};
 use crate::jack::{JackClient, LATENCY_CAPTURE, LATENCY_PLAYBACK, Port, regex_escape};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ffi::{c_int, c_void};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::time::{Duration, Instant};
-use bananasplit::config::Config;
+use bananasplit::config::{Config, DEFAULT_DEVICE, PHYSICAL};
 use bananasplit::engine::{BUS_IDS, Engine, MAX_FRAMES, NUM_BUSES, NUM_STRIPS, Shared};
 use bananasplit::player::PlayTap;
 use bananasplit::recorder::RecTap;
@@ -115,8 +115,23 @@ pub struct Wiring {
     pub desc: Vec<String>,
     /// One short line per problem (or fallback), e.g. for the status line.
     pub errs: Vec<String>,
+    /// The same problems with where they come from: row, `connect` value
+    /// ("" for the row's own virtual cable), problem.
+    pub lines: Vec<(usize, String, String)>,
     /// A strip / bus regex matched nothing: worth listing that side's ports.
     pub missed: [bool; 2],
+}
+
+impl Wiring {
+    fn problem(&mut self, row: usize, pattern: &str, text: String) {
+        self.lines.push((row, pattern.to_string(), text.clone()));
+        self.errs.push(text);
+    }
+
+    /// The problem with channel `row`'s `connect = pattern` line, if any.
+    pub fn problem_of(&self, row: usize, pattern: &str) -> Option<&str> {
+        self.lines.iter().find(|(r, p, _)| *r == row && p == pattern).map(|(_, _, t)| t.as_str())
+    }
 }
 
 pub struct Backend {
@@ -132,6 +147,28 @@ pub struct Backend {
     rate_seen: Cell<u32>,
     /// The rate `poll_rate` reported last.
     rate_told: Cell<u32>,
+    /// The device each channel's `@default` / `@physical` line connected
+    /// last (see [`Backend::autoconnect`]).
+    followed: RefCell<Vec<Followed>>,
+}
+
+/// What a channel's `@default` or `@physical` line connected.
+#[derive(Debug, Clone, PartialEq)]
+struct Followed {
+    row: usize,
+    keyword: &'static str,
+    /// The JACK client it connected last.
+    client: String,
+    /// The device the desktop's default pointed to last (None: it never
+    /// could be used). While the default can't be used (it is one of
+    /// BananaSplit's own cables, or pactl failed), the line stays with this
+    /// device, or comes back to it, whenever it is there.
+    home: Option<String>,
+}
+
+/// `@default` and `@physical`: lines that follow the desktop's devices.
+fn keyword(pattern: &str) -> Option<&'static str> {
+    [DEFAULT_DEVICE, PHYSICAL].into_iter().find(|k| *k == pattern)
 }
 
 impl Backend {
@@ -188,6 +225,7 @@ impl Backend {
             client_name,
             rate_seen: Cell::new(0),
             rate_told: Cell::new(0),
+            followed: RefCell::new(Vec::new()),
         };
 
         let c = me.client();
@@ -271,13 +309,19 @@ impl Backend {
         (cap, play)
     }
 
-    /// Make every connection the config asks for. Idempotent; never removes
-    /// connections.
+    /// Make every connection the config asks for. Idempotent; the only
+    /// connections it removes are those of a `@default` / `@physical` line
+    /// whose device changed: when the desktop's default device changes, a
+    /// channel that follows it moves to the new one instead of keeping both
+    /// (unless another of its lines still asks for the old one). While the
+    /// default can't be used, such a line stays with (or comes back to) the
+    /// device the default pointed to last, whenever that is there.
     pub fn autoconnect(&self, cfg: &Config, cables: &Cables) -> Wiring {
         let c = self.client();
-        let rs = Resolver::new(c, &self.client_name, CableSet::for_config(cfg).with_live(cables));
+        let rs = Resolver::new(c, &self.client_name, CableSet::for_config(cfg).with_live(cables)).with_lines(cfg);
         let mut w = Wiring { desc: Vec::with_capacity(NUM_STRIPS + NUM_BUSES), ..Default::default() };
         let client_of = |p: &str| crate::devices::client_of(p).to_string();
+        let mut followed = self.followed.borrow_mut();
 
         for row in 0..NUM_STRIPS + NUM_BUSES {
             let (side, label, connect) = if row < NUM_STRIPS {
@@ -287,22 +331,62 @@ impl Backend {
             };
             // The row's own virtual cable first (if it has one).
             let cable = cables.live(row);
-            let mut targets: Vec<(Vec<String>, Option<String>)> = Vec::new();
+            let mut targets: Vec<(Vec<String>, Option<String>, &str)> = Vec::new();
             if let Some(spec) = cable {
                 let ports = rs.ports(Some(&spec.jack_regex()), side.flag());
                 let note = ports.is_empty().then(|| format!("cable \"{}\" has no ports yet", spec.description));
-                targets.push((ports, note));
+                targets.push((ports, note, ""));
             }
+            // Devices a `@default` / `@physical` line of this row has left.
+            let mut left: Vec<String> = Vec::new();
+            followed.retain(|f| f.row != row || connect.iter().any(|p| p == f.keyword));
             for pat in connect {
-                let r = rs.resolve(pat, side);
+                let mut r = rs.resolve(pat, side);
                 w.missed[side as usize] |= r.missed;
-                targets.push((r.ports, r.note));
+                if let Some(kw) = keyword(pat) {
+                    let real = r.fallback.is_none();
+                    let i = followed.iter().position(|f| f.row == row && f.keyword == kw);
+                    // The desktop's default can't be used right now (it is one
+                    // of BananaSplit's own cables, it is not a physical device
+                    // for `@physical`, or pactl failed): the device it pointed
+                    // to last, rather than a fallback, while that is there.
+                    if let Some(home) = i.and_then(|i| followed[i].home.clone()).filter(|_| !real) {
+                        let ports: Vec<String> = rs
+                            .ports(Some(&format!("^{}:", regex_escape(&home))), side.flag())
+                            .into_iter()
+                            .filter(|p| !devices::is_monitor_port(p))
+                            .collect();
+                        if !ports.is_empty() {
+                            let why = r.fallback.take().unwrap_or_default();
+                            // (`@physical` away from the default is what it is for)
+                            r.note = (kw == DEFAULT_DEVICE).then(|| format!("{kw}: {why}; staying with \"{home}\""));
+                            r.ports = ports;
+                        }
+                    }
+                    match (i, r.ports.first().map(|p| client_of(p))) {
+                        (Some(i), Some(now)) => {
+                            let f = &mut followed[i];
+                            if f.client != now {
+                                left.push(std::mem::replace(&mut f.client, now.clone()));
+                            }
+                            if real {
+                                f.home = Some(now);
+                            }
+                        }
+                        (None, Some(now)) => followed.push(Followed { row, keyword: kw, client: now.clone(), home: real.then_some(now) }),
+                        // nothing to connect now: what it had stays
+                        (_, None) => {}
+                    }
+                }
+                targets.push((r.ports, r.note, pat.as_str()));
             }
+            // ... and what still has to stay connected
+            let wanted: Vec<String> = targets.iter().flat_map(|(ports, _, _)| ports.iter().take(2).map(|p| client_of(p))).collect();
 
             let mut seen = Vec::new();
-            for (ports, note) in targets {
+            for (ports, note, pat) in targets {
                 if let Some(n) = note {
-                    w.errs.push(format!("{label}: {n}"));
+                    w.problem(row, pat, format!("{label}: {n}"));
                 }
                 let res = match (side, ports.as_slice()) {
                     (_, []) => continue,
@@ -313,12 +397,44 @@ impl Backend {
                 };
                 match res {
                     Ok(()) => seen.push(client_of(&ports[0])),
-                    Err(e) => w.errs.push(e),
+                    Err(e) => w.problem(row, pat, e),
+                }
+            }
+            for old in left.iter().filter(|c| !wanted.contains(c)) {
+                if let Err(e) = self.disconnect_client(row, old) {
+                    w.problem(row, "", e);
                 }
             }
             w.desc.push(if seen.is_empty() { "(nothing connected)".into() } else { seen.join(" + ") });
         }
         w
+    }
+
+    /// The device channel `ch`'s `@default` / `@physical` line connected
+    /// last, if it has that line.
+    pub fn followed_client(&self, ch: usize, pattern: &str) -> Option<String> {
+        self.followed.borrow().iter().find(|f| f.row == ch && f.keyword == pattern).map(|f| f.client.clone())
+    }
+
+    /// Does channel `ch`'s `@default` / `@physical` line stay with `client`
+    /// right now: the desktop's default can't be used, and `client` is the
+    /// device it pointed to last? `devs`: what pactl said.
+    pub fn stays_with(&self, cfg: &Config, cables: &Cables, devs: Option<devices::Devices>, ch: usize, pattern: &str, client: &str) -> bool {
+        let (Some(kw), Some((_, _, side))) = (keyword(pattern), self.channel(ch)) else { return false };
+        let home = self.followed.borrow().iter().find(|f| f.row == ch && f.keyword == kw).and_then(|f| f.home.clone());
+        home.as_deref() == Some(client)
+            && Resolver::new(self.client(), &self.client_name, CableSet::for_config(cfg).with_live(cables))
+                .with_devices(devs)
+                .with_lines(cfg)
+                .resolve(pattern, side)
+                .fallback
+                .is_some()
+    }
+
+    /// Forget what channel `ch`'s `@default` / `@physical` lines followed,
+    /// for the lines it no longer has.
+    pub fn forget_followed(&self, ch: usize, connect: &[String]) {
+        self.followed.borrow_mut().retain(|f| f.row != ch || connect.iter().any(|p| p == f.keyword));
     }
 
     /// Connect external ports `a`/`b` to our L/R (strip) or our L/R to them (bus).
@@ -368,12 +484,13 @@ impl Backend {
     /// port: to both sides), like a `connect = ^client:` line does.
     pub fn connect_client(&self, ch: usize, client: &str) -> Result<(), String> {
         let (_, ours, side) = self.channel(ch).ok_or("bad channel")?;
-        let mut ports = self.client().ports(Some(&format!("^{}:", regex_escape(client))), side.flag());
+        // a device's capture ports, not the monitor ports of its other side
+        // (PipeWire lists a device's input and output as one JACK client
+        // when they have the same name)
+        let ports = devices::prefer_non_monitor(self.client().ports(Some(&format!("^{}:", regex_escape(client))), side.flag()));
         if ports.is_empty() {
             return Err(format!("\"{client}\" is gone"));
         }
-        // a device's capture ports before the monitor ports of its other side
-        ports.sort_by_key(|p| devices::is_monitor_port(p));
         let (a, b) = (&ports[0], ports.get(1).unwrap_or(&ports[0]));
         self.connect_pair(a, b, ours, side == Side::Strip)
     }
@@ -409,7 +526,7 @@ impl Backend {
     /// channel `ch`'s side right now? `devs`: what pactl said.
     pub fn pattern_reaches(&self, cfg: &Config, cables: &Cables, devs: Option<devices::Devices>, ch: usize, pattern: &str, client: &str) -> bool {
         let Some((_, _, side)) = self.channel(ch) else { return false };
-        let rs = Resolver::new(self.client(), &self.client_name, CableSet::for_config(cfg).with_live(cables)).with_devices(devs);
+        let rs = Resolver::new(self.client(), &self.client_name, CableSet::for_config(cfg).with_live(cables)).with_devices(devs).with_lines(cfg);
         rs.resolve(pattern, side).ports.iter().take(2).any(|p| client_of(p) == client)
     }
 }

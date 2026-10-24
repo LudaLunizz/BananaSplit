@@ -178,6 +178,13 @@ fn parse_args() -> Result<Option<Args>, String> {
 
 const ERROR_DIALOG_FLAG: &str = "--error-dialog";
 
+/// What ends a session when the audio server goes away.
+const SERVER_STOPPED: &str = "the JACK/PipeWire server shut down";
+
+/// Set once the mixer runs (the UI loop started): an error after that is
+/// not a failed start.
+static MIXING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn main() -> ExitCode {
     // Helper processes BananaSplit starts itself: the cable watchdog
     // (cables.rs) and the app window (shell.rs).
@@ -216,7 +223,8 @@ fn main() -> ExitCode {
 /// The error dialog runs in its own process: this one may hold a JACK
 /// client's leftovers, and a toolkit has no business in the mixer process.
 fn show_error(e: &str) {
-    let text = format!("BananaSplit could not start.\n\n{e}");
+    let head = if MIXING.load(SeqCst) { "BananaSplit stopped." } else { "BananaSplit could not start." };
+    let text = format!("{head}\n\n{e}");
     if let Ok(exe) = desktop::helper_exe() {
         use std::os::unix::process::CommandExt;
         if std::process::Command::new(exe).arg0("bananasplit").arg(ERROR_DIALOG_FLAG).arg(&text).status().is_ok() {
@@ -240,6 +248,11 @@ fn list_ports(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The JACK clients that have a BananaSplit's ports (`in1_L`).
+fn bananasplit_clients(c: &jack::JackClient) -> Vec<String> {
+    c.ports(Some(":in1_L$"), 0).iter().map(|p| devices::client_of(p).to_string()).collect()
+}
+
 /// `bananasplit --cleanup`: remove cables a killed BananaSplit left behind.
 fn cleanup(path: &Path) -> Result<(), String> {
     let cfg = Config::load_or_default(path)?;
@@ -250,10 +263,14 @@ fn cleanup(path: &Path) -> Result<(), String> {
     if !cables::wait_for_reapers(name, Duration::from_secs(3)) {
         return Err(running());
     }
-    if let Ok(c) = jack::JackClient::open_aux("bananasplit-cleanup") {
-        if !c.ports(Some(&format!("^{}:in1_L$", jack::regex_escape(name))), 0).is_empty() {
-            return Err(running());
-        }
+    let jack = jack::JackClient::open_aux("bananasplit-cleanup").map(|c| bananasplit_clients(&c)).unwrap_or_default();
+    if jack.iter().any(|c| c == name) {
+        return Err(running());
+    }
+    if let Some(other) = cables::sharing_names(name, &jack) {
+        return Err(format!(
+            "BananaSplit \"{other}\" is running, and its cables have the names \"{name}\"'s would have; it removes them when it quits"
+        ));
     }
     let n = cables::sweep(&CableSet::for_config(&cfg).node_names())?;
     println!("bananasplit: removed {} of \"{name}\"", plural(n, "virtual cable", "virtual cables"));
@@ -346,16 +363,24 @@ fn run(args: Args) -> Result<(), String> {
 
     // We own the JACK name now, so cables with our names that are still
     // loaded were left by a BananaSplit that was killed: let its watchdog finish,
-    // then remove whatever is left (also with --no-cables).
+    // then remove whatever is left (also with --no-cables). Unless another
+    // BananaSplit runs whose name differs only in case or dashes: those
+    // cables are its.
     let cable_set = CableSet::for_config(&cfg);
-    if !cables::wait_for_reapers(&cfg.client_name, Duration::from_secs(3)) {
-        notes.push("the cable watchdog of an earlier BananaSplit is still running".into());
-    }
-    if let Ok(n @ 1..) = cables::sweep(&cable_set.node_names()) {
-        notes.push(format!("removed {} left behind by a BananaSplit that was killed", plural(n, "virtual cable", "virtual cables")));
+    let sharing = cables::sharing_names(&cfg.client_name, &bananasplit_clients(&client));
+    if sharing.is_none() {
+        if !cables::wait_for_reapers(&cfg.client_name, Duration::from_secs(3)) {
+            notes.push("the cable watchdog of an earlier BananaSplit is still running".into());
+        }
+        if let Ok(n @ 1..) = cables::sweep(&cable_set.node_names()) {
+            notes.push(format!("removed {} left behind by a BananaSplit that was killed", plural(n, "virtual cable", "virtual cables")));
+        }
     }
     // Cables before ports so they exist when we auto-connect.
-    let (cables, warn) = if create_cables {
+    let (cables, warn) = if let Some(other) = sharing.filter(|_| create_cables) {
+        let why = cables::sharing_message(&cfg.client_name, &other);
+        (Cables::none(&why), vec![why])
+    } else if create_cables {
         Cables::create(&cfg.client_name, &cable_set)
     } else if args.no_cables {
         (Cables::none("virtual cables are off for this run (--no-cables)"), Vec::new())
@@ -596,11 +621,18 @@ fn run_headless(ctx: &Ctx, cfg: &Config, notes: Vec<String>) -> Result<(), Strin
     let mut changed_at: Option<Instant> = Some(Instant::now());
     let mut lat = LatencyCheck::new();
     let mut vlog = VbanLog::default();
+    let pulse = devices::PulseWatch::start();
+    let mut seen = PulseSeen::default();
+    MIXING.store(true, SeqCst);
     while !sys::QUIT.load(SeqCst) {
         if backend.ctl.shutdown.load(Relaxed) {
-            return Err("the JACK/PipeWire server shut down".into());
+            return Err(SERVER_STOPPED.into());
         }
-        if backend.ctl.ports_changed.swap(false, Relaxed) {
+        let (moved, events) = seen.poll(&pulse, cfg, ctx.cables);
+        if let Some(m) = cables::summary(&events, false) {
+            eprintln!("bananasplit: {m}");
+        }
+        if backend.ctl.ports_changed.swap(false, Relaxed) || moved {
             changed_at = Some(Instant::now());
         }
         if changed_at.is_some_and(|t| t.elapsed() > Duration::from_millis(250)) {
@@ -618,6 +650,44 @@ fn run_headless(ctx: &Ctx, cfg: &Config, notes: Vec<String>) -> Result<(), Strin
         std::thread::sleep(Duration::from_millis(50));
     }
     Ok(())
+}
+
+/// Follows what the sound server reports (see [`devices::PulseWatch`]) in
+/// the UI loops: when the desktop's default input or output changes, the
+/// channels that follow it (`connect = @default`) move with it at once, and
+/// virtual cables that disappeared are made again.
+#[derive(Default)]
+struct PulseSeen {
+    queries: Option<u64>,
+    restarts: u64,
+    defaults: Option<(Option<String>, Option<String>)>,
+    /// When the sound server was asked to look again (a cable to make again).
+    kicked: Option<Instant>,
+}
+
+impl PulseSeen {
+    /// Look at the latest report, if it is new: did the defaults change,
+    /// and what happened to cables that had disappeared?
+    fn poll(&mut self, pulse: &devices::PulseWatch, cfg: &Config, cables: &RefCell<Cables>) -> (bool, Vec<cables::CableEvent>) {
+        // a cable could not be made again yet: try again every 2 s
+        if cables.borrow().retrying() && self.kicked.is_none_or(|t| t.elapsed() >= Duration::from_secs(2)) {
+            pulse.kick();
+            self.kicked = Some(Instant::now());
+        }
+        let q = pulse.queries();
+        if self.queries == Some(q) {
+            return (false, Vec::new());
+        }
+        self.queries = Some(q);
+        let restarted = pulse.restarts() != self.restarts;
+        self.restarts = pulse.restarts();
+        let info = pulse.snapshot().1;
+        let now = info.devices.as_ref().map(|d| (d.default_sink.clone(), d.default_source.clone())).unwrap_or_default();
+        let changed = self.defaults.as_ref().is_some_and(|l| *l != now);
+        self.defaults = Some(now);
+        let events = cables.borrow_mut().check(&CableSet::for_config(cfg), info.devices.as_ref(), restarted);
+        (changed || !events.is_empty(), events)
+    }
 }
 
 /// Problems from an auto-connect pass on stderr (when they change). When a
@@ -738,11 +808,14 @@ fn rec_line(rec: &Recorder, shared: &Shared) -> tui::RecLine {
     if st.on {
         let t = st.seconds() as u64;
         let mut text = format!("{:02}:{:02}:{:02}  {}  ", t / 3600, t / 60 % 60, t % 60, st.mode.as_str());
-        if let Some(f) = st.files.first() {
+        // the files being written (a take continues in new files at 4 GB
+        // and when the server changes its sample rate)
+        let now = st.current_files();
+        if let Some(f) = now.first() {
             text.push_str(&file_name(f));
         }
-        if st.files.len() > 1 {
-            text.push_str(&format!(" +{}", st.files.len() - 1));
+        if now.len() > 1 {
+            text.push_str(&format!(" +{}", now.len() - 1));
         }
         if st.dropped > 0 {
             text.push_str(&format!("  ({} frames lost: disk too slow)", st.dropped));
@@ -795,16 +868,19 @@ fn run_tui(ctx: &Ctx, cfg: &mut Config, rec: &Recorder, notes: Vec<String>) -> R
     let mut lat_check = LatencyCheck::new();
     let mut ips = sys::local_ipv4();
     let mut ips_at = Instant::now();
+    let pulse = devices::PulseWatch::start();
+    let mut seen = PulseSeen::default();
     let mut out = std::io::stdout();
     let frame = Duration::from_millis(33);
+    MIXING.store(true, SeqCst);
 
-    loop {
+    let result = loop {
         let t0 = Instant::now();
         if sys::QUIT.load(SeqCst) {
-            break;
+            break Ok(());
         }
         if backend.ctl.shutdown.load(Relaxed) {
-            return Err("the JACK/PipeWire server shut down".into());
+            break Err(SERVER_STOPPED.to_string());
         }
 
         while let Ok(bytes) = rx.try_recv() {
@@ -834,10 +910,14 @@ fn run_tui(ctx: &Ctx, cfg: &mut Config, rec: &Recorder, notes: Vec<String>) -> R
             }
         }
         if quit {
-            break;
+            break Ok(());
         }
 
-        if backend.ctl.ports_changed.swap(false, Relaxed) {
+        let (moved, events) = seen.poll(&pulse, cfg, ctx.cables);
+        if let Some(m) = cables::summary(&events, false) {
+            view.status = format!("\x1b[33m{m}\x1b[0m");
+        }
+        if backend.ctl.ports_changed.swap(false, Relaxed) || moved {
             changed_at = Some(Instant::now());
         }
         if force_connect || changed_at.is_some_and(|t| t.elapsed() > Duration::from_millis(250)) {
@@ -894,11 +974,22 @@ fn run_tui(ctx: &Ctx, cfg: &mut Config, rec: &Recorder, notes: Vec<String>) -> R
         if let Some(rest) = frame.checked_sub(t0.elapsed()) {
             std::thread::sleep(rest);
         }
-    }
+    };
 
-    // Remember the mixer state for next time.
+    // Remember the mixer state for next time, also when the audio server
+    // went away: every setting is still here.
     capture_all(cfg, shared, rec, vban);
-    cfg.save(path)
+    saved_too(result, cfg.save(path))
+}
+
+/// The end of a session after the settings were saved: a failed save is
+/// reported as well, and an error says that the settings are safe.
+fn saved_too(result: Result<(), String>, saved: Result<(), String>) -> Result<(), String> {
+    match (result, saved) {
+        (Ok(()), s) => s,
+        (Err(e), Ok(())) => Err(format!("{e}; your settings are saved")),
+        (Err(e), Err(s)) => Err(format!("{e}; saving the settings failed too: {s}")),
+    }
 }
 
 struct GuiOpts {
@@ -1057,12 +1148,12 @@ fn run_gui(
     // What the channels' menus show: the sound server's apps and devices
     // (its own thread), the JACK connections, this computer's addresses.
     let pulse = devices::PulseWatch::start();
+    let mut seen = PulseSeen::default();
     let mut conns: Vec<Vec<String>> = vec![Vec::new(); cables::NUM_CHANNELS];
     let mut conns_at = Instant::now() - Duration::from_secs(10);
     let mut pulse_rev = u64::MAX;
     let mut dev_rev = 0u64;
     let mut ips = sys::local_ipv4();
-    let mut conn: Vec<String> = Vec::new();
     let mut last_errs: Vec<String> = Vec::new();
     let mut changed_at: Option<Instant> = Some(Instant::now());
     let mut force_connect = false;
@@ -1076,6 +1167,7 @@ fn run_gui(
     let mut slow_at = Instant::now();
     let mut scenes_at = Instant::now();
     let frame = Duration::from_millis(33);
+    MIXING.store(true, SeqCst);
 
     let result = loop {
         let t0 = Instant::now();
@@ -1083,7 +1175,7 @@ fn run_gui(
             break Ok(());
         }
         if backend.ctl.shutdown.load(Relaxed) {
-            break Err("the JACK/PipeWire server shut down".to_string());
+            break Err(SERVER_STOPPED.to_string());
         }
 
         let mut quit = false;
@@ -1100,14 +1192,21 @@ fn run_gui(
                     };
                 }
                 gui::Request::Rename(ch, name) => {
-                    let (n, id) = if ch < cfg.strips.len() {
-                        (&mut cfg.strips[ch].name, recorder::source_id(ch))
-                    } else {
-                        (&mut cfg.buses[ch - cfg.strips.len()].name, recorder::source_id(ch))
-                    };
+                    let strip = ch < cfg.strips.len();
+                    let n = if strip { &mut cfg.strips[ch].name } else { &mut cfg.buses[ch - cfg.strips.len()].name };
                     *n = name;
                     hub.set_names(channel_names(cfg));
-                    status = format!("renamed {id}; the virtual cable keeps its old name until BananaSplit restarts");
+                    // a strip's cable is named after the strip (a bus's is not)
+                    status = if !strip {
+                        format!("renamed bus {}", recorder::source_id(ch))
+                    } else if ctx.cables.borrow().live(ch).is_some() {
+                        format!(
+                            "renamed strip {}; its virtual cable keeps its old name until BananaSplit restarts or the cable is switched off and on",
+                            ch + 1
+                        )
+                    } else {
+                        format!("renamed strip {}", ch + 1)
+                    };
                 }
                 gui::Request::Show(token) => window.show(cfg, &token),
                 gui::Request::Theme(t) => {
@@ -1164,7 +1263,13 @@ fn run_gui(
             break Ok(());
         }
 
-        if backend.ctl.ports_changed.swap(false, Relaxed) {
+        let (moved, events) = seen.poll(&pulse, cfg, ctx.cables);
+        if let Some(m) = cables::summary(&events, true) {
+            eprintln!("bananasplit: {m}");
+            status = m;
+            dev_rev += 1;
+        }
+        if backend.ctl.ports_changed.swap(false, Relaxed) || moved {
             changed_at = Some(Instant::now());
         }
         if force_connect || changed_at.is_some_and(|t| t.elapsed() > Duration::from_millis(250)) {
@@ -1173,7 +1278,6 @@ fn run_gui(
             if force_connect || !w.errs.is_empty() {
                 status = if w.errs.is_empty() { "all configured connections made".into() } else { w.errs.join(" | ") };
             }
-            conn = w.desc;
             force_connect = false;
             changed_at = None;
             lat_at = Instant::now() - Duration::from_secs(10);
@@ -1248,7 +1352,11 @@ fn run_gui(
         let rec_status = rec.status();
         let rec_settings = rec.settings();
         let (vst, vcfg) = (vban.status(), vban.config());
-        let conn_all = with_vban(&conn, &vst, &vcfg, backend.sample_rate());
+        // what each channel is connected to now (also what the menus and
+        // other programs connected since the last auto-connect pass)
+        let now: Vec<String> =
+            conns.iter().map(|c| if c.is_empty() { "(nothing connected)".to_string() } else { c.join(" + ") }).collect();
+        let conn_all = with_vban(&now, &vst, &vcfg, backend.sample_rate());
         let play = player.status();
         let (takes_rev, list) = takes.snapshot();
         let scene_list = hub.scene_list();
@@ -1294,9 +1402,9 @@ fn run_gui(
     takes.shutdown();
     pulse.shutdown();
     gui::forget_port(&backend.client_name, port);
-    result?;
-    // Remember the mixer state for next time (like the terminal UI).
+    // Remember the mixer state for next time (like the terminal UI), also
+    // when the audio server went away.
     capture_all(cfg, shared, rec, vban);
     cfg.recorder.play_to = player.routes();
-    cfg.save(path)
+    saved_too(result, cfg.save(path))
 }

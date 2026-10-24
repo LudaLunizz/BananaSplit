@@ -13,6 +13,25 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.7.1
+
+Fourteen fixes from a review of 2.7. Nothing to change on your side: configs and scenes load as they are.
+
+* **Your settings are saved when the audio server stops.** If PipeWire (or JACK) was restarted or crashed while BananaSplit ran, the app and the terminal UI closed without saving what you had changed since the last save. They now save first, and the message says "BananaSplit stopped" and that the settings are saved, instead of "BananaSplit could not start".
+* **`@default` follows the desktop's default device at once.** When you pick another output or microphone in the sound settings, the channels set to follow it (A1 and strip 1 out of the box) move to it right away, and let go of the device they had, so you no longer hear (or record) both. `@physical` lines follow it the same way. A device that a channel also has its own line for stays. With the setup this README suggests (strip 3's cable as the default output), A1 now stays on the device it was playing on, instead of jumping to the first physical device; if that device is unplugged, A1 plays on another one meanwhile and goes back to it when it returns.
+* **A crashed BananaSplit can be started again.** The helper that tells BananaSplit about changes in the sound settings (`pactl subscribe`) kept a copy of the connection to the JACK server; on JACK2 that could keep a crashed BananaSplit's name taken until you killed it by hand. It no longer does, and it is started again if pipewire-pulse restarts.
+* **Apps are listed once in the channel menus**, under the apps that play or record. 2.7 listed them a second time under Programs (JACK), and ticking that one made the app play twice.
+* **A headset's microphone reaches both sides of its strip.** For a headset whose mono mic and stereo output share a name (one JACK client), the strip's right side got what the headset plays (its monitor), which could feed back. It now gets the mic on both sides.
+* **Virtual cables that someone else removes come back.** When pipewire-pulse restarts, or a cable's module is unloaded with `pactl unload-module`, BananaSplit makes the cable again at once and says so (if pipewire-pulse is not back yet, it keeps trying for half a minute); one that someone removes again within a minute stays off (switch it on in the channel's menu). In 2.7 the menu went on saying it was on, could not switch it off or on, and BananaSplit could later unload *another program's* module, because pipewire-pulse gives a removed module's number to the next one loaded. Cables are now always found by their names.
+* **A long message no longer covers the strips.** When many connections failed at once (a laptop away from its dock), the status text grew the bottom bar over the strips' TO rows. It now keeps to three lines; point at it to read all of it.
+* **Devices PipeWire numbers are found again.** PipeWire tells apart two JACK clients with the same name by adding a number (`…-63`), and that number changes when the device comes back or the computer restarts. A line the menu saved with the old number now still connects the device, as long as only one fits (one that another line names is left to that line); when several do (a microphone and what an output plays, say), the message names them, so you can tick the right one.
+* **The menus mark the right device as default.** When PipeWire gave the number to the microphone instead of the output (`Yeti …-63` is the mic), the menu and `--list-ports` marked what the output plays as the default input. Strip 1 itself was always connected right.
+* **Switching on Default input answers for that channel.** A problem with another channel's default device was shown instead of this channel's.
+* **The channel button's tooltip shows what is connected now**, also right after a change in its menu (2.7 showed what was connected at the last automatic pass).
+* **Renaming a bus** no longer says that its virtual microphone keeps the old name (a bus's cable is not named after it). Renaming a strip says how to give its cable the new name: switch it off and on in the menu.
+* **A multi-track take that continues in new files** (because the server changed its sample rate, or a file reached 4 GB) shows its number of tracks and the files being written. 2.7 counted every file of the take as a track ("REC · 4 tracks" for two).
+* **Two BananaSplits whose names differ only in capitals or dashes** (`BananaSplit` and `bananasplit`) would have cables with the same names. The second one took the first one's cables for leftovers of a crash and removed them. It now makes no cables and says why (give it a `client_name` that differs by more than that); `--cleanup` refuses in that case too.
+
 ## What's new in 2.7
 
 Changes from a review of 2.6:
@@ -96,14 +115,14 @@ ASIO and WASAPI are **Windows-only** driver APIs and do not exist on Linux. What
 **Debian, Ubuntu, Mint, Pop!_OS:** install the package, which pulls in what it needs:
 
 ```sh
-sudo apt install ./bananasplit_2.7.0_amd64.deb
+sudo apt install ./bananasplit_2.7.1_amd64.deb
 ```
 
 **Any other distribution (Fedora, Arch, openSUSE, …):** unpack the portable package and run its installer. It copies `bananasplit` to `~/.local/bin` and adds BananaSplit with its icon to your app menu; nothing outside your home folder is touched (`./install.sh --uninstall` removes it again).
 
 ```sh
-tar -xzf bananasplit-2.7.0-linux-x86_64.tar.gz
-cd bananasplit-2.7.0-linux-x86_64 && ./install.sh
+tar -xzf bananasplit-2.7.1-linux-x86_64.tar.gz
+cd bananasplit-2.7.1-linux-x86_64 && ./install.sh
 ```
 
 Then start **BananaSplit** from the app menu. What it needs from the system (PipeWire is the default on current Fedora, Ubuntu, Debian, Arch, and others; the .deb asks for these itself):
@@ -339,12 +358,12 @@ The channels' menus in the app write these lines for you (see [Channel menus](#c
 | `connect =`  | strip (takes audio from)                       | bus (sends audio to)              |
 |--------------|-------------------------------------------------|-----------------------------------|
 | `@default`   | the default input in your sound settings       | the default output                |
-| `@physical`  | a physical capture device, the default if it is one, else the first JACK lists | a physical playback device, same rule |
+| `@physical`  | a physical capture device: the default if it is one, else the one it had while that is there, else the first JACK lists | a physical playback device, same rule |
 | a regex      | the first two matching JACK ports → L, R       | same                              |
 
-`@default` needs PipeWire and `pactl`. Without them, or when the default device is one of BananaSplit's own cables (for example if you made `BananaSplit-In3-Desktop` the default output), it falls back to `@physical` and says so. In that case put an explicit pattern on A1.
+`@default` needs PipeWire and `pactl`. It follows the sound settings: pick another default device there and the channel moves to it at once, letting go of the one it had (`@physical` moves with the default too, when the default is a physical device). Without PipeWire and `pactl` it falls back to `@physical` and says so. When the default device is one of BananaSplit's own cables (for example if you made `BananaSplit-In3-Desktop` the default output), a channel that already follows a device stays with it and says so (while that device is unplugged it falls back to `@physical`, and returns when the device does); one that has none yet (at start) falls back to `@physical`. To be sure what A1 plays on, give it an explicit pattern.
 
-**Patterns match JACK names, not PipeWire node names.** PipeWire calls a device something like `alsa_input.usb-Blue_Microphones_Yeti-00.analog-stereo`, but its JACK layer names the ports after the description: `Yeti Stereo Microphone Analog Stereo:capture_FL`. A device's microphone and headphone sides often share a description, so one of them gets `-NN` appended. `bananasplit --list-ports` prints every name with a ready-made line:
+**Patterns match JACK names, not PipeWire node names.** PipeWire calls a device something like `alsa_input.usb-Blue_Microphones_Yeti-00.analog-stereo`, but its JACK layer names the ports after the description: `Yeti Stereo Microphone Analog Stereo:capture_FL`. When two JACK clients would get the same name (a device's microphone and headphone sides can share a description), one of them gets `-NN` appended, PipeWire's number for it. That number can change when the device comes back or the computer restarts: a `^Name-NN:` line (as the menus write it) that no longer matches still connects the client now called `Name` or `Name-<other number>` on that side, if exactly one fits. A client that another `^Name:` line names is left to that line. `bananasplit --list-ports` prints every name with a ready-made line:
 
 ```
 For a strip, [strip1] … [strip6] (ports that send audio):
@@ -361,7 +380,7 @@ For a strip, [strip1] … [strip6] (ports that send audio):
 
 When a pattern matches nothing, the message says why if it can: `that is the PipeWire node name; JACK calls this device "…": use connect = ^…:`, `names are case-sensitive: did you mean "…"?`, or that the matching ports point the wrong way. In `--headless` and `--gui` mode the ports that side could use are also listed on stderr.
 
-When ports appear or disappear (hot-plugged headsets, apps starting), BananaSplit re-applies the configured connections automatically. It never removes connections on its own, including ones you made yourself; only unticking something in a channel's menu (or Disconnect all) does.
+When ports appear or disappear (hot-plugged headsets, apps starting), BananaSplit re-applies the configured connections automatically. It never removes connections on its own, including ones you made yourself; only unticking something in a channel's menu (or Disconnect all) does, and a `@default` (or `@physical`) line lets go of the device it connected when the desktop's default moves to another one.
 
 ## Latency
 
@@ -389,12 +408,17 @@ monitor.alsa.rules = [
 
 On a normal exit (Quit in the app's menu or tray, `bananasplit --quit`, `q` in the terminal UI, Ctrl-C, `systemctl stop`) BananaSplit removes its virtual cables (eight by default), and PipeWire moves any app that was playing into them back to the default output. If BananaSplit is killed with SIGKILL or crashes, a small watchdog process it started (`bananasplit --reap-cables bananasplit` in `ps`) sees that BananaSplit is gone and removes the cables within a fraction of a second. If the watchdog was killed too, the next `bananasplit` start removes the leftovers, or you can run `bananasplit --cleanup` now. `--cleanup` refuses while that BananaSplit is still running. The systemd unit runs `bananasplit --cleanup` as `ExecStopPost`. All of these match cables by their exact names, so nothing else is touched.
 
+If a cable disappears while BananaSplit runs (pipewire-pulse was restarted, or someone ran `pactl unload-module`), BananaSplit makes it again at once and says so. If someone removes it again within a minute (a restart of pipewire-pulse does not count), BananaSplit leaves it off; switch it on in the channel's menu.
+
+Cable names come from `client_name` in lower case, with `-` as `_` (`bananasplit_in1` …). Two BananaSplits whose names differ only in that way cannot both have cables: the second one to start makes none and says so.
+
 ## Tests
 
 ```sh
-cargo test                       # 153 unit tests + 4 "audio path never allocates" tests
+cargo test                       # 160 unit tests + 4 "audio path never allocates" tests
 tests/e2e/run_e2e.sh             # runs the real binary against a mock libjack (needs gcc, curl and python3)
 node tests/gui/ui_check.js       # clicks every control of the app in Chromium (needs Node.js + Playwright)
+node tests/gui/fixes_check.js    # the 2.7.1 fixes that show in the page, in Chromium
 tests/window/run_window_test.sh  # the app window and the tray icon on Xvfb (needs GTK 3, Xvfb, dbus-python)
 ```
 
@@ -416,6 +440,12 @@ The GUI phase also sets an EQ and VBAN streams over HTTP, checks that bad values
 Unit tests also cover the VBAN header against the specification (every sample rate and format, every rejection rule, random garbage), the resampler (44.1 ↔ 48 kHz, 8 to 192 kHz, aliasing below −85 dB), the drift tracking (simulated senders whose clocks run up to 2000 ppm off, with jitter, lost packets, stalls and pauses), two VBAN instances talking over real sockets, the EQ against the Audio EQ Cookbook formulas at three sample rates, and the EQ's click-free changes.
 
 The no-allocation tests run thousands of cycles with parameters changing underneath: one with the recorder recording (both modes, live link changes, a full buffer), one with every EQ changing and VBAN streams flowing both ways (underruns, a full outgoing buffer, flushes), and one with the player playing, pausing, seeking and changing buses while input gain and pan move. A counting allocator proves the audio path never touches the heap.
+
+New in 2.7.1:
+
+* A tenth end-to-end phase (`tests/e2e/fixes.py`) has a check for each fix, and each check fails on 2.7.0. It changes the default output and input with the fake `pactl` and checks that A1 and strip 1 move at once and let go of the old devices, that a device ticked in the menu stays, and that A1 stays put while the default is strip 3's cable. It checks that apps are listed once, that a headset's mono mic reaches both sides of a strip, and that `pactl subscribe` inherits no descriptor libjack left open. It unloads a cable's module behind BananaSplit's back (and gives its number to another module, as pipewire-pulse does), unloads it twice, restarts pipewire-pulse twice within a minute (all modules gone, `pactl subscribe` ended), and once more while it cannot make cables yet. It unplugs the device a channel stays with and plugs it in again, unticks it, and checks `@physical` too. It runs `--headless` with a `pactl` that reaches no server and with one whose `subscribe` keeps ending, and checks that nothing piles up. It starts a second BananaSplit named `bananasplit` next to `BananaSplit`, loads `^Name-71:` lines while PipeWire calls the device `Name-63` (also with two microphones of the same model), swaps which side of the Yeti gets the number, switches on Default input with a broken `pactl`, renames strips and buses, records two tracks across a change of sample rate, and shuts the audio server down with unsaved changes. The fake `pactl` learned `set-default-sink`/`-source`, pipewire-pulse's reuse of module numbers and its restarts; the mock JACK server learned a headset, twin microphones, devices unplugged while running, a server shutdown and a descriptor left open.
+* `tests/gui/fixes_check.js` checks in Chromium that a long status keeps to three lines at four window sizes and zooms, so the strips end above the bottom bar; that a channel button's tooltip follows changes made in its menu; and that the REC title still says "2 tracks" when the take continues in new files.
+* Unit tests cover the menus' `^Name:` lines and PipeWire's numbers, the default input never being a monitor, which apps are streams under their JACK names, monitor ports only when nothing else matches, cable names shared by two client names, streams named by their description, the files a take is writing, and the messages about cables that came back.
 
 New in 2.7:
 
@@ -447,4 +477,5 @@ New in 2.6:
 * With **two different sound cards** on A1/A2, PipeWire clocks one and adaptively resamples the other, which is the correct way to handle two clock domains. Plain JACK2 can only drive one card.
 * The 2.3 changes were tested against a mock JACK server and a fake `pactl`/`pw-metadata` that print what PipeWire prints. Check `bananasplit --list-ports` and `bananasplit --low-latency` on your own machine before relying on them live.
 * The same goes for 2.7's channel menus, the virtual microphones of A1–A3 and moving apps between channels: they were tested against the mock JACK server and the fake `pactl`, not a real PipeWire. The sample-rate fix was tested with a mock libjack that behaves as PipeWire's did here; record a minute and check its length on your own system once.
+* The 2.7.1 fixes were tested the same way, against the mock JACK server and the fake `pactl`; how PipeWire names JACK clients and reuses module numbers was checked in PipeWire's source code, not on a running system.
 * An app moved into a strip is moved the way pavucontrol does it. Some apps pick their output again themselves when they restart (or follow the default output); pick the strip in their own settings then.

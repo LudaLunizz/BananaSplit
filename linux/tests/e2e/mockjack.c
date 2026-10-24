@@ -3,6 +3,8 @@
  * performs connections, runs the client's process callback in a separate
  * thread and checks what comes out. Results go to $MOCKJACK_REPORT. */
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <math.h>
 #include <pthread.h>
 #include <regex.h>
@@ -34,6 +36,7 @@ static xrun_cb xcb; static void *xarg;
 static preg_cb rcb; static void *rarg;
 static srate_cb scb; static void *sarg;
 static conn_cb ccb; static void *carg;
+static shut_cb shcb; static void *sharg;
 /* The graph's sample rate. MOCKJACK_RATE sets it; MOCKJACK_PRE_RATE is what
    jack_get_sample_rate says until the first cycle ran (PipeWire's libjack
    reports the PIPEWIRE_LATENCY denominator there); MOCKJACK_RATE_SWITCH=C:R
@@ -56,6 +59,14 @@ static int add_port(const char *full, unsigned long flags, int ours) {
   ports[nports].flags = flags; ports[nports].ours = ours;
   return nports++;
 }
+/* MOCKJACK_HIDE_FILE=F: the JACK clients named in F, one per line, are gone
+   (a device unplugged): their ports are not listed, cannot be connected,
+   and their connections go; F is looked at every 50 cycles. */
+static char hidden[16][128]; static int nhidden = 0;
+static int is_hidden(const char *port) {
+  for (int h = 0; h < nhidden; h++) { size_t n = strlen(hidden[h]); if (n && !strncmp(port, hidden[h], n) && port[n] == ':') return 1; }
+  return 0;
+}
 static int find(const char *n) { for (int i = 0; i < nports; i++) if (!strcmp(ports[i].name, n)) return i; return -1; }
 
 void *jack_client_open(const char *name, int opts, int *status, ...) {
@@ -69,15 +80,33 @@ void *jack_client_open(const char *name, int opts, int *status, ...) {
 #endif
   (void)opts; strncpy(cname, name, 63); if (status) *status = 0;
   if (getenv("MOCKJACK_DEVICES")) { /* the review's box: a webcam listed before the USB mic */
+    /* the mic's headphone output has the same description, so PipeWire adds
+       -63 to one of the two; MOCKJACK_YETI_SWAP: to the mic (the output
+       came first) */
+    const char *mic = "Yeti Stereo Microphone Analog Stereo", *out = "Yeti Stereo Microphone Analog Stereo-63";
+    if (getenv("MOCKJACK_YETI_SWAP")) { const char *t = mic; mic = out; out = t; }
+    char b[128];
     add_port("Razer Kiyo Analog Stereo:capture_FL", 0x2 | 0x4, 0); add_port("Razer Kiyo Analog Stereo:capture_FR", 0x2 | 0x4, 0);
-    add_port("Yeti Stereo Microphone Analog Stereo:capture_FL", 0x2 | 0x4, 0);
-    add_port("Yeti Stereo Microphone Analog Stereo:capture_FR", 0x2 | 0x4, 0);
-    /* the mic's headphone output: same description, so PipeWire adds -63 */
-    add_port("Yeti Stereo Microphone Analog Stereo-63:playback_FL", 0x1 | 0x4, 0);
-    add_port("Yeti Stereo Microphone Analog Stereo-63:playback_FR", 0x1 | 0x4, 0);
-    add_port("Yeti Stereo Microphone Analog Stereo-63:monitor_FL", 0x2 | 0x4, 0);
-    add_port("Yeti Stereo Microphone Analog Stereo-63:monitor_FR", 0x2 | 0x4, 0);
+    snprintf(b, sizeof b, "%s:capture_FL", mic); add_port(b, 0x2 | 0x4, 0);
+    snprintf(b, sizeof b, "%s:capture_FR", mic); add_port(b, 0x2 | 0x4, 0);
+    snprintf(b, sizeof b, "%s:playback_FL", out); add_port(b, 0x1 | 0x4, 0);
+    snprintf(b, sizeof b, "%s:playback_FR", out); add_port(b, 0x1 | 0x4, 0);
+    snprintf(b, sizeof b, "%s:monitor_FL", out); add_port(b, 0x2 | 0x4, 0);
+    snprintf(b, sizeof b, "%s:monitor_FR", out); add_port(b, 0x2 | 0x4, 0);
   }
+  if (getenv("MOCKJACK_TWIN")) { /* two microphones of the same model: PipeWire numbers the second */
+    add_port("USB Audio:capture_FL", 0x2 | 0x4, 0); add_port("USB Audio:capture_FR", 0x2 | 0x4, 0);
+    add_port("USB Audio-80:capture_FL", 0x2 | 0x4, 0); add_port("USB Audio-80:capture_FR", 0x2 | 0x4, 0);
+  }
+  if (getenv("MOCKJACK_HEADSET")) { /* a headset whose mono mic and stereo output share a name:
+                                       PipeWire shows them as one JACK client */
+    add_port("USB Headset:capture_MONO", 0x2 | 0x4, 0);
+    add_port("USB Headset:playback_FL", 0x1 | 0x4, 0); add_port("USB Headset:playback_FR", 0x1 | 0x4, 0);
+    add_port("USB Headset:monitor_FL", 0x2 | 0x4, 0); add_port("USB Headset:monitor_FR", 0x2 | 0x4, 0);
+  }
+  /* MOCKJACK_FD_MARK=FILE: an open descriptor without close-on-exec, like
+     JACK2's socket to the server */
+  if (getenv("MOCKJACK_FD_MARK")) (void)open(getenv("MOCKJACK_FD_MARK"), O_RDONLY | O_CREAT, 0600);
   /* external ports: physical capture (outputs), physical playback (inputs), an app */
   add_port("Speakers:monitor_FL", 0x2 | 0x4, 0); add_port("Speakers:monitor_FR", 0x2 | 0x4, 0);
   add_port("system:capture_1", 0x2 | 0x4, 0); add_port("system:capture_2", 0x2 | 0x4, 0);
@@ -106,7 +135,7 @@ int jack_set_xrun_callback(void *c, xrun_cb f, void *a) { (void)c; xcb = f; xarg
 int jack_set_port_registration_callback(void *c, preg_cb f, void *a) { (void)c; rcb = f; rarg = a; return 0; }
 int jack_set_sample_rate_callback(void *c, srate_cb f, void *a) { (void)c; scb = f; sarg = a; return 0; }
 int jack_set_port_connect_callback(void *c, conn_cb f, void *a) { (void)c; ccb = f; carg = a; return 0; }
-void jack_on_shutdown(void *c, shut_cb f, void *a) { (void)c; (void)f; (void)a; }
+void jack_on_shutdown(void *c, shut_cb f, void *a) { (void)c; shcb = f; sharg = a; }
 void *jack_port_register(void *c, const char *s, const char *t, unsigned long fl, unsigned long b) {
   (void)c; (void)b;
   if (strcmp(t, "32 bit float mono audio")) return NULL;
@@ -145,7 +174,7 @@ const char **jack_port_get_all_connections(void *c, void *port) {
 int jack_connect(void *c, const char *a, const char *b) {
   (void)c; pthread_mutex_lock(&mu);
   int s = find(a), d = find(b), rc = 0;
-  if (s < 0 || d < 0 || !(ports[s].flags & 2) || !(ports[d].flags & 1)) rc = EINVAL;
+  if (s < 0 || d < 0 || !(ports[s].flags & 2) || !(ports[d].flags & 1) || is_hidden(a) || is_hidden(b)) rc = EINVAL;
   else {
     for (int i = 0; i < nconns; i++) if (conns[i].src == s && conns[i].dst == d) rc = EEXIST;
     if (!rc) { conns[nconns].src = s; conns[nconns].dst = d; nconns++; }
@@ -158,11 +187,14 @@ const char **jack_get_ports(void *c, const char *pat, const char *type, unsigned
   (void)c; (void)type; regex_t re; int use = pat && *pat;
   if (use && regcomp(&re, pat, REG_EXTENDED | REG_NOSUB)) return NULL;
   const char **out = calloc(MAXP + 1, sizeof *out); int k = 0;
+  pthread_mutex_lock(&mu); /* (the server thread changes what is hidden) */
   for (int i = 0; i < nports; i++) {
     if ((ports[i].flags & flags) != flags) continue;
+    if (is_hidden(ports[i].name)) continue;
     if (use && regexec(&re, ports[i].name, 0, NULL, 0)) continue;
     out[k++] = ports[i].name;
   }
+  pthread_mutex_unlock(&mu);
   if (use) regfree(&re);
   if (!k) { free(out); return NULL; }
   return out;
@@ -206,7 +238,29 @@ static void *server(void *u) {
   int no_cb = getenv("MOCKJACK_NO_SRATE_CB") != NULL;
   struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
   long long due = 0; /* ns after t0 at which this cycle starts */
+  /* MOCKJACK_SHUTDOWN_AT=C: the server goes away before cycle C (like a
+     PipeWire restart): the shutdown callback, and no more cycles */
+  int shut_at = getenv("MOCKJACK_SHUTDOWN_AT") ? atoi(getenv("MOCKJACK_SHUTDOWN_AT")) : -1;
   for (int cyc = 0; running && cyc < max_cycles; cyc++) {
+    if (cyc == shut_at && shcb) { shcb(sharg); break; }
+    if (getenv("MOCKJACK_HIDE_FILE") && cyc % 50 == 0) {
+      static time_t seen_m = 0; static long seen_ns = -1; struct stat sb;
+      time_t m = 0; long ns = 0;
+      if (!stat(getenv("MOCKJACK_HIDE_FILE"), &sb)) { m = sb.st_mtim.tv_sec; ns = sb.st_mtim.tv_nsec; }
+      if (m != seen_m || ns != seen_ns) {
+        seen_m = m; seen_ns = ns;
+        pthread_mutex_lock(&mu);
+        nhidden = 0;
+        FILE *hf = fopen(getenv("MOCKJACK_HIDE_FILE"), "r");
+        if (hf) { while (nhidden < 16 && fgets(hidden[nhidden], sizeof hidden[0], hf)) { hidden[nhidden][strcspn(hidden[nhidden], "\n")] = 0; nhidden++; } fclose(hf); }
+        for (int c = 0; c < nconns; ) {
+          if (is_hidden(ports[conns[c].src].name) || is_hidden(ports[conns[c].dst].name)) { conns[c] = conns[--nconns]; } else c++;
+        }
+        pthread_mutex_unlock(&mu);
+        if (ccb) ccb(0, 0, 0, carg);
+        if (rcb) rcb(0, 0, rarg);
+      }
+    }
     if (cyc == switch_at && switch_rate) {
       rate = switch_rate;
       if (scb && !no_cb) scb(rate, sarg);

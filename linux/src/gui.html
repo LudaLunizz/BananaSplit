@@ -357,6 +357,9 @@ button { cursor: pointer; }
 .session h3 { margin: 0; font-size: 9.5px; letter-spacing: .12em; font-weight: 700; text-transform: uppercase; }
 .session p { margin: 10px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
 .session p.err { color: var(--red); }
+/* a long status (every connection that failed, say) keeps to three lines,
+   so the bottom bar never grows into the strips; all of it is in its tooltip */
+.session #status { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
 .session .stats { font-size: 9px; letter-spacing: .04em; }
 .session .stats b { color: var(--text); font-weight: 600; }
 .session .stats .bad { color: var(--red); }
@@ -653,10 +656,15 @@ function bytes(n) {
 
 // ---- talking to BananaSplit ---------------------------------------------------
 let toastUntil = 0;
-function toast(text, isErr) {
+// the session's status line (three lines at most: the whole text is its tooltip)
+function setStatus(text, isErr) {
   const f = $("status");
   setText(f, text);
+  if (f.title !== text) f.title = text;
   f.classList.toggle("err", !!isErr);
+}
+function toast(text, isErr) {
+  setStatus(text, isErr);
   toastUntil = performance.now() + (isErr ? 6000 : 3500);
 }
 async function send(params, quiet) {
@@ -1689,9 +1697,7 @@ function render(S) {
 
   // session
   if (performance.now() > toastUntil) {
-    const f = $("status");
-    f.classList.remove("err");
-    setText(f, S.status || "Connected. Everything you change here is live; Menu › Save settings keeps it for the next start.");
+    setStatus(S.status || "Connected. Everything you change here is live; Menu › Save settings keeps it for the next start.", false);
   }
   const st = $("stats");
   const rttTxt = (S.measured ? "" : "≈") + S.rtt.toFixed(1) + " ms";
@@ -1712,8 +1718,11 @@ function renderRecorder(S, now) {
   const t = takes.find((x) => x.key === key);
   const idx = t ? takes.indexOf(t) : -1;
   if (R.on) {
-    const f = (R.files[0] || "").split("/").pop();
-    setText($("taketitle"), "REC · " + (R.takeMode === "multi" ? R.files.length + " tracks" : "mix"));
+    // the file being written: the take continues in new files at 4 GB and
+    // when the server changes its sample rate (one per track each time)
+    const n = Math.max(1, R.tracks || 1);
+    const f = (R.files[Math.max(0, R.files.length - n)] || "").split("/").pop();
+    setText($("taketitle"), "REC · " + (R.takeMode === "multi" ? n + (n === 1 ? " track" : " tracks") : "mix"));
     setText($("takeinfo"), f);
   } else if (t) {
     $("taketitle").replaceChildren(document.createTextNode("Take " + pad2(t.n) + "  /  "), el("b", null, t.label));

@@ -45,7 +45,11 @@ grep -q "^CONN BananaSplit:B1_L -> BananaSplit-Out-B1:input_FL$" "$MOCKJACK_REPO
 grep -q "^CONN BananaSplit:B2_R -> BananaSplit-Out-B2:input_FR$" "$MOCKJACK_REPORT" || fail "B2 -> virtual mic"
 grep -q "removed 1 virtual cable left behind by a BananaSplit that was killed" "$TMP/stderr.txt" || fail "stale cable not reported"
 # a clean exit disarms the watchdog: it must not sweep again after bananasplit
-[ "$(grep -c '^pactl list short modules$' "$PACTL_LOG")" -eq 1 ] || fail "watchdog swept after a clean exit"
+# (which lists the modules itself at start, and on exit to remove its cables
+# by their names): the last call is bananasplit's last unload
+LAST_LIST=$(grep -n '^pactl list short modules$' "$PACTL_LOG" | tail -n 1 | cut -d: -f1)
+LAST_UNLOAD=$(grep -n '^pactl unload-module 1[0-9][0-9]$' "$PACTL_LOG" | tail -n 1 | cut -d: -f1)
+{ [ "$LAST_LIST" -lt "$LAST_UNLOAD" ] && [ "$LAST_UNLOAD" -eq "$(wc -l < "$PACTL_LOG")" ]; } || fail "watchdog swept after a clean exit"
 echo "E2E PASS: 8 virtual cables created, wired, and removed; stale cable cleaned up"
 rm -rf "$TMP"
 
@@ -389,3 +393,12 @@ echo "E2E PASS: recordings carry the rate the server really runs at, play at 1.0
 # ---- phase 9: the channels' menus, cables on every channel, apps (2.7) ----
 python3 "$HERE/menus.py" "$BIN" "$HERE" || fail "9: channel menus"
 echo "E2E PASS: cables switched on any channel while running; apps moved into strips and buses; devices connected and saved"
+
+# ---- phase 10: the fixes of 2.7.1 ----
+# the desktop's default device moving, apps listed once, a headset's mono mic,
+# what `pactl subscribe` inherits, cables removed behind BananaSplit's back,
+# two instances whose names differ only in case, renumbered JACK names, the
+# default input's mark, the menus' answers and tooltips, takes that continue
+# in new files, and the audio server shutting down
+python3 "$HERE/fixes.py" "$BIN" "$HERE" || fail "10: the 2.7.1 fixes"
+echo "E2E PASS: the 2.7.1 fixes (defaults followed, cables remade, numbered names, settings saved on server shutdown, ...)"
