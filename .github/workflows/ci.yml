@@ -24,7 +24,7 @@ jobs:
       run:
         working-directory: linux
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -45,7 +45,7 @@ jobs:
         run: sh packaging/build-packages.sh
 
       - name: Upload packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bananasplit-linux-x86_64
           path: linux/dist/*
@@ -59,7 +59,7 @@ jobs:
       run:
         working-directory: linux
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system packages
         run: |
@@ -88,7 +88,7 @@ jobs:
       run:
         working-directory: linux
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -96,7 +96,7 @@ jobs:
         with:
           workspaces: linux
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -121,7 +121,7 @@ jobs:
       run:
         working-directory: windows
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -140,7 +140,7 @@ jobs:
         run: cargo test --locked
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bananasplit-windows-x64
           path: windows/target/x86_64-pc-windows-msvc/release/bananasplit.exe
