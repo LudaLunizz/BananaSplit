@@ -11,7 +11,7 @@ rust-version = "1.85"
 [dependencies]
 
 [target.'cfg(windows)'.dependencies]
-tao = "0.34"
+tao = "0.37"
 wry = "0.57"
 
 [lib]
