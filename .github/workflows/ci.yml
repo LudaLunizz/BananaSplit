@@ -151,3 +151,28 @@ jobs:
           path: windows/target/x86_64-pc-windows-msvc/release/bananasplit.exe
           if-no-files-found: error
           retention-days: 14
+
+  windows-launch:
+    name: Windows launch
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bananasplit-windows-x64
+          path: dist
+
+      - name: Start, open, restart and quit the app
+        shell: pwsh
+        run: ./windows/tests/launch/smoke.ps1 -Exe dist/bananasplit.exe
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-launch-screenshots
+          path: ${{ runner.temp }}/bs-smoke/*.png
+          if-no-files-found: ignore
+          retention-days: 14
