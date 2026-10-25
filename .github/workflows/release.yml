@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    # v2.7.1, or the project's folder style 0.2.7.1 (0.<version>).
+    tags: ['v*', '0.*']
   workflow_dispatch:
     inputs:
       tag:
@@ -34,8 +35,8 @@ jobs:
       - name: Check tag matches crate version
         run: |
           version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)
-          if [ "v$version" != "$TAG" ]; then
-            echo "::error::Tag $TAG does not match linux/Cargo.toml version $version"
+          if [ "v$version" != "$TAG" ] && [ "0.$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match linux/Cargo.toml version $version (v$version or 0.$version)"
             exit 1
           fi
 
@@ -67,8 +68,8 @@ jobs:
       - name: Check tag matches crate version
         run: |
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
-          if ("v$version" -ne $env:TAG) {
-            Write-Output "::error::Tag $env:TAG does not match windows/Cargo.toml version $version"
+          if ("v$version" -ne $env:TAG -and "0.$version" -ne $env:TAG) {
+            Write-Output "::error::Tag $env:TAG does not match windows/Cargo.toml version $version (v$version or 0.$version)"
             exit 1
           }
 
@@ -79,7 +80,8 @@ jobs:
 
       - name: Package
         run: |
-          $version = $env:TAG.TrimStart('v')
+          # File names use the program's version (2.7.1), whatever the tag style.
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
           $name = "bananasplit-$version-windows-x64"
           $stage = Join-Path $env:RUNNER_TEMP $name
           New-Item -ItemType Directory -Force -Path $stage, dist | Out-Null
