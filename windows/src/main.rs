@@ -281,11 +281,11 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
         eprintln!("bananasplit: {n}");
     }
     let mut window = Window { proc: None, url: url.clone() };
+    // Opened after the first frame is published (it takes a moment).
+    let mut open_window = !opts.no_open;
     if opts.no_open {
         // In the background (the autostart entry): no console window either.
         sys::leave_own_console();
-    } else {
-        window.start(cfg);
     }
 
     let mut status = String::new();
@@ -468,6 +468,9 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             },
         ));
 
+        if std::mem::take(&mut open_window) {
+            window.start(cfg);
+        }
         if last_save.elapsed() >= Duration::from_secs(120) {
             capture_all(cfg, &ctx.shared, &rec, &ctx.vban);
             cfg.recorder.play_to = ctx.player.routes();

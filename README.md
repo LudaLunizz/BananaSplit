@@ -131,6 +131,13 @@ node tests/gui/ui_check.js          # every GUI control in Chromium (Node.js, Pl
 sh packaging/build-packages.sh      # builds and verifies the .deb and portable package
 ```
 
+```powershell
+cd windows
+cargo test                          # unit tests
+pwsh tests/launch/smoke.ps1 -Exe target\release\bananasplit.exe
+                                    # starts the app on the desktop: window, second start, close, quit
+```
+
 All of these run in CI on every push and pull request.
 
 ## Releasing

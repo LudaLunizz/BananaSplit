@@ -110,8 +110,7 @@ Annotate 'notice' "--list-devices (exit $LASTEXITCODE)" $l
 $p = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\mixer.err" -RedirectStandardOutput "$work\mixer.out"
 Check (Until { (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "the mixer answers on $url"
 $state = $null
-try { $state = Get-Http '/api/state' | ConvertFrom-Json } catch { }
-Check ($null -ne $state) "its state is valid JSON"
+Check (Until { $script:state = Get-Http '/api/state' | ConvertFrom-Json; $null -ne $script:state.ch }) "it publishes its state (valid JSON, with the channels)"
 if ($state) {
     $line = "state: rate={0} block={1} cables={2} status='{3}' channels={4}" -f $state.sr, $state.bs, $state.cables, $state.status, @($state.ch).Count
     Write-Output $line
