@@ -523,7 +523,8 @@ $again = $null
 Check (Until { $script:again = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*--window*' -and $_.ExecutablePath -like "$upd\app\*" }) | Select-Object -First 1; $null -ne $script:again } 20) "the window opens again"
 if ($again) { Check ($again.ExecutablePath -like '*bananasplit.exe.old') "from the program the mixer runs ($($again.ExecutablePath))" }
 Check (-not ((Get-Content -Raw "$upd\marker.txt" -ErrorAction SilentlyContinue) -match '--window')) "not from the new version"
-Check (Until { (App-Windows).Count -ge 1 } 30) "and shows"
+# (Its process is named after bananasplit.exe.old, so App-Windows does not see it.)
+if ($again) { Check (Until { @([BsSmoke.Win]::Titled('BananaSplit') | Where-Object { [BsSmoke.Win]::ProcessOf($_) -eq [uint32]$again.ProcessId }).Count -ge 1 } 30) "and shows" }
 $oldPid = $pu.Id
 try { [void](Post-Cmd 'op=update&a=restart') } catch { }
 Check ($pu.WaitForExit(20000) -and $pu.ExitCode -eq 0) "Restart now: the old mixer saves and quits"
