@@ -272,77 +272,114 @@ VBAN audio is not encrypted or authenticated, in Voicemeeter or here. BananaSpli
 
 ## Configuration: `~/.config/bananasplit/bananasplit.ini`
 
-Created with defaults on the first run (see `bananasplit --print-default-config`). Parsing is strict: a typo produces an error with a line number instead of being ignored.
+Created with defaults on the first run (see `bananasplit --print-default-config`). Parsing is strict: a typo produces an error with a line number instead of being ignored. A value runs to the end of its line, so comments (`#` or `;`) go on lines of their own.
 
 ```ini
 [global]
 client_name = BananaSplit
-buffer_size = 128          # period requested from PipeWire (PIPEWIRE_LATENCY); 0 = don't ask
-force_buffer_size = false  # true = jack_set_buffer_size() (JACK2: changes it for every client)
+# period requested from PipeWire (PIPEWIRE_LATENCY); 0 = don't ask
+buffer_size = 128
+# true = jack_set_buffer_size() (JACK2: changes it for every client)
+force_buffer_size = false
 create_cables = true
 
 [gui]
-theme = dark               # dark | light | auto (follows the desktop)
-close_to_tray = true       # closing the window keeps BananaSplit running in the tray
-zoom = 1                   # 0.5 .. 2
-window = 1780x1000         # the window's size, saved when it closes
-scene = Live Room          # the scene loaded last (the SCENE menu shows it)
+# dark | light | auto (follows the desktop)
+theme = dark
+# closing the window keeps BananaSplit running in the tray
+close_to_tray = true
+# 0.5 .. 2
+zoom = 1
+# the window's size, saved when it closes
+window = 1780x1000
+# the scene loaded last (the SCENE menu shows it)
+scene = Live Room
 
 [strip1]
 name = Mic
-gain_db = 0.0              # the fader: -60 .. +12
-trim_db = 0.0              # the GAIN knob (input gain): -24 .. +24
-pan = 0.0                  # -1 (left) .. 1 (right); on a bus, the balance
+# the fader: -60 .. +12
+gain_db = 0.0
+# the GAIN knob (input gain): -24 .. +24
+trim_db = 0.0
+# -1 (left) .. 1 (right); on a bus, the balance
+pan = 0.0
 mono = true
-routes = B1                # any of A1,A2,A3,B1,B2 or none
-connect = @default         # the default microphone; may be repeated
+# any of A1,A2,A3,B1,B2 or none
+routes = B1
+# the default microphone; may be repeated
+connect = @default
 
 [strip2]
-connect = ^Firefox:output_F[LR]$   # or any JACK port regex
+# any JACK port regex works too
+connect = ^Firefox:output_F[LR]$
 
 [bus.A1]
 name = Speakers
-connect = @default         # the default output device
-cable = on                 # also a virtual microphone, BananaSplit-Out-A1 (A1-A3: default off)
+# the default output device
+connect = @default
+# also a virtual microphone, BananaSplit-Out-A1 (A1-A3: default off)
+cable = on
 [bus.A2]
-connect = ^Yeti Stereo Microphone Analog Stereo-63:   # from `bananasplit --list-ports`
+# from `bananasplit --list-ports`
+connect = ^Yeti Stereo Microphone Analog Stereo-63:
 [bus.B1]
-routes = A2                # buses this bus feeds after its fader (never itself, never a loop)
+# buses this bus feeds after its fader (never itself, never a loop)
+routes = A2
 
 [strip6]
-cable = off                # no virtual cable for this strip (strips, B1, B2: default on)
+# no virtual cable for this strip (strips, B1, B2: default on)
+cable = off
 
 [strip3]
-eq = on                    # this channel's EQ: on | off (default off)
-eq1 = lowcut 80 +0 0.71    # band 1-6: type freq gain Q [off]
-eq4 = bell 3000 -4.5 2     # bands left out keep their defaults
+# this channel's EQ: on | off (default off)
+eq = on
+# band 1-6: type freq gain Q [off]
+eq1 = lowcut 80 +0 0.71
+# bands left out keep their defaults
+eq4 = bell 3000 -4.5 2
 
 [recorder]
 folder = ~/Music/BananaSplit
-format = wav24             # wav16 | wav24 | wav32f
-mode = mix                 # mix (one stereo file) | multi (one file per linked channel)
-links = 1,A1               # 1-6 = strips, A1-A3 / B1-B2 = buses, or none
-play_to = A1               # the buses recordings play on (any of A1..B2, or none)
+# wav16 | wav24 | wav32f
+format = wav24
+# mix (one stereo file) | multi (one file per linked channel)
+mode = mix
+# 1-6 = strips, A1-A3 / B1-B2 = buses, or none
+links = 1,A1
+# the buses recordings play on (any of A1..B2, or none)
+play_to = A1
 
 [vban]
-enabled = true             # default false: nothing listens
-port = 6980                # UDP; receives every incoming stream, sends every outgoing one
+# default false: nothing listens
+enabled = true
+# UDP; receives every incoming stream, sends every outgoing one
+port = 6980
 
-[vban.in1]                 # incoming streams: [vban.in1] .. [vban.in8]
+# incoming streams: [vban.in1] .. [vban.in8]
+[vban.in1]
 on = true
-name = Stream1             # the sender's stream name (case does not matter)
-from = 192.168.1.20        # the sender's IPv4 address, or any
-strip = 6                  # added to this strip's input (1-6)
-buffer_ms = 10             # reserve for late packets (0-200; raised by itself after dropouts)
+# the sender's stream name (case does not matter)
+name = Stream1
+# the sender's IPv4 address, or any
+from = 192.168.1.20
+# added to this strip's input (1-6)
+strip = 6
+# reserve for late packets (0-200; raised by itself after dropouts)
+buffer_ms = 10
 
-[vban.out1]                # outgoing streams: [vban.out1] .. [vban.out8]
+# outgoing streams: [vban.out1] .. [vban.out8]
+[vban.out1]
 on = true
 name = Linux
-to = 192.168.1.20          # the receiver's IPv4 address (x.x.x.255 = broadcast)
+# the receiver's IPv4 address (x.x.x.255 = broadcast)
+to = 192.168.1.20
 port = 6980
-source = B1                # 1-6 = a strip after its fader, A1-A3 / B1-B2 = a bus
-format = int16             # int16 | int24 | int32 | float32
-channels = 2               # 2 (stereo) | 1 (mono: (L+R)/2)
+# 1-6 = a strip after its fader, A1-A3 / B1-B2 = a bus
+source = B1
+# int16 | int24 | int32 | float32
+format = int16
+# 2 (stereo) | 1 (mono: (L+R)/2)
+channels = 2
 ```
 
 EQ types are `bell`, `lowshelf`, `highshelf`, `lowcut`, `highcut` and `notch`; the frequency is 20–20000 Hz, the gain −24 to +24 dB (ignored by the cuts and the notch) and Q 0.1–30. BananaSplit writes only the bands and streams that differ from the defaults.

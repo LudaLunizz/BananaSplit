@@ -622,6 +622,10 @@ fn rx_thread(inner: &Inner) {
                                 Some(k) => {
                                     let r = streams[k].packet(tap, k, &h, data, from, now, fs, cfg.ins[k].buffer_ms as f64);
                                     errors[k] = r.err();
+                                    if streams[k].from != Some(from) {
+                                        // a second sender of this stream (not played)
+                                        note_seen(&mut seen, &h, from, now);
+                                    }
                                 }
                                 None => note_seen(&mut seen, &h, from, now),
                             }

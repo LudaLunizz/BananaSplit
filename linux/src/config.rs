@@ -424,6 +424,17 @@ pub fn format_routes(mask: u8) -> String {
     if v.is_empty() { "none".into() } else { v.join(",") }
 }
 
+/// An error on a line with a `#` after its value: the value runs to the end
+/// of the line (names may contain `#`), so say where comments go.
+fn with_comment_hint(raw: &str, msg: String) -> String {
+    let tail = raw.find(['=', ']']).map_or("", |i| &raw[i + 1..]);
+    if tail.contains(" #") || tail.contains("\t#") {
+        format!("{msg} (a comment goes on a line of its own: a value runs to the end of its line)")
+    } else {
+        msg
+    }
+}
+
 fn valid_client_name(v: &str) -> bool {
     !v.is_empty() && v.len() <= 32 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -441,7 +452,7 @@ impl Config {
 
         for (idx, raw) in text.lines().enumerate() {
             let line_no = idx + 1;
-            let err = |msg: String| ParseError { line: line_no, msg };
+            let err = |msg: String| ParseError { line: line_no, msg: with_comment_hint(raw, msg) };
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
                 continue;
@@ -882,6 +893,30 @@ fn config_home() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
+    /// The example in the README is a config file people copy: it must load.
+    #[test]
+    fn the_readme_example_loads() {
+        let readme = include_str!("../README.md");
+        let start = readme.find("```ini\n[global]").expect("the README has the example") + "```ini\n".len();
+        let block = &readme[start..start + readme[start..].find("```").unwrap()];
+        let c = Config::parse(block).unwrap_or_else(|e| panic!("README example: {e:?}"));
+        assert_eq!(c.buffer_size, 128);
+        assert_eq!(c.strips[1].connect, ["^Firefox:output_F[LR]$"]);
+        assert_eq!(c.recorder.folder, "~/Music/BananaSplit");
+    }
+
+    #[test]
+    fn a_comment_after_a_value_is_explained() {
+        let e = Config::parse("[global]\nbuffer_size = 128   # period\n").unwrap_err();
+        assert!(e.msg.contains("a comment goes on a line of its own"), "{e:?}");
+        let e = Config::parse("[vban.in1]   # incoming\n").unwrap_err();
+        assert!(e.msg.contains("a comment goes on a line of its own"), "{e:?}");
+        // a name may contain '#'
+        assert_eq!(Config::parse("[strip1]\nname = Mic #2\n").unwrap().strips[0].name, "Mic #2");
+        let e = Config::parse("[global]\nbuffer_size = 12x\n").unwrap_err();
+        assert!(!e.msg.contains("comment"), "{e:?}");
+    }
     use super::*;
 
     #[test]

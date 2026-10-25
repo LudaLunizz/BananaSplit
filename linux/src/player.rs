@@ -600,7 +600,10 @@ pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
     for e in dir.flatten() {
         let path = e.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
-        if name.len() < 5 || !name[name.len() - 4..].eq_ignore_ascii_case(".wav") || name.starts_with('.') {
+        // (bytes: the last four of a name in another script can start
+        // inside a character, and slicing the text there panics)
+        let b = name.as_bytes();
+        if b.len() < 5 || !b[b.len() - 4..].eq_ignore_ascii_case(b".wav") || name.starts_with('.') {
             continue;
         }
         let Ok(meta) = e.metadata() else { continue };
@@ -1359,6 +1362,24 @@ mod tests {
         std::fs::remove_file(d.join("Song.WAV")).unwrap();
         assert_eq!(scan(&d, &mut cache).len(), 2);
         assert!(scan(&d.join("missing"), &mut cache).is_empty());
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn scan_takes_names_in_any_script() {
+        // A name whose last four bytes start inside a character (a folder
+        // `録音`, a file `Größe`) used to panic the scan, and with it the
+        // thread that keeps the take list up to date, for good.
+        let d = tmpdir("scan-utf8");
+        std::fs::create_dir_all(d.join("録音")).unwrap();
+        std::fs::write(d.join("Größe"), b"x").unwrap();
+        std::fs::write(d.join("新建文件夹.txt"), b"x").unwrap();
+        write_wav(&d.join("Bässe.wav"), Format::Wav16, 48000, 10, |_| (0.1, 0.1));
+        write_wav(&d.join("2026-10-21_14-03-05_1-Gitarre ä.wav"), Format::Wav16, 48000, 10, |_| (0.1, 0.1));
+        let t = scan(&d, &mut ScanCache::default());
+        let keys: Vec<&str> = t.iter().map(|t| t.key.as_str()).collect();
+        assert_eq!(keys, ["Bässe", "2026-10-21_14-03-05"], "{t:?}");
+        assert_eq!(t[1].tracks[0].label, "1-Gitarre ä");
         let _ = std::fs::remove_dir_all(d);
     }
 
