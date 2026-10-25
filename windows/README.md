@@ -14,7 +14,7 @@ The mixer core is shared with the [Linux app](../linux/README.md). See that manu
 
 Extract the release zip, put `bananasplit.exe` anywhere and start it. BananaSplit opens in its own window; no external browser is used.
 
-Closing the window leaves the mixer running. Use the quit button in the app or run `bananasplit.exe --quit`. Starting it again opens the running instance.
+Closing the window minimizes it and leaves the mixer running; turn off **Closing the window keeps it running** in the app menu to make closing it quit BananaSplit. Use the quit button in the app or run `bananasplit.exe --quit` to quit. Starting it again brings up the running instance's window. The window always closes with the mixer.
 
 ## Command line
 
@@ -22,7 +22,7 @@ Closing the window leaves the mixer running. Use the quit button in the app or r
 | --- | --- |
 | `--gui` | Run with the desktop window (default) |
 | `--headless` | Run the audio engine without any UI |
-| `--no-open`, `--hidden` | Start without opening the window |
+| `--no-open`, `--hidden` | Start in the background, without a window (started from a shortcut, also without a console window) |
 | `--gui-port PORT` | Use a specific local port (default `8790`) |
 | `--config FILE` | Use a custom config file |
 | `--list-devices` | List WASAPI recording and playback devices |
@@ -38,13 +38,14 @@ Closing the window leaves the mixer running. Use the quit button in the app or r
 | Scenes | `%APPDATA%\bananasplit\scenes\` |
 | Recordings | `~/Music/BananaSplit/` by default, configurable in the app or config |
 | Port file | `%LOCALAPPDATA%\bananasplit\<client>.port` |
+| Window (WebView2) data | `%LOCALAPPDATA%\bananasplit\WebView2\` |
 
 ## System integration
 
 From the app menu:
 
 - **Install to Start Menu** creates a shortcut.
-- **Start with Windows** registers BananaSplit under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+- **Start with Windows** registers BananaSplit under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. It then starts in the background, without a window; start BananaSplit to open it.
 
 ## Virtual cables
 

@@ -140,6 +140,8 @@ pub const WAIT_TIMEOUT: u32 = 0x102;
 // Console
 pub const STD_INPUT_HANDLE: u32 = -10i32 as u32;
 pub const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+pub const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+pub const FILE_TYPE_PIPE: u32 = 3;
 pub const ENABLE_PROCESSED_INPUT: u32 = 0x1;
 pub const ENABLE_LINE_INPUT: u32 = 0x2;
 pub const ENABLE_ECHO_INPUT: u32 = 0x4;
@@ -340,11 +342,18 @@ unsafe extern "system" {
     ) -> BOOL;
     pub fn ReadConsoleInputW(h: HANDLE, buf: *mut INPUT_RECORD, len: u32, read: *mut u32) -> BOOL;
     pub fn GetConsoleProcessList(list: *mut u32, count: u32) -> u32;
+    pub fn FreeConsole() -> BOOL;
+    pub fn SetStdHandle(which: u32, h: HANDLE) -> BOOL;
+    pub fn GetFileType(h: HANDLE) -> u32;
 }
+
+/// `AllowSetForegroundWindow`: any process.
+pub const ASFW_ANY: u32 = u32::MAX;
 
 #[cfg_attr(windows, link(name = "user32"))]
 unsafe extern "system" {
     pub fn MessageBoxW(hwnd: HWND, text: *const u16, caption: *const u16, kind: u32) -> i32;
+    pub fn AllowSetForegroundWindow(pid: u32) -> BOOL;
 }
 
 #[cfg_attr(windows, link(name = "shell32"))]

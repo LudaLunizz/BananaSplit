@@ -32,10 +32,12 @@ use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::time::{Duration, Instant};
 use win::{Session, SERVER_GONE};
 
-const VERSION: &str = "2.7.0";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const HELP: &str = "\
-BananaSplit 2.7.0 - 6-strip, 5-bus low-latency virtual audio mixer (Windows WASAPI)
+const HELP: &str = concat!(
+    "BananaSplit ",
+    env!("CARGO_PKG_VERSION"),
+    " - 6-strip, 5-bus low-latency virtual audio mixer (Windows WASAPI)
 
 USAGE:
     bananasplit [--config FILE] [--gui] [--headless] [--no-open]
@@ -47,7 +49,7 @@ USAGE:
 OPTIONS:
     --gui                Run the desktop app window (default)
     --gui-port PORT      GUI port (default 8790)
-    --no-open, --hidden  Do not open a window
+    --no-open, --hidden  Start in the background, without a window
     --headless           Run the audio engine without a UI
     --list-devices       List Windows audio endpoints
     --print-default-config
@@ -55,7 +57,8 @@ OPTIONS:
     --quit               Ask a running BananaSplit to quit
     -h, --help           Show this help
     -V, --version        Show the version
-";
+"
+);
 
 struct Args {
     path: PathBuf,
@@ -66,7 +69,6 @@ struct Args {
     list: bool,
     quit: bool,
     print_default: bool,
-    window_url: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -80,7 +82,6 @@ fn parse_args() -> Result<Args, String> {
         list: false,
         quit: false,
         print_default: false,
-        window_url: None,
     };
     while let Some(s) = args.next() {
         match s.as_str() {
@@ -91,7 +92,6 @@ fn parse_args() -> Result<Args, String> {
                 a.path = PathBuf::from(p);
             }
             "--gui" => {}
-            "--window" => a.window_url = Some(args.next().ok_or("missing URL after --window")?),
             "--headless" | "--no-gui" => a.headless = true,
             "--no-open" | "--hidden" => a.no_open = true,
             "--gui-port" => {
@@ -191,6 +191,63 @@ struct GuiOpts {
     no_open: bool,
 }
 
+/// The mixer's desktop window: a `bananasplit --window` process of its own
+/// (the protocol of the Linux window, see `gui::WindowProc`). It reads its
+/// input from the mixer, so it closes when the mixer ends, however it ends.
+struct Window {
+    proc: Option<gui::WindowProc>,
+    url: String,
+}
+
+impl Window {
+    fn start(&mut self, cfg: &Config) {
+        let opts = gui::WinOpts {
+            url: &self.url,
+            hidden: false,
+            close_to_tray: cfg.gui.close_to_tray,
+            size: cfg.gui.window,
+            token: None,
+        };
+        match gui::WindowProc::spawn(&opts) {
+            Ok(p) => self.proc = Some(p),
+            Err(e) => {
+                eprintln!("bananasplit: no window: {e}");
+                let text = format!(
+                    "BananaSplit could not open its desktop window.\n\n{e}\n\nInstall the Microsoft Edge \
+                     WebView2 Runtime and start BananaSplit again. The mixer keeps running; \
+                     `bananasplit --quit` stops it."
+                );
+                // Not on this thread: the mixer keeps running meanwhile.
+                std::thread::spawn(move || desktop::error_dialog(&text));
+            }
+        }
+    }
+
+    /// Bring it up (BananaSplit was started again), or open it again.
+    fn show(&mut self, cfg: &Config) {
+        let alive = self.proc.as_mut().is_some_and(gui::WindowProc::alive);
+        match &mut self.proc {
+            Some(p) if alive => p.send("show -"),
+            _ => {
+                self.proc = None;
+                self.start(cfg);
+            }
+        }
+    }
+
+    fn send(&mut self, line: &str) {
+        if let Some(p) = &mut self.proc {
+            p.send(line);
+        }
+    }
+
+    fn close(&mut self) {
+        if let Some(p) = self.proc.take() {
+            p.close();
+        }
+    }
+}
+
 fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) -> Result<(), String> {
     let rec = ctx.rec.clone();
     let folder = rec_folder(&rec);
@@ -220,11 +277,15 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
         eprintln!("bananasplit: port {} is busy, using {port} instead", opts.port);
     }
     eprintln!("bananasplit: GUI at {url}  (quit with the power button, or Ctrl-C)");
-    if !opts.no_open {
-        let _ = gui::open_window(&url);
-    }
     for n in notes {
         eprintln!("bananasplit: {n}");
+    }
+    let mut window = Window { proc: None, url: url.clone() };
+    if opts.no_open {
+        // In the background (the autostart entry): no console window either.
+        sys::leave_own_console();
+    } else {
+        window.start(cfg);
     }
 
     let mut status = String::new();
@@ -280,16 +341,15 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                     hub.set_names(channel_names(cfg));
                     status = "renamed".to_string();
                 }
-                Request::Show(_) => {
-                    if !opts.no_open {
-                        let _ = gui::open_window(&url);
-                    }
-                }
+                Request::Show(_) => window.show(cfg),
                 Request::Theme(t) => {
                     cfg.gui.theme = t;
                     hub.set_look(cfg.gui.theme, cfg.gui.zoom);
                 }
-                Request::CloseToTray(b) => cfg.gui.close_to_tray = b,
+                Request::CloseToTray(b) => {
+                    cfg.gui.close_to_tray = b;
+                    window.send(&format!("close-to-tray {}", u8::from(b)));
+                }
                 Request::Zoom(z) => {
                     cfg.gui.zoom = z;
                     hub.set_look(cfg.gui.theme, cfg.gui.zoom);
@@ -311,6 +371,21 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                     }
                     reply.send(r);
                 }
+            }
+        }
+        if let Some(p) = &mut window.proc {
+            for m in p.poll() {
+                match m {
+                    // Closed with "Closing the window keeps it running" off.
+                    gui::WinMsg::Quit => quit = true,
+                    gui::WinMsg::Size(w, h) => cfg.gui.window = Some((w.clamp(640, 16384), h.clamp(480, 16384))),
+                    // Tray menu items (Linux) and the reader's end.
+                    gui::WinMsg::Open | gui::WinMsg::Record | gui::WinMsg::Gone => {}
+                }
+            }
+            if !p.alive() {
+                eprintln!("bananasplit: the window closed; start BananaSplit again to open it");
+                window.proc = None;
             }
         }
         if quit {
@@ -347,7 +422,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
         let vst = ctx.vban.status();
         let vcfg = ctx.vban.config();
         let play = ctx.player.status();
-        let conn = ctx.session.connect(cfg, false).0;
+        let conn = ctx.session.wiring();
         let info = tui::Info {
             client: &cfg.client_name,
             sample_rate: st.sample_rate,
@@ -370,7 +445,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             scenes: &scene_list,
             autostart: hub.autostart.load(SeqCst),
             installed: hub.installed.load(SeqCst),
-            window: "app",
+            window: if window.proc.is_some() { "app" } else { "none" },
             tray: false,
         };
         hub.publish(gui::state_json(
@@ -410,15 +485,28 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     ctx.rec.shutdown();
     ctx.player.shutdown();
     ctx.vban.shutdown();
-    result?;
-    capture_all(cfg, &ctx.shared, &rec, &ctx.vban);
-    cfg.recorder.play_to = ctx.player.routes();
-    cfg.save(&ctx.path)
+    let saved = result.and_then(|()| {
+        capture_all(cfg, &ctx.shared, &rec, &ctx.vban);
+        cfg.recorder.play_to = ctx.player.routes();
+        cfg.save(&ctx.path)
+    });
+    // Then the window (it goes by itself once the mixer has exited, too):
+    // closing the console leaves BananaSplit only a few seconds in all.
+    window.close();
+    saved
 }
 
 // ---------------------------------------------------------------------------
 
 fn main() -> ExitCode {
+    // The mixer's window (a process of its own, started by the mixer).
+    #[cfg(windows)]
+    {
+        let argv: Vec<String> = std::env::args().collect();
+        if argv.get(1).map(String::as_str) == Some(gui::WINDOW_FLAG) {
+            return app_window::main(&argv[2..]);
+        }
+    }
     let args = match parse_args() {
         Ok(a) => a,
         Err(s) => {
@@ -430,16 +518,6 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    #[cfg(windows)]
-    if let Some(url) = args.window_url.as_deref() {
-        return match app_window::run(url) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                desktop::error_dialog(&format!("BananaSplit could not open its desktop window.\n\n{e}\n\nInstall the Microsoft Edge WebView2 Runtime and try again."));
-                ExitCode::FAILURE
-            }
-        };
-    }
     if args.print_default {
         print!("{}", Config::default().to_ini());
         return ExitCode::SUCCESS;
@@ -494,8 +572,13 @@ fn main() -> ExitCode {
             let url = gui::url(port);
             if args.no_open {
                 eprintln!("bananasplit: already running at {url}");
-            } else if !gui::open_window(&url) {
-                eprintln!("bananasplit: already running at {url} (could not open a browser)");
+                return ExitCode::SUCCESS;
+            }
+            // Its window comes to the front: this start may pass that on.
+            sys::allow_foreground();
+            if !gui::request_show(port, "") && !gui::open_window(&url) {
+                eprintln!("bananasplit: already running at {url}, but its window could not be opened");
+                return error_main();
             }
             return ExitCode::SUCCESS;
         }

@@ -689,7 +689,7 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     jstr(&mut o, &recorder::expand_home(&s.folder).display().to_string());
     o.push_str(",\"secs\":");
     jnum(&mut o, st.seconds(), 2);
-    let _ = write!(o, ",\"dropped\":{},\"clipped\":{},\"files\":[", st.dropped, st.clipped);
+    let _ = write!(o, ",\"dropped\":{},\"clipped\":{},\"tracks\":{},\"files\":[", st.dropped, st.clipped, st.tracks);
     for (k, p) in st.files.iter().enumerate() {
         if k > 0 {
             o.push(',');
@@ -1691,13 +1691,22 @@ pub fn open_window(url: &str) -> bool {
     false
 }
 
-/// Open the page in BananaSplit's own native desktop window.
+/// `bananasplit.exe` is a console program: its window process gets no
+/// console window of its own, and does not keep the mixer's open.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Open the page in a native desktop window of its own, not the mixer's
+/// (`WindowProc`): only when the running mixer cannot be asked to show its
+/// window. Closing it closes it.
 #[cfg(windows)]
 pub fn open_window(url: &str) -> bool {
-    let Ok(exe) = std::env::current_exe() else { return false };
+    use std::os::windows::process::CommandExt;
+    let Ok(exe) = crate::desktop::helper_exe() else { return false };
     Command::new(exe)
-        .arg("--window")
+        .arg(WINDOW_FLAG)
         .arg(url)
+        .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1753,6 +1762,7 @@ fn post_cmd(port: u16, body: &str) -> Option<(u16, String)> {
 
 pub const WINDOW_FLAG: &str = "--window";
 /// argv[0] of the helper processes (also when started from /proc/self/exe).
+#[cfg(unix)]
 const APP_ARG0: &str = "bananasplit";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1816,7 +1826,10 @@ impl WindowProc {
         #[cfg(unix)]
         cmd.arg0(APP_ARG0);
         #[cfg(windows)]
-        { let _ = cmd; }
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         cmd.arg(WINDOW_FLAG).arg(o.url).arg("--close-to-tray").arg(if o.close_to_tray { "1" } else { "0" });
         if o.hidden {
             cmd.arg("--hidden");
@@ -1829,7 +1842,8 @@ impl WindowProc {
         }
         // The launch token was for this window, not for anything it starts.
         cmd.env_remove("DESKTOP_STARTUP_ID").env_remove("XDG_ACTIVATION_TOKEN");
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+        // Windows: its messages come as `fail …` lines (it has no console).
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(if cfg!(windows) { Stdio::null() } else { Stdio::inherit() });
         let mut child = cmd.spawn().map_err(|e| format!("cannot start the window: {e}"))?;
         let stdout = child.stdout.take().ok_or("no pipe from the window")?;
         let (tx, rx) = mpsc::channel();

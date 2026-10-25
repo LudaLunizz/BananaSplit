@@ -1,8 +1,7 @@
 //! Windows desktop integration.
 
 use crate::win::ffi::{to_wide, wide};
-use std::ffi::OsStr;
-// use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -20,6 +19,26 @@ unsafe extern "system" {
 unsafe extern "system" {
     fn MessageBoxW(hwnd: *mut std::ffi::c_void, text: *const u16, caption: *const u16, ty: u32) -> i32;
 }
+
+#[link(name = "advapi32")]
+unsafe extern "system" {
+    fn RegGetValueW(key: *mut std::ffi::c_void, sub: *const u16, value: *const u16, flags: u32, ty: *mut u32, data: *mut std::ffi::c_void, len: *mut u32) -> i32;
+    fn RegSetKeyValueW(key: *mut std::ffi::c_void, sub: *const u16, value: *const u16, ty: u32, data: *const std::ffi::c_void, len: u32) -> i32;
+    fn RegDeleteKeyValueW(key: *mut std::ffi::c_void, sub: *const u16, value: *const u16) -> i32;
+}
+
+/// `HKEY_CURRENT_USER`: `(HKEY)(ULONG_PTR)(LONG)0x80000001`, sign-extended.
+fn hkcu() -> *mut std::ffi::c_void {
+    0x8000_0001u32 as i32 as isize as *mut std::ffi::c_void
+}
+const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const RUN_VALUE: &str = "BananaSplit";
+const REG_SZ: u32 = 1;
+const RRF_RT_ANY: u32 = 0xffff;
+const ERROR_FILE_NOT_FOUND: i32 = 2;
+/// For the console programs started here (PowerShell): no console window,
+/// also when BananaSplit runs in the background without one.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const SW_SHOWNORMAL: i32 = 1;
 const MB_OK: u32 = 0x00000000;
@@ -50,18 +69,19 @@ pub fn open_folder(path: &Path) -> Result<(), String> {
     }
 }
 
+/// Start with Windows: the `Run` entry, with the registry functions (rather
+/// than `reg.exe`: `autostart_enabled` is asked every two seconds).
 fn reg_set_run(enable: bool) -> Result<(), String> {
-    let name = wide("BananaSplit");
-    let exe = exe_path();
-    let cmd = format!("\"{}\" --gui --no-open", exe.display());
-    let cmd_w = to_wide(&cmd);
-    let hkcu = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    let (sub, name) = (wide(RUN_KEY), wide(RUN_VALUE));
     if enable {
-        let status = Command::new("reg").args(["add", hkcu, "/v", "BananaSplit", "/t", "REG_SZ", "/d", &cmd, "/f"]).status();
-        match status { Ok(s) if s.success() => Ok(()), _ => Err("failed to add to Windows autostart".into()) }
+        let cmd = wide(&format!("\"{}\" --gui --no-open", exe_path().display()));
+        // SAFETY: NUL-terminated UTF-16 strings; `len` is the data's size in bytes, NUL included.
+        let r = unsafe { RegSetKeyValueW(hkcu(), sub.as_ptr(), name.as_ptr(), REG_SZ, cmd.as_ptr().cast(), (cmd.len() * 2) as u32) };
+        if r == 0 { Ok(()) } else { Err(format!("failed to add BananaSplit to the Windows autostart (error {r})")) }
     } else {
-        let _ = Command::new("reg").args(["delete", hkcu, "/v", "BananaSplit", "/f"]).status();
-        Ok(())
+        // SAFETY: NUL-terminated UTF-16 strings.
+        let r = unsafe { RegDeleteKeyValueW(hkcu(), sub.as_ptr(), name.as_ptr()) };
+        if r == 0 || r == ERROR_FILE_NOT_FOUND { Ok(()) } else { Err(format!("failed to remove BananaSplit from the Windows autostart (error {r})")) }
     }
 }
 
@@ -71,8 +91,10 @@ pub fn set_autostart(enable: bool) -> Result<String, String> {
 }
 
 pub fn autostart_enabled() -> bool {
-    let out = Command::new("reg").args(["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "BananaSplit"]).output();
-    matches!(out, Ok(o) if o.status.success())
+    let (sub, name) = (wide(RUN_KEY), wide(RUN_VALUE));
+    let mut len = 0u32;
+    // SAFETY: NUL-terminated UTF-16 strings; no data buffer, only its size is asked for.
+    unsafe { RegGetValueW(hkcu(), sub.as_ptr(), name.as_ptr(), RRF_RT_ANY, std::ptr::null_mut(), std::ptr::null_mut(), &mut len) == 0 }
 }
 
 pub fn install() -> Result<String, String> {
@@ -83,7 +105,10 @@ pub fn install() -> Result<String, String> {
             lnk.to_string_lossy().replace('\'', "''"),
             exe.to_string_lossy().replace('\'', "''"),
             exe.to_string_lossy().replace('\'', "''"));
-        let status = Command::new("powershell").args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps]).status();
+        let status = Command::new("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
         if matches!(status, Ok(s) if s.success()) && lnk.exists() {
             Ok("Created a Start Menu shortcut for BananaSplit.".into())
         } else {

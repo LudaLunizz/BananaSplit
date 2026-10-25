@@ -890,8 +890,12 @@ pub struct Status {
     pub on: bool,
     /// Mode of the current (or last) take.
     pub mode: Mode,
-    /// Files of the current (or last) take.
+    /// Files of the current (or last) take, in the order they were made:
+    /// one per track, and again when the take continues in new files (at
+    /// 4 GB, or when the server changes its sample rate).
     pub files: Vec<PathBuf>,
+    /// Tracks of the current (or last) take (files at a time).
+    pub tracks: usize,
     /// Frames written in the current (or last) take.
     pub frames: u64,
     /// Sample rate of the current (or last) take (of its last files, if the
@@ -912,6 +916,11 @@ pub struct Status {
 impl Status {
     pub fn seconds(&self) -> f64 {
         self.secs
+    }
+
+    /// The files being written (the last one of each track).
+    pub fn current_files(&self) -> &[PathBuf] {
+        &self.files[self.files.len().saturating_sub(self.tracks.max(1))..]
     }
 }
 
@@ -952,6 +961,7 @@ impl Recorder {
             on: false,
             mode: settings.mode,
             files: Vec::new(),
+            tracks: 0,
             frames: 0,
             sample_rate,
             secs: 0.0,
@@ -1056,6 +1066,7 @@ impl Recorder {
                 on: true,
                 mode: s.mode,
                 files: files.clone(),
+                tracks: files.len(),
                 frames: 0,
                 sample_rate: rate,
                 secs: 0.0,
@@ -1542,6 +1553,32 @@ mod tests {
         rt.push(&tap, ALL_LINKS, MAX_FRAMES + 1, 48_000, &[0.0; 16], &[true; NUM_STRIPS], &outs);
         assert_eq!(tap.ring().available(), 0);
         assert_eq!(tap.dropped_frames() as usize, 8 + MAX_FRAMES + 1);
+    }
+
+    #[test]
+    fn the_files_being_written_are_the_last_of_each_track() {
+        let p = |s: &str| PathBuf::from(s);
+        let mut st = Status {
+            on: true,
+            mode: Mode::Multi,
+            files: vec![p("t_1-Mic.wav"), p("t_A1-Speakers.wav")],
+            tracks: 2,
+            frames: 0,
+            sample_rate: 48000,
+            secs: 0.0,
+            note: None,
+            dropped: 0,
+            clipped: 0,
+            error: None,
+        };
+        assert_eq!(st.current_files(), [p("t_1-Mic.wav"), p("t_A1-Speakers.wav")]);
+        // the server changed its rate: the take continues in new files
+        st.files.extend([p("t-2_1-Mic.wav"), p("t-2_A1-Speakers.wav")]);
+        assert_eq!(st.current_files(), [p("t-2_1-Mic.wav"), p("t-2_A1-Speakers.wav")]);
+        st.tracks = 0;
+        assert_eq!(st.current_files(), [p("t-2_A1-Speakers.wav")]);
+        st.files.clear();
+        assert!(st.current_files().is_empty());
     }
 
     #[test]

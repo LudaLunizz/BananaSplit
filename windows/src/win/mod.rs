@@ -207,6 +207,13 @@ impl Session {
         (g.desc.clone(), g.errs.clone())
     }
 
+    /// What each channel is connected to now, without (re)building anything:
+    /// for every frame of the UI. Nothing while the graph could not be built
+    /// (it is retried on the rescan tick, see `take_changed`).
+    pub fn wiring(&self) -> Vec<String> {
+        self.graph.as_ref().map_or_else(Vec::new, |g| g.desc.clone())
+    }
+
     pub fn status(&self) -> Status {
         Status {
             sample_rate: RATE,

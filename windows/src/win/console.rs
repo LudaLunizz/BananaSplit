@@ -21,7 +21,7 @@ unsafe extern "system" fn on_ctrl(kind: u32) -> BOOL {
         // Windows kills the process as soon as this handler returns, so
         // give the main loop (which polls every ~33 ms) time to save the
         // config and stop the devices. Windows allows up to 5 s.
-        for _ in 0..40 {
+        for _ in 0..90 {
             if CLEAN_EXIT.load(SeqCst) {
                 break;
             }
@@ -106,7 +106,7 @@ impl RawTerminal {
                 );
             }
             SetConsoleOutputCP(CP_UTF8);
-            let title = wide("vmix — BananaSplit mixer");
+            let title = wide("BananaSplit mixer");
             SetConsoleTitleW(title.as_ptr());
         }
         let prev = std::panic::take_hook();
@@ -173,18 +173,47 @@ pub fn spawn_input_thread(tx: std::sync::mpsc::Sender<Vec<u8>>) {
     });
 }
 
-/// When vmix was started by double-clicking it, its console window closes
-/// the moment it exits, so an error message would flash by unread.
+/// Is this the only process in its console? Then Windows opened that
+/// console window for it (a double-click, a shortcut, the autostart entry);
+/// it is not running in somebody's terminal (cmd, PowerShell).
+fn owns_console() -> bool {
+    let mut pids = [0u32; 4];
+    // SAFETY: the buffer holds `pids.len()` process ids.
+    unsafe { GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32) == 1 }
+}
+
+/// When BananaSplit was started by double-clicking it, its console window
+/// closes the moment it exits, so an error message would flash by unread.
 /// Keep the window open until a key is pressed in that case.
 pub fn pause_on_error() {
-    let mut pids = [0u32; 4];
-    // Only process in this console = nobody else (cmd, PowerShell) owns it.
-    let owns_console = unsafe { GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32) } == 1;
-    if owns_console {
+    if owns_console() {
         eprintln!("\nPress Enter to close this window.");
         let mut s = String::new();
         let _ = std::io::stdin().read_line(&mut s);
     }
+}
+
+/// Started hidden (`--no-open`: the autostart entry) with a console window
+/// of its own: close that window, so BananaSplit really runs in the
+/// background. What it prints from then on goes nowhere. Started from a
+/// terminal, nothing changes.
+pub fn leave_own_console() {
+    if !owns_console() {
+        return;
+    }
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        let mut mode = 0u32;
+        // SAFETY: plain Win32 calls on this process's standard handles.
+        unsafe {
+            if GetConsoleMode(GetStdHandle(which), &mut mode) != 0 {
+                // No handle: Rust's standard streams then drop what is
+                // written to them (instead of failing on a closed console).
+                SetStdHandle(which, std::ptr::null_mut());
+            }
+        }
+    }
+    // SAFETY: as above.
+    unsafe { FreeConsole() };
 }
 
 #[cfg(test)]

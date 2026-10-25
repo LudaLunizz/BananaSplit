@@ -280,9 +280,6 @@ pub fn list(cfg: &Config) -> String {
 }
 
 fn apply_dev(cfg: &mut Config, op: DevOp) -> Result<String, String> {
-    let plan = build_plan(cfg);
-    let (caps,rens) = enumerate()?;
-    let all_devs: Vec<String> = caps.into_iter().map(|d| d.info.name).chain(rens.into_iter().map(|d| d.info.name)).collect();
     match op {
         DevOp::List => Ok(list(cfg)),
         DevOp::Client { ch, client, on } => {

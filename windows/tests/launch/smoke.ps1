@@ -1,7 +1,10 @@
 # Launches the real bananasplit.exe the way a user does and checks that it
-# works: a double-click start opens the mixer and its desktop window, a
-# second start does not start a second mixer, and --quit saves and closes
-# everything. Run on a Windows desktop session (CI: windows-latest).
+# works: a double-click start opens the mixer and its desktop window; a
+# second start brings that window up instead of starting a second mixer or
+# window; the close button minimizes the window (BananaSplit keeps running);
+# --quit saves and closes everything, the window too; and with "Closing the
+# window keeps it running" off, closing the window quits. Run on a Windows
+# desktop session (CI: windows-latest).
 #
 #   pwsh windows/tests/launch/smoke.ps1 -Exe path\to\bananasplit.exe
 #
@@ -67,6 +70,32 @@ function Screenshot([string]$name) {
 function Windows-Titled([string]$title) {
     @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq $title })
 }
+Add-Type -Namespace BsSmoke -Name Win -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+'@
+function App-Window { Windows-Titled 'BananaSplit' | Select-Object -First 1 }
+# What the window's close button (or Alt+F4) sends.
+function Close-Window {
+    $w = App-Window
+    if ($w) { [void][BsSmoke.Win]::PostMessage($w.MainWindowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) }
+}
+function Window-Minimized {
+    $w = App-Window
+    [bool]($w -and [BsSmoke.Win]::IsIconic($w.MainWindowHandle))
+}
+function Post-Cmd([string]$body) {
+    (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop -Method Post -Uri "$url/api/cmd" `
+        -Headers @{ 'X-BananaSplit' = '1' } -ContentType 'application/x-www-form-urlencoded' -Body $body).Content
+}
+# A mixer started when the default port was taken uses another one.
+function Use-NotedPort {
+    $f = Get-ChildItem "$work\Local\bananasplit\*.port" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($f) {
+        $n = (Get-Content -Raw $f.FullName).Trim()
+        if ($n -match '^\d+$') { $script:url = "http://127.0.0.1:$n" }
+    }
+}
 
 # ---- the command line still works ----
 $v = (& $Exe --version 2>&1 | Out-String)
@@ -95,26 +124,55 @@ Screenshot 'launch'
 Check (-not $p.HasExited) "the mixer keeps running"
 
 # ---- starting it again brings up the running one ----
-$before = (Mixers).Count
 $p2 = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\second.err" -RedirectStandardOutput "$work\second.out"
 Check ($p2.WaitForExit(15000) -and $p2.ExitCode -eq 0) "a second start hands over to the running mixer and exits"
 Check ((Get-Http '/api/ping') -eq 'bananasplit-gui' -and -not $p.HasExited) "the first mixer is still the one running"
+Start-Sleep -Seconds 2
+Check ((Windows-Titled 'BananaSplit').Count -eq 1) "it brought up the open window instead of opening another"
+
+# ---- the close button keeps BananaSplit running ----
+Close-Window
+Check (Until { Window-Minimized } 10) "closing the window minimizes it"
+Start-Sleep -Seconds 1
+Check (-not $p.HasExited -and (Mixers).Count -ge 2) "and the mixer and its window keep running"
+$p3 = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\third.err" -RedirectStandardOutput "$work\third.out"
+Check ($p3.WaitForExit(15000) -and $p3.ExitCode -eq 0) "starting BananaSplit again"
+Check (Until { (Windows-Titled 'BananaSplit').Count -eq 1 -and -not (Window-Minimized) } 10) "brings the window back"
+Screenshot 'restored'
 
 # ---- quitting saves and closes everything ----
 & $Exe --quit
 Check ($LASTEXITCODE -eq 0) "--quit is accepted"
 Check ($p.WaitForExit(15000)) "the mixer exits after --quit"
 Check (Until { (Mixers).Count -eq 0 } 15) "no BananaSplit process is left (window closed too)"
-Check (Test-Path "$work\Roaming\bananasplit\bananasplit.ini") "the settings were saved"
+$ini = "$work\Roaming\bananasplit\bananasplit.ini"
+Check (Test-Path $ini) "the settings were saved"
 if ($p.HasExited) { Check ($p.ExitCode -eq 0) "the mixer exit code is 0 (was $($p.ExitCode))" }
 
-Write-Output "`n---- mixer stderr ----"
-Get-Content "$work\mixer.err" -ErrorAction SilentlyContinue
-Write-Output "---- second start stderr ----"
-Get-Content "$work\second.err" -ErrorAction SilentlyContinue
+# ---- with "Closing the window keeps it running" off, closing it quits ----
+$p4 = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\mixer2.err" -RedirectStandardOutput "$work\mixer2.out"
+Check (Until { Use-NotedPort; (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "started again, the mixer answers on $url"
+Check (Until { (Windows-Titled 'BananaSplit').Count -ge 1 } 30) "and opens its window"
+$said = $null
+try { $said = Post-Cmd 'op=closetray&v=0' } catch { }
+Check ($said -eq 'ok') "the menu's 'Closing the window keeps it running' is switched off"
+Start-Sleep -Seconds 2
+Close-Window
+Check ($p4.WaitForExit(15000)) "closing the window quits BananaSplit"
+Check (Until { (Mixers).Count -eq 0 } 15) "no BananaSplit process is left"
+Check ((Get-Content -Raw $ini -ErrorAction SilentlyContinue) -match 'close_to_tray = false') "the setting was saved"
+if ($p4.HasExited) { Check ($p4.ExitCode -eq 0) "the mixer exit code is 0 (was $($p4.ExitCode))" }
+
+$logs = [ordered]@{ 'Mixer' = 'mixer'; 'Second start' = 'second'; 'Third start' = 'third'; 'Second mixer run' = 'mixer2' }
+foreach ($k in $logs.Keys) {
+    Write-Output "`n---- $k stderr ----"
+    Get-Content "$work\$($logs[$k]).err" -ErrorAction SilentlyContinue
+}
 if ($script:failures -gt 0) {
-    Annotate 'warning' 'Mixer stderr' ((Get-Content -Raw "$work\mixer.err" -ErrorAction SilentlyContinue) + (Get-Content -Raw "$work\mixer.out" -ErrorAction SilentlyContinue))
-    Annotate 'warning' 'Second start stderr' ((Get-Content -Raw "$work\second.err" -ErrorAction SilentlyContinue) + (Get-Content -Raw "$work\second.out" -ErrorAction SilentlyContinue))
+    foreach ($k in $logs.Keys) {
+        $n = $logs[$k]
+        Annotate 'warning' "$k stderr" ((Get-Content -Raw "$work\$n.err" -ErrorAction SilentlyContinue) + (Get-Content -Raw "$work\$n.out" -ErrorAction SilentlyContinue))
+    }
     $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle } | ForEach-Object { "$($_.ProcessName) [$($_.Id)]: $($_.MainWindowTitle)" }
     Annotate 'warning' 'Windows with a title' ($procs -join "`n")
 }
