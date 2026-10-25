@@ -54,6 +54,10 @@ const IDYES: i32 = 6;
 pub const WEBVIEW2_PAGE: &str = "https://developer.microsoft.com/microsoft-edge/webview2/";
 
 fn exe_path() -> PathBuf {
+    // After an update in this session: the program's path (the new version).
+    if let Some(p) = crate::update::original_program() {
+        return p;
+    }
     let mut buf = vec![0u16; 1024];
     unsafe {
         let n = GetModuleFileNameW(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32);
@@ -65,8 +69,16 @@ fn exe_path() -> PathBuf {
     }
 }
 
+/// The program file: after an update, the new one (at the same place).
+pub fn program_path() -> Option<PathBuf> {
+    Some(exe_path())
+}
+
+/// The file to start this program's helper processes (the window) from:
+/// this very program, also after an update moved it aside (the window must
+/// speak the same protocol as the mixer that starts it).
 pub fn helper_exe() -> Result<PathBuf, String> {
-    Ok(exe_path())
+    Ok(crate::update::moved_program().filter(|p| p.is_file()).unwrap_or_else(exe_path))
 }
 
 pub fn open_folder(path: &Path) -> Result<(), String> {
@@ -177,6 +189,14 @@ pub fn open_url(url: &str) -> bool {
     // SAFETY: NUL-terminated UTF-16 strings.
     let r = unsafe { ShellExecuteW(std::ptr::null_mut(), open.as_ptr(), u.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
     r as usize > 32
+}
+
+/// Open a web page (a release's page) in the default browser.
+pub fn open_page(url: &str) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://127.0.0.1:") {
+        return Err("not a web page".into());
+    }
+    if open_url(url) { Ok(()) } else { Err("could not open the web browser".into()) }
 }
 
 /// The first start, without VB-Audio cables: say what they are for, and

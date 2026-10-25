@@ -20,6 +20,8 @@ const MOCK = path.join(ROOT, "tests/e2e");
 const PORT = 18950;
 const URL = `http://127.0.0.1:${PORT}/`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const http = require("http");
+const crypto = require("crypto");
 let failures = 0, checks = 0;
 const TITLE = "GUI test (ui_check.js)";
 // On GitHub Actions a failure is also an annotation, shown on the run's page.
@@ -79,11 +81,31 @@ async function until(pred, what, ms = 4000) {
   fs.mkdirSync(path.join(home, ".config/bananasplit"), { recursive: true });
   fs.writeFileSync(path.join(home, ".config/bananasplit/bananasplit.ini"),
     `[global]\ncreate_cables = false\n[recorder]\nfolder = ${rec}\nlinks = A1\n`);
+  // A stand-in for GitHub's releases (the updater): one newer version.
+  const asset = Buffer.from("not a real package");
+  const releases = (base) => JSON.stringify([{
+    tag_name: "v9.9.9", draft: false, prerelease: false, html_url: base + "/LudaLunizz/BananaSplit/releases/tag/v9.9.9",
+    body: "Faster meters.\r\n- the updater", assets: ["bananasplit-9.9.9-linux-x86_64.tar.gz", "bananasplit_9.9.9_amd64.deb"].map((name) => ({
+      name, state: "uploaded", size: asset.length, digest: "sha256:" + crypto.createHash("sha256").update(asset).digest("hex"),
+      browser_download_url: base + "/LudaLunizz/BananaSplit/releases/download/v9.9.9/" + name,
+    })),
+  }]);
+  const gh = { asked: 0 };
+  const ghServer = http.createServer((req, res) => {
+    if (req.url.startsWith("/repos/LudaLunizz/BananaSplit/releases")) {
+      gh.asked++;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(releases("http://127.0.0.1:" + ghServer.address().port));
+    }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => ghServer.listen(0, "127.0.0.1", r));
   const env = Object.assign({}, process.env, {
     HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local/share"),
     LD_LIBRARY_PATH: MOCK, MOCKJACK_REPORT: path.join(home, "report.txt"), MOCKJACK_REALTIME: "1", MOCKJACK_CYCLES: "100000000",
     // a webcam, a USB mic and its headphones, and a 440 Hz tone on system:capture
     MOCKJACK_DEVICES: "1", MOCKJACK_TONE: "440",
+    BANANASPLIT_UPDATE_SOURCE: "http://127.0.0.1:" + ghServer.address().port, BANANASPLIT_UPDATE_DELAY: "0.5",
   });
   delete env.DISPLAY; delete env.WAYLAND_DISPLAY;
   const log = fs.openSync(path.join(home, "bananasplit.log"), "w");
@@ -323,6 +345,38 @@ async function until(pred, what, ms = 4000) {
   const ini = fs.readFileSync(path.join(home, ".config/bananasplit/bananasplit.ini"), "utf8");
   check(/\[strip5\][^[]*trim_db = 0.5/.test(ini) && /\[strip6\][^[]*name = Guitar/.test(ini), "Save settings writes gain and names");
 
+  // ---- 2.7.4: updates ----
+  check(gh.asked === 0, "automatic updates are off by default: GitHub was not asked");
+  check(!ini.includes("auto_update"), "and the default is not written to the config");
+  await page.locator("#menubtn").click();
+  check((await page.locator("#m-update").textContent()).includes("Check for updates"), "the menu has Check for updates");
+  check(await page.locator("#menudot").isHidden(), "no new-version dot on the menu yet");
+  await page.locator("#m-update").click();
+  check(await page.locator("#upddlg").isVisible(), "it opens the Updates window");
+  check((await page.locator("#upd-auto").getAttribute("aria-pressed")) === "false" && (await page.locator("#upd-auto").textContent()) === "Off",
+    "Install updates automatically is Off");
+  check((await page.locator("#upd-cur").textContent()) === (await state()).update.current, "it shows this version");
+  check(await page.locator("#upd-install").isHidden() && await page.locator("#upd-restart").isHidden(), "nothing to install yet");
+  await page.locator("#upd-check").click();
+  await until((s) => s.update.phase === "available" && s.update.latest === "9.9.9", "Check now finds 9.9.9");
+  check(gh.asked === 1, "one request to GitHub");
+  await untilPage(async () => (await page.locator("#upd-msg").textContent()).includes("9.9.9 is available"), "the window says so");
+  await untilPage(async () => (await page.locator("#upd-install").isVisible()) && (await page.locator("#upd-install").textContent()).startsWith("Install 9.9.9"),
+    "and offers Install 9.9.9");
+  await untilPage(async () => (await page.locator("#upd-notes").textContent()) === "Faster meters.\n- the updater", "with the release's notes");
+  await page.locator("#upd-auto").click();
+  await until((s) => s.update.auto === true, "switching automatic updates on");
+  await untilPage(() => fs.readFileSync(path.join(home, ".config/bananasplit/bananasplit.ini"), "utf8").includes("\nauto_update = true\n"), "is saved at once");
+  await page.locator("#upd-auto").click();
+  await until((s) => s.update.auto === false, "and off again");
+  await page.locator("#updclose").click();
+  check(await page.locator("#upddlg").isHidden(), "Close closes it");
+  await untilPage(() => page.locator("#menudot").isVisible(), "the menu button shows a new version");
+  await page.locator("#menubtn").click();
+  check((await page.locator("#m-update").textContent()).includes("Update to 9.9.9"), "and the menu offers it");
+  await page.locator("#menubtn").click();
+  check(await page.locator("#mainmenu").isHidden(), "the menu closes again");
+
 
   // ---- 2.7: a channel's menu: what it takes in ----
   if ((await state()).ch[2].mute) await strip(2).locator(".btn.mute").click(); // (muted for the player test)
@@ -459,6 +513,7 @@ async function until(pred, what, ms = 4000) {
   for (let i = 0; i < 50 && exited === null; i++) await sleep(100);
   check(exited === 0, "Quit (clicked twice) stops BananaSplit cleanly");
   await browser.close();
+  ghServer.close();
   if (exited === null) proc.kill();
   if (failures) console.log("BananaSplit's output:\n" + fs.readFileSync(path.join(home, "bananasplit.log"), "utf8"));
   fs.rmSync(home, { recursive: true, force: true });

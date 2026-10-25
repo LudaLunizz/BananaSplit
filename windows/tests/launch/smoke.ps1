@@ -9,7 +9,9 @@
 # - --quit, the tray's Quit, `taskkill` (without /f) and the end of the
 #   Windows session all save and close everything, the window too;
 # - the autostart start (--no-open) shows only the tray icon;
-# - with "Closing the window keeps it running" off, closing the window quits.
+# - with "Closing the window keeps it running" off, closing the window quits;
+# - the updater asks nothing while it is off, installs a new version in the
+#   place of the running one, and Restart now starts it.
 # Run on a Windows desktop session (CI: windows-latest).
 #
 #   pwsh windows/tests/launch/smoke.ps1 -Exe path\to\bananasplit.exe
@@ -418,6 +420,127 @@ Check (Until { (Mixers).Count -eq 0 } 15) "no BananaSplit process is left"
 Check ((Saved-Ini) -match 'close_to_tray = false') "the setting was saved"
 if ($p4.HasExited) { Check ($p4.ExitCode -eq 0) "the mixer exit code is 0 (was $($p4.ExitCode))" }
 
+# ---- the updater (2.7.4): a new version from a stand-in for GitHub ----
+# The new version is a small program that says it is BananaSplit 9.9.9 and
+# starts the real one (a copy in another folder), so a restart can be seen.
+$upd = "$work\update"
+New-Item -ItemType Directory -Force "$upd\app", "$upd\real", "$upd\cli" | Out-Null
+Copy-Item $Exe "$upd\app\bananasplit.exe"
+Copy-Item $Exe "$upd\real\bananasplit.exe"
+Copy-Item $Exe "$upd\cli\bananasplit.exe"
+Set-Content -Path "$upd\fake.cs" -Value @'
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+public static class FakeNew {
+    public static int Main(string[] args) {
+        if (args.Length == 1 && args[0] == "--version") { Console.WriteLine("BananaSplit 9.9.9 (Windows, WASAPI)"); return 0; }
+        File.AppendAllText(Environment.GetEnvironmentVariable("BS_UPDATE_MARKER"),
+            string.Join(" ", args) + "|wait=" + Environment.GetEnvironmentVariable("BANANASPLIT_WAIT_PID") + Environment.NewLine);
+        var psi = new ProcessStartInfo(Environment.GetEnvironmentVariable("BS_REAL_EXE"), string.Join(" ", args.Select(a => "\"" + a + "\"")));
+        psi.UseShellExecute = false;
+        Process.Start(psi);
+        return 0;
+    }
+}
+'@
+$csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+$built = (& $csc /nologo /target:exe "/out:$upd\fake.exe" "$upd\fake.cs" 2>&1 | Out-String)
+Check (Test-Path "$upd\fake.exe") "the stand-in for the new version is built $built"
+Set-Content -Path "$upd\github.py" -Value @'
+import hashlib, http.server, json, sys
+port_file, exe, log = sys.argv[1], sys.argv[2], sys.argv[3]
+data = open(exe, "rb").read()
+NAME = "bananasplit-9.9.9-windows-x64.exe"
+REPO = "LudaLunizz/BananaSplit"
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def send(self, code, body, extra=()):
+        self.send_response(code)
+        self.send_header("Content-Length", str(len(body)))
+        for k, v in extra:
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
+    def do_GET(self):
+        with open(log, "a") as f:
+            f.write(self.path + "\n")
+        base = "http://127.0.0.1:%d" % self.server.server_address[1]
+        sums = ("%s  %s\n" % (hashlib.sha256(data).hexdigest(), NAME)).encode()
+        if self.path.startswith("/repos/%s/releases" % REPO):
+            dl = base + "/%s/releases/download/v9.9.9/" % REPO
+            assets = [{"name": n, "state": "uploaded", "size": len(b), "digest": "sha256:" + hashlib.sha256(b).hexdigest(), "browser_download_url": dl + n}
+                      for n, b in [(NAME, data), ("SHA256SUMS.txt", sums)]]
+            rel = [{"tag_name": "v9.9.9", "draft": False, "prerelease": False, "html_url": base + "/%s/releases/tag/v9.9.9" % REPO,
+                    "body": "Test release", "assets": assets}]
+            return self.send(200, json.dumps(rel).encode())
+        if self.path.endswith("/" + NAME):
+            return self.send(200, data)
+        if self.path.endswith("/SHA256SUMS.txt"):
+            return self.send(200, sums)
+        self.send(404, b"")
+s = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+open(port_file, "w").write(str(s.server_address[1]))
+s.serve_forever()
+'@
+$py = (Get-Command python -ErrorAction SilentlyContinue).Source
+Check ($null -ne $py) "Python is here for the stand-in for GitHub"
+$srv = Start-Process -FilePath $py -ArgumentList "`"$upd\github.py`"", "`"$upd\port.txt`"", "`"$upd\fake.exe`"", "`"$upd\requests.txt`"" -PassThru -WindowStyle Hidden
+Check (Until { Test-Path "$upd\port.txt" } 20) "the stand-in for GitHub runs"
+$env:BANANASPLIT_UPDATE_SOURCE = "http://127.0.0.1:" + (Get-Content -Raw "$upd\port.txt").Trim()
+$env:BS_UPDATE_MARKER = "$upd\marker.txt"
+$env:BS_REAL_EXE = "$upd\real\bananasplit.exe"
+# what an update left next to the real copy: removed when it starts
+Set-Content -Path "$upd\real\bananasplit.exe.old" -Value 'old'
+Set-Content -Path "$upd\real\bananasplit.update-1.exe" -Value 'unfinished'
+Set-Content -Path "$upd\real\README.md" -Value 'keep'
+$script:url = "http://127.0.0.1:$Port"
+function Upd { (Get-Http '/api/state' | ConvertFrom-Json).update }
+$pu = Start-Process -FilePath "$upd\app\bananasplit.exe" -ArgumentList '--gui' -PassThru -RedirectStandardError "$work\update.err" -RedirectStandardOutput "$work\update.out"
+Check (Until { Use-NotedPort; (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "a mixer in a folder of its own answers"
+Check (Until { (App-Windows).Count -ge 1 } 30) "and opens its window"
+Start-Sleep -Seconds 3
+$u = Upd
+Check ($u.auto -eq $false -and $u.phase -eq 'idle' -and -not (Test-Path "$upd\requests.txt")) "automatic updates are off by default: nothing was asked ($($u.phase))"
+try { [void](Post-Cmd 'op=update&a=check') } catch { }
+Check (Until { $u = Upd; $u.phase -eq 'available' -and $u.latest -eq '9.9.9' } 30) "Check now finds 9.9.9 ($((Upd).message))"
+Check ((Upd).canInstall -eq $true -and (Upd).method -eq 'replace') "and can install it here"
+try { [void](Post-Cmd 'op=update&a=install') } catch { }
+$ready = Until { (Upd).phase -eq 'ready' } 60
+Check $ready "Install downloads, checks and installs it ($((Upd).message))"
+Check ((Get-FileHash "$upd\app\bananasplit.exe").Hash -eq (Get-FileHash "$upd\fake.exe").Hash) "the new program has the running one's name"
+Check (Test-Path "$upd\app\bananasplit.exe.old") "the running one was moved aside (bananasplit.exe.old)"
+Check (@(Get-ChildItem "$upd\app" -Filter 'bananasplit.update-*').Count -eq 0) "no unfinished file is left"
+Check (-not $pu.HasExited) "the mixer runs on"
+# The window is started again from the program the mixer runs (moved aside), not the new one.
+$wp = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*--window*' -and $_.ExecutablePath -like "$upd\app\*" })
+Check ($wp.Count -ge 1) "the window process is found ($($wp.Count))"
+$wp | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 2
+try { [void](Post-Cmd 'op=show') } catch { }
+$again = $null
+Check (Until { $script:again = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*--window*' -and $_.ExecutablePath -like "$upd\app\*" }) | Select-Object -First 1; $null -ne $script:again } 20) "the window opens again"
+if ($again) { Check ($again.ExecutablePath -like '*bananasplit.exe.old') "from the program the mixer runs ($($again.ExecutablePath))" }
+Check (-not ((Get-Content -Raw "$upd\marker.txt" -ErrorAction SilentlyContinue) -match '--window')) "not from the new version"
+Check (Until { (App-Windows).Count -ge 1 } 30) "and shows"
+$oldPid = $pu.Id
+try { [void](Post-Cmd 'op=update&a=restart') } catch { }
+Check ($pu.WaitForExit(20000) -and $pu.ExitCode -eq 0) "Restart now: the old mixer saves and quits"
+Check (Until { (Get-Content -Raw "$upd\marker.txt" -ErrorAction SilentlyContinue) -match ('(^|\n)--gui\|wait=' + $oldPid) } 20) "the new version starts, with the same command line, after the old one ($((Get-Content -Raw "$upd\marker.txt" -ErrorAction SilentlyContinue)))"
+Check (Until { (Get-Http '/api/ping') -eq 'bananasplit-gui' } 30) "and the mixer comes up again"
+Check (Until { -not (Test-Path "$upd\real\bananasplit.exe.old") -and -not (Test-Path "$upd\real\bananasplit.update-1.exe") } 15) "its start removed what an update left next to it"
+Check (Test-Path "$upd\real\README.md") "and nothing else"
+try { [void](Post-Cmd 'op=quit') } catch { }
+Check (Until { (Mixers).Count -eq 0 } 20) "it quits"
+Get-Process bananasplit -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# bananasplit --update, from a terminal (the program replaces itself while it runs)
+$cliOut = (& "$upd\cli\bananasplit.exe" --update 2>&1 | Out-String)
+Check ($LASTEXITCODE -eq 0 -and $cliOut -match 'installed BananaSplit 9\.9\.9') "--update installs it ($($cliOut.Trim()))"
+Check ((Get-FileHash "$upd\cli\bananasplit.exe").Hash -eq (Get-FileHash "$upd\fake.exe").Hash -and (Test-Path "$upd\cli\bananasplit.exe.old")) "in the place of the program that ran it"
+Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
+Remove-Item Env:\BANANASPLIT_UPDATE_SOURCE, Env:\BS_UPDATE_MARKER, Env:\BS_REAL_EXE -ErrorAction SilentlyContinue
+
 # ---- at login, the taskbar may come after BananaSplit ----
 # Windows starts the autostart entry while Explorer is still starting. Here:
 # no Explorer at all (Windows must not restart it by itself meanwhile).
@@ -442,7 +565,7 @@ Wait-Gone $p9 "it quits"
 Screenshot 'after-explorer'
 
 $logs = [ordered]@{ 'Mixer' = 'mixer'; 'Second start' = 'second'; 'Third start' = 'third'; 'Hidden start' = 'hidden';
-    'Start while hidden' = 'hidden2'; 'taskkill run' = 'taskkill'; 'Tray quit run' = 'trayquit'; 'Last run' = 'mixer2'; 'Before the taskbar' = 'login' }
+    'Start while hidden' = 'hidden2'; 'taskkill run' = 'taskkill'; 'Tray quit run' = 'trayquit'; 'Last run' = 'mixer2'; 'Updater run' = 'update'; 'Before the taskbar' = 'login' }
 foreach ($k in $logs.Keys) {
     Write-Output "`n---- $k stderr ----"
     Get-Content "$work\$($logs[$k]).err" -ErrorAction SilentlyContinue

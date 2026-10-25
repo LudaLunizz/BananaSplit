@@ -13,6 +13,14 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.7.4
+
+* **BananaSplit can update itself.** **Menu ▸ Check for updates…** opens the Updates window: **Check now** looks for a new version on BananaSplit's GitHub releases, shows what is new in it, and **Install** downloads it, checks it and puts it in the place of the running program. The mixer keeps running on the old version; **Restart now** (or your next start) runs the new one, with your settings. See [Updates](#updates).
+* **Automatic updates are off by default.** Switched off, BananaSplit never contacts anything by itself: it looks for a new version only when you click Check now. Switch **Install updates automatically** on in the Updates window and it checks a minute after it starts and once a day, installs a new version by itself and tells you when a restart finishes the update. It never restarts on its own, so your audio is never cut.
+* `bananasplit --update` does the same from a terminal.
+
+Nothing to change on your side: configs, scenes and recordings load as they are, and 2.7.3 can still read a config saved by 2.7.4 while automatic updates are off.
+
 ## What's new in 2.7.3
 
 Fixes from two reviews of 2.7.1. Nothing to change on your side: configs, scenes and recordings load as they are. (There is no 2.7.2.)
@@ -135,14 +143,14 @@ ASIO and WASAPI are **Windows-only** driver APIs and do not exist on Linux. What
 **Debian, Ubuntu, Mint, Pop!_OS:** install the package, which pulls in what it needs:
 
 ```sh
-sudo apt install ./bananasplit_2.7.3_amd64.deb
+sudo apt install ./bananasplit_2.7.4_amd64.deb
 ```
 
 **Any other distribution (Fedora, Arch, openSUSE, …):** unpack the portable package and run its installer. It copies `bananasplit` to `~/.local/bin` and adds BananaSplit with its icon to your app menu; nothing outside your home folder is touched (`./install.sh --uninstall` removes it again).
 
 ```sh
-tar -xzf bananasplit-2.7.3-linux-x86_64.tar.gz
-cd bananasplit-2.7.3-linux-x86_64 && ./install.sh
+tar -xzf bananasplit-2.7.4-linux-x86_64.tar.gz
+cd bananasplit-2.7.4-linux-x86_64 && ./install.sh
 ```
 
 Then start **BananaSplit** from the app menu. What it needs from the system (PipeWire is the default on current Fedora, Ubuntu, Debian, Arch, and others; the .deb asks for these itself):
@@ -238,6 +246,20 @@ Every strip and every bus has a menu: the button under its name. It lists what t
 * Only you can use it: BananaSplit answers only connections from programs of the user it runs as (it checks who owns the connecting socket), so other users of the computer cannot listen in or change the mix. Requests must name `127.0.0.1`/`localhost` as their host, and changes need a header that other websites cannot send, so a web page open in your browser cannot drive it either. Programs you run yourself can, like the page does (as they could use your microphone directly).
 * It controls the same mixer state as the terminal UI, with the same click-free ramps, and saves on quit the same way. Input gain, pan, the player and scenes are GUI controls; the terminal UI keeps them as they are and saves them too.
 
+### Updates
+
+**Menu ▸ Check for updates…** opens the Updates window. It shows this version, what the last check found and, for a new version, its release notes.
+
+* **Check now** asks GitHub for BananaSplit's releases and picks the newest one that is published and not marked pre-release, with the file for your installation: the portable package (`bananasplit-<version>-linux-x86_64.tar.gz`) or, if BananaSplit came from its .deb, the new .deb.
+* **Install** downloads it to `~/.cache/bananasplit/update/` and checks it before anything is changed: it must come from BananaSplit's own release downloads over HTTPS, have the size GitHub lists, and match both GitHub's SHA-256 of the file and the release's `SHA256SUMS.txt` (a release without a checksum is refused). The new program must also run on this computer and say it is that version.
+  * **Portable package, or a copy in a folder of yours:** the new `bananasplit` is written next to the old one and renamed over it (in one step, so there is never half a program). The copy in `~/.local/bin` that your app menu starts is updated too. The mixer that runs keeps using the old program until it ends.
+  * **The .deb:** BananaSplit runs `pkexec apt-get install` with the downloaded package, so your desktop asks for your password.
+  * **Anything else** (another package manager, an AppImage, a folder BananaSplit cannot write to): the window says so, and **Release page** opens the release in your browser so you can install it yourself.
+* **Restart now** saves everything, removes the cables, quits, and starts the new version with the same options. While you are recording it asks for a second click, because the restart ends the take.
+* **Install updates automatically** is **off** by default (`auto_update` in `[gui]`, written only when it is on). Off, BananaSplit asks nothing of anybody: it checks only when you click Check now. On, it checks a minute after it starts and then once a day (an hour later if a check fails), installs a new version by itself, and says in the status line and with a dot on the Menu button that a restart finishes the update. It never restarts on its own. With the .deb it downloads and checks the package by itself and waits for you to click Install (and enter your password).
+* `bananasplit --update` checks and installs from a terminal (a running BananaSplit uses the new version after a restart). With the .deb, it installs in a terminal (it asks for your password there) and otherwise prints the `sudo apt install` command for the package it checked.
+* Downloads use `curl` (or `wget` when there is no curl); the .deb recommends curl. Only the terminal UI and `--headless` never check by themselves: the setting is the app's.
+
 ## Recorder
 
 The recorder can take any combination of the 11 channels, numbered the same way everywhere: strips `1`–`6` and buses `A1`–`B2`. Arm a channel under ARMED TRACKS in the app's recorder panel, or link it with `c` in the terminal UI. Then press record (REC, or `R`).
@@ -314,6 +336,9 @@ zoom = 1
 window = 1780x1000
 # the scene loaded last (the SCENE menu shows it)
 scene = Live Room
+# install new versions by itself, checking once a day (default false:
+# BananaSplit checks only when you click Check now)
+auto_update = false
 
 [strip1]
 name = Mic
@@ -497,6 +522,8 @@ The GUI phase also sets an EQ and VBAN streams over HTTP, checks that bad values
 Unit tests also cover the VBAN header against the specification (every sample rate and format, every rejection rule, random garbage), the resampler (44.1 ↔ 48 kHz, 8 to 192 kHz, aliasing below −85 dB), the drift tracking (simulated senders whose clocks run up to 2000 ppm off, with jitter, lost packets, stalls and pauses), two VBAN instances talking over real sockets, the EQ against the Audio EQ Cookbook formulas at three sample rates, and the EQ's click-free changes.
 
 The no-allocation tests run thousands of cycles with parameters changing underneath: one with the recorder recording (both modes, live link changes, a full buffer), one with every EQ changing and VBAN streams flowing both ways (underruns, a full outgoing buffer, flushes), and one with the player playing, pausing, seeking and changing buses while input gain and pan move. A counting allocator proves the audio path never touches the heap.
+
+New in 2.7.4: the updater. An eleventh end-to-end phase (`tests/e2e/update.py`) runs BananaSplit from a folder of its own against a stand-in for GitHub on this computer (`BANANASPLIT_UPDATE_SOURCE`, which only accepts `http://127.0.0.1:PORT`): with automatic updates off it asks nothing; Check now finds the newest published release (not a draft, a pre-release or an older one) and its notes; a download with one byte changed is refused and nothing is touched; Install replaces the program (only after the new one ran and said its version) and empties the downloads folder; Restart now quits cleanly and starts the new version with the same options, which waits for the old one; automatic updates install by themselves without restarting, and the switch is saved at once; GitHub's rate limit is a message; a folder it cannot write to offers no install; and `bananasplit --update` installs, finds nothing newer, and refuses a tampered file. Unit tests cover the JSON reader, SHA-256 (the standard test vectors), version order, picking the release from GitHub's real answer, links outside the repository, checksum files, downloads through curl (errors, size limits, HTTPS only), unpacking, replacing the program, and what is cleaned up after an update. `tests/gui/ui_check.js` opens the Updates window, checks a new version and switches automatic updates on and off; the Windows launch test installs a new version over the running `bananasplit.exe`, reopens the window from the moved program, and restarts.
 
 New in 2.7.3: every fix has a check that fails on 2.7.1. Unit tests: the recordings scan with names in other scripts, take order (`-10` after `-2`, the night summer time ends, folders copied without their file times), a channel called "part2" through a 4 GB split, two takes in one second, a take that grew while selected, a VBAN stream switched off while playing, two senders of one stream, senders that restart or do not number packets, the dropout count, the README's example config, comments after values, saving through a symlink, byte order marks, and the owner of the other end of a local connection. The seventh end-to-end phase adds Start with the system after Add to the app menu; `tests/gui/fixes_check.js` takes every event stream the server allows and checks that the page connects once one is free.
 

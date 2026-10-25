@@ -424,6 +424,28 @@ dialog::backdrop { background: var(--overlay); }
 .vbip { font: 600 9.5px var(--mono); letter-spacing: 0; text-transform: none; color: var(--text); }
 .seen div { border: 1px dashed var(--raised-edge); border-radius: 7px; padding: 4px 8px; font-size: 10.5px; display: flex; gap: 8px; align-items: center; }
 #scenedlg { width: min(420px, calc(100vw - 32px)); }
+/* ---- updates ---- */
+.hbtn .udot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); margin-left: -2px; }
+.hbtn .udot[hidden] { display: none; }
+.mi .kb.new { color: var(--teal); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 8.5px; }
+#upddlg { width: min(560px, calc(100vw - 32px)); }
+.upd p { margin: 0 0 8px; font-size: 11.5px; line-height: 1.45; }
+.upd .upd-msg { font-size: 12.5px; color: var(--text); }
+.upd .upd-msg.err { color: var(--red); }
+.upd .upd-when { color: var(--muted); font-size: 10px; }
+.upd-bar { height: 6px; border-radius: 3px; background: var(--sunk); overflow: hidden; margin: 4px 0 10px; }
+.upd-bar[hidden] { display: none; }
+.upd-bar i { display: block; height: 100%; width: 0; background: var(--teal); }
+.upd-acts { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+.upd-acts [hidden] { display: none; }
+.upd .tool:disabled { opacity: .45; cursor: default; }
+.upd-notes { border: 1px solid var(--card-edge); background: var(--row); border-radius: 10px; padding: 10px 12px; margin: 0 0 14px; }
+.upd-notes[hidden] { display: none; }
+.upd-notes h4 { margin: 0 0 6px; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; }
+.upd-notes pre { margin: 0; max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.45 var(--font); color: var(--text); }
+.upd-auto { display: flex; gap: 12px; align-items: flex-start; border-top: 1px solid var(--card-edge); padding-top: 12px; }
+.upd-auto p { margin: 0; color: var(--muted); font-size: 10.5px; }
+.upd-auto b { color: var(--text); font-size: 11.5px; }
 
 /* ---- a channel's menu (what it takes in / plays on) ---- */
 .cmenu {
@@ -483,7 +505,7 @@ dialog::backdrop { background: var(--overlay); }
       <div class="menu" id="scenemenu" role="menu" hidden></div>
     </div>
     <div class="menuwrap">
-      <button class="hbtn" id="menubtn" aria-haspopup="menu" aria-expanded="false">Menu <span class="caret">▼</span></button>
+      <button class="hbtn" id="menubtn" aria-haspopup="menu" aria-expanded="false">Menu <i class="udot" id="menudot" title="A new version of BananaSplit" hidden></i><span class="caret">▼</span></button>
       <div class="menu" id="mainmenu" role="menu" hidden>
         <button class="mi" role="menuitem" data-op="save"><span class="chk"></span>Save settings</button>
         <button class="mi" role="menuitem" data-op="reconnect"><span class="chk"></span>Reconnect devices</button>
@@ -495,6 +517,7 @@ dialog::backdrop { background: var(--overlay); }
         <button class="mi" role="menuitemcheckbox" id="m-autostart" aria-checked="false"><span class="chk"></span>Start with the system</button>
         <button class="mi" role="menuitemcheckbox" id="m-tray" aria-checked="true"><span class="chk"></span>Closing the window keeps it running</button>
         <button class="mi" role="menuitem" id="m-install" hidden><span class="chk"></span>Add BananaSplit to the app menu</button>
+        <button class="mi" role="menuitem" id="m-update"><span class="chk"></span><span id="m-updtxt">Check for updates…</span><span class="kb" id="m-updkb"></span></button>
         <div class="msep"></div>
         <button class="mi danger" role="menuitem" id="m-quit"><span class="chk"></span>Quit BananaSplit<span class="kb">removes the cables</span></button>
       </div>
@@ -586,6 +609,27 @@ dialog::backdrop { background: var(--overlay); }
       <p>A scene keeps every fader, gain, pan, mute, solo, mono, routing and EQ, and the armed tracks. Names, devices, VBAN and recorder settings are not part of it.</p></label>
     <div class="dlg-foot"><button class="tool" type="button" id="scenecancel">Cancel</button><button class="tool primary" type="submit">Save</button></div>
   </form>
+</dialog>
+
+<dialog id="upddlg" aria-labelledby="up-h">
+  <div class="dlg-head"><h3 id="up-h">Updates</h3><button class="tool" id="updclose">Close</button></div>
+  <div class="dlg-body upd">
+    <p>This is BananaSplit <b id="upd-cur"></b>.</p>
+    <p class="upd-msg" id="upd-msg" role="status"></p>
+    <div class="upd-bar" id="upd-bar" hidden><i id="upd-fill"></i></div>
+    <p class="upd-when" id="upd-when"></p>
+    <div class="upd-acts">
+      <button class="tool" id="upd-check">Check now</button>
+      <button class="tool primary" id="upd-install" hidden>Install</button>
+      <button class="tool primary" id="upd-restart" hidden>Restart now</button>
+      <button class="tool" id="upd-page">Release page</button>
+    </div>
+    <div class="upd-notes" id="upd-notesw" hidden><h4 id="upd-notesh">What's new</h4><pre id="upd-notes"></pre></div>
+    <div class="upd-auto">
+      <button class="tool switch" id="upd-auto" aria-pressed="false" aria-describedby="upd-autotxt">Off</button>
+      <p id="upd-autotxt"><b>Install updates automatically</b><br>BananaSplit then checks GitHub a minute after it starts and once a day, installs a new version by itself and tells you when a restart finishes it. It never restarts on its own. Off (the default), it looks for a new version only when you click Check now.</p>
+    </div>
+  </div>
 </dialog>
 
 <div id="overlay" role="alertdialog" aria-labelledby="ov-h" aria-describedby="ov-p">
@@ -1578,6 +1622,91 @@ document.addEventListener("keydown", (e) => {
   e.preventDefault();
 });
 
+// ---- updates --------------------------------------------------------------------------
+let updRev = -1, updLoading = false, updDetails = null, restartArmed = 0;
+const UPD_BUSY = ["checking", "downloading", "installing"];
+async function loadUpdDetails() {
+  updLoading = true;
+  try {
+    const r = await fetch("/api/update");
+    if (r.ok) updDetails = await r.json();
+  } catch (e) { /* the next state frame tries again */ }
+  updLoading = false;
+  if (last) renderUpdate(last);
+}
+function openUpdates() {
+  closeMenus();
+  if (!$("upddlg").open) $("upddlg").showModal();
+  updRev = -1;
+  if (last) renderUpdate(last);
+}
+$("m-update").addEventListener("click", openUpdates);
+$("updclose").addEventListener("click", () => $("upddlg").close());
+$("upd-check").addEventListener("click", () => send({ op: "update", a: "check" }, true));
+$("upd-install").addEventListener("click", () => send({ op: "update", a: "install" }, true));
+$("upd-page").addEventListener("click", () => send({ op: "update", a: "page" }, false));
+$("upd-restart").addEventListener("click", () => {
+  // while recording, a second click: the restart ends the take
+  if (last && last.rec.on && performance.now() > restartArmed) {
+    restartArmed = performance.now() + 4000;
+    setText($("upd-restart"), "Click again: the recording stops");
+    setTimeout(() => { if (last) renderUpdate(last); }, 4100);
+    return;
+  }
+  restartArmed = 0;
+  send({ op: "update", a: "restart" }, false);
+});
+$("upd-auto").addEventListener("click", () => {
+  const on = $("upd-auto").getAttribute("aria-pressed") !== "true";
+  hold("autoupd", 1500);
+  setPressed($("upd-auto"), on);
+  setText($("upd-auto"), on ? "On" : "Off");
+  send({ op: "autoupdate", v: on ? 1 : 0 }, false);
+});
+function ago(s) {
+  if (s == null) return "";
+  if (s < 60) return "Last checked just now.";
+  const m = Math.round(s / 60);
+  if (m < 60) return "Last checked " + m + (m === 1 ? " minute" : " minutes") + " ago.";
+  const h = Math.round(m / 60);
+  return "Last checked " + h + (h === 1 ? " hour" : " hours") + " ago.";
+}
+function renderUpdate(S) {
+  const U = S.update;
+  $("m-update").hidden = !U;
+  if (!U) return;
+  const fresh = U.phase === "available" || U.phase === "prepared" || U.canInstall;
+  const menuTxt = U.phase === "ready" ? "Restart to finish the update" : fresh ? "Update to " + U.latest + "…" : "Check for updates…";
+  setText($("m-updtxt"), menuTxt);
+  setText($("m-updkb"), fresh || U.phase === "ready" ? "new" : "");
+  $("m-updkb").classList.toggle("new", fresh || U.phase === "ready");
+  $("menudot").hidden = !(fresh || U.phase === "ready");
+  if (!$("upddlg").open) return;
+  if (U.rev !== updRev && !updLoading) { updRev = U.rev; loadUpdDetails(); }
+  setText($("upd-cur"), U.current);
+  const idle = U.phase === "idle";
+  const msg = idle ? (U.auto ? "BananaSplit will look for a new version a minute after it starts." : "BananaSplit has not looked for a new version yet.") : U.message;
+  setText($("upd-msg"), msg);
+  $("upd-msg").classList.toggle("err", U.phase === "failed");
+  const dl = U.phase === "downloading";
+  $("upd-bar").hidden = !dl;
+  if (dl) $("upd-fill").style.width = (U.total ? Math.min(100, U.got / U.total * 100) : 0).toFixed(1) + "%";
+  setText($("upd-when"), dl ? (U.got / 1e6).toFixed(1) + " of " + (U.total / 1e6).toFixed(1) + " MB" : ago(U.checkedAgo));
+  const busy = UPD_BUSY.includes(U.phase);
+  $("upd-check").disabled = busy;
+  $("upd-install").hidden = !U.canInstall;
+  $("upd-install").disabled = busy;
+  setText($("upd-install"), "Install " + (U.latest || "") + (U.method === "package" ? " (asks for your password)" : ""));
+  $("upd-restart").hidden = U.phase !== "ready";
+  if (performance.now() > restartArmed) setText($("upd-restart"), "Restart now");
+  if (!held("autoupd")) { setPressed($("upd-auto"), U.auto); setText($("upd-auto"), U.auto ? "On" : "Off"); }
+  const D = updDetails;
+  const notes = D && U.latest && D.notes ? D.notes : "";
+  $("upd-notesw").hidden = !notes;
+  setText($("upd-notesh"), "What's new in BananaSplit " + (U.latest || ""));
+  setText($("upd-notes"), notes);
+}
+
 // ---- rendering state -----------------------------------------------------------------
 let last = null;
 function meterDb(m) { return Math.max(m[0], m[1]); }
@@ -1707,6 +1836,7 @@ function render(S) {
 
   renderEq(S);
   renderVban(S);
+  renderUpdate(S);
   if (menuCh >= 0 && S.devRev !== menuRev && !menuLoading) loadChanMenu(false);
 }
 

@@ -62,6 +62,7 @@
 //! zoom = 1.0          # 0.5 .. 2
 //! window = 1780x1000  # size of the app window (written when it closes; empty = fit the screen)
 //! scene = Live Room   # the scene loaded or saved last (shown in the GUI)
+//! auto_update = false # install new versions by itself (default off: check only when asked)
 //! ```
 //!
 //! Every strip and bus also has `eq = on | off` and up to six bands,
@@ -236,11 +237,15 @@ pub struct GuiConfig {
     pub window: Option<(u32, u32)>,
     /// The scene loaded or saved last ("" = none).
     pub scene: String,
+    /// Check for new versions once a day and install them (off: only when
+    /// the user asks). Written only when on, so an older BananaSplit can
+    /// still read the file.
+    pub auto_update: bool,
 }
 
 impl Default for GuiConfig {
     fn default() -> Self {
-        GuiConfig { theme: Theme::Dark, close_to_tray: true, zoom: 1.0, window: None, scene: String::new() }
+        GuiConfig { theme: Theme::Dark, close_to_tray: true, zoom: 1.0, window: None, scene: String::new(), auto_update: false }
     }
 }
 
@@ -521,6 +526,7 @@ impl Config {
                         }
                         cfg.gui.scene = v.into();
                     }
+                    "auto_update" => cfg.gui.auto_update = parse_bool(v).map_err(err)?,
                     _ => return Err(err(format!("unknown key {k:?} in [gui]"))),
                 },
                 Section::Strip(i) => {
@@ -670,6 +676,9 @@ impl Config {
         let _ = writeln!(o, "zoom = {}", g.zoom);
         let _ = writeln!(o, "window = {}", g.window.map_or(String::new(), |(w, h)| format!("{w}x{h}")));
         let _ = writeln!(o, "scene = {}", g.scene);
+        if g.auto_update {
+            let _ = writeln!(o, "auto_update = true");
+        }
         for (i, s) in self.strips.iter().enumerate() {
             let _ = writeln!(o, "\n[strip{}]", i + 1);
             let _ = writeln!(o, "name = {}", s.name);
@@ -953,6 +962,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[test]
+    fn automatic_updates_are_off_unless_switched_on() {
+        assert!(!Config::default().gui.auto_update);
+        assert!(!Config::parse("[gui]\ntheme = dark\n").unwrap().gui.auto_update);
+        let mut c = Config::default();
+        c.gui.auto_update = true;
+        let text = c.to_ini();
+        assert!(text.contains("\nscene = \nauto_update = true\n"), "{text}");
+        assert_eq!(Config::parse(&text).unwrap(), c);
+        assert!(!Config::parse("[gui]\nauto_update = off\n").unwrap().gui.auto_update);
+        assert!(Config::parse("[gui]\nauto_update = sometimes\n").is_err());
+    }
+
     /// The example in the README is a config file people copy: it must load.
     #[test]
     fn the_readme_example_loads() {
@@ -1036,10 +1058,11 @@ mod tests {
         c.buses[4].trim_db = -24.0;
         c.buses[4].pan = 1.0;
         c.recorder.play_to = 0b01001;
-        c.gui = GuiConfig { theme: Theme::Auto, close_to_tray: false, zoom: 1.25, window: Some((1600, 900)), scene: "Live Room 06".into() };
+        c.gui = GuiConfig { theme: Theme::Auto, close_to_tray: false, zoom: 1.25, window: Some((1600, 900)), scene: "Live Room 06".into(), auto_update: false };
         let text = c.to_ini();
         assert_eq!(Config::parse(&text).unwrap(), c);
         assert!(text.contains("\n[gui]\ntheme = auto\nclose_to_tray = false\nzoom = 1.25\nwindow = 1600x900\nscene = Live Room 06\n"));
+        assert!(!text.contains("auto_update"), "off (the default) is not written: an older BananaSplit reads the file");
         assert_eq!(Config::parse("[gui]\nwindow =\n").unwrap().gui.window, None);
         assert!(Config::parse("[gui]\nwindow = 10x10\n").is_err());
         assert!(text.contains("play_to = A1,B1\n"));

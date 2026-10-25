@@ -417,3 +417,11 @@ echo "E2E PASS: cables switched on any channel while running; apps moved into st
 # in new files, and the audio server shutting down
 python3 "$HERE/fixes.py" "$BIN" "$HERE" || fail "10: the 2.7.1 fixes"
 echo "E2E PASS: the 2.7.1 fixes (defaults followed, cables remade, numbered names, settings saved on server shutdown, ...)"
+
+# ---- phase 11: the updater (2.7.4) ----
+# a stand-in for GitHub on this computer: nothing is asked while automatic
+# updates are off (the default); Check now, a tampered download refused,
+# Install, Restart now, automatic updates, GitHub's rate limit, a folder it
+# cannot write to, and `bananasplit --update`
+python3 "$HERE/update.py" "$BIN" "$HERE" || fail "11: the updater"
+echo "E2E PASS: the updater checks only when asked (or when switched on), refuses a tampered file, installs, restarts"
