@@ -297,7 +297,13 @@ impl Takes {
                 break;
             }
             let folder = lock(&self.inner).folder.clone();
-            let list = player::scan(&folder, &mut cache);
+            // A file the scan trips over must not end the take list for the
+            // rest of the session: keep the last list and try again later.
+            let scanned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| player::scan(&folder, &mut cache)));
+            let Ok(list) = scanned else {
+                cache = ScanCache::default();
+                continue;
+            };
             let mut g = lock(&self.inner);
             let same = g.folder == folder && *g.list == list;
             if !same && g.folder == folder {
@@ -860,6 +866,14 @@ fn set_bit_u8(a: &std::sync::atomic::AtomicU8, bit: usize, on: bool) {
 }
 
 /// Apply one control change. Returns a short message for the page.
+/// The take in the player, as the take list has it now, if that is not
+/// what the player loaded: a take selected while it was being recorded has
+/// grown since (resuming or seeking would stop at the old end).
+fn changed_take(hub: &Hub, st: &PlayStatus) -> Option<TakeInfo> {
+    let t = hub.takes.find(st.take.as_deref()?)?;
+    ((t.secs() - st.dur).abs() > 1e-6).then_some(t)
+}
+
 pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
     let f = Form(parse_form(body)?);
     let sh = &*hub.shared;
@@ -1124,7 +1138,10 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
                 if st.state == PlayState::Playing {
                     return Ok("playing".into());
                 }
-                p.resume()?;
+                match changed_take(hub, &st) {
+                    Some(t) => p.play(&t, st.pos, true)?,
+                    None => p.resume()?,
+                }
             } else {
                 let take = hub.takes.find(&key).ok_or("that recording is no longer in the recorder folder")?;
                 p.play(&take, from.unwrap_or(0.0), true)?;
@@ -1147,7 +1164,11 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
         }
         "seek" => {
             let v = f.num_of("v", "position", 0.0, 1e9)?.ok_or("missing \"v\"")?;
-            hub.player.seek(f64::from(v))?;
+            let st = hub.player.status();
+            match changed_take(hub, &st) {
+                Some(t) => hub.player.play(&t, f64::from(v), st.state == PlayState::Playing)?,
+                None => hub.player.seek(f64::from(v))?,
+            }
             Ok("ok".into())
         }
         "playto" => {
@@ -2331,6 +2352,52 @@ mod tests {
         assert!(get("/api/takes").contains(r#""label":"mix""#));
         assert!(get("/api/wave?key=2026-10-21_14-03-05&n=16").contains(r#""n":16,"#));
         assert!(get("/api/wave?key=nope").starts_with("HTTP/1.1 404"));
+        h.close();
+        h.player.shutdown();
+        h.takes.shutdown();
+        let _ = std::fs::remove_dir_all(folder.parent().unwrap());
+    }
+
+    #[test]
+    fn a_take_loaded_while_it_was_recorded_plays_to_its_new_end() {
+        let h = hub_in("grown");
+        let folder = recorder::expand_home(&h.recorder.settings().folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let key = "2026-10-21_14-03-05";
+        // a take of `frames` frames, written elsewhere and moved in
+        let write = |frames: u32| {
+            let tmp = folder.join("tmp.part");
+            let mut f = std::fs::File::create(&tmp).unwrap();
+            f.write_all(&recorder::wav_header(Format::Wav16, 48000, 4 * frames)).unwrap();
+            f.write_all(&vec![0u8; 4 * frames as usize]).unwrap();
+            drop(f);
+            std::fs::rename(&tmp, folder.join(format!("{key}_mix.wav"))).unwrap();
+            h.takes.kick();
+        };
+        let wait = |what: &str, ok: &dyn Fn() -> bool| {
+            let t0 = Instant::now();
+            while !ok() {
+                assert!(t0.elapsed() < Duration::from_secs(5), "{what}");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let listed = |secs: f64| h.takes.find(key).is_some_and(|t| (t.secs() - secs).abs() < 1e-9);
+        write(4800); // 0.1 s: selected while it records
+        wait("listed", &|| listed(0.1));
+        command(&h, &format!("op=take&key={key}")).unwrap();
+        wait("loaded", &|| (h.player.status().dur - 0.1).abs() < 1e-9);
+        write(48000); // recording went on: 1 s
+        wait("listed again", &|| listed(1.0));
+        // seeking past the old end plays the whole take now
+        command(&h, "op=seek&v=0.5").unwrap();
+        wait("reloaded by seek", &|| (h.player.status().dur - 1.0).abs() < 1e-9);
+        let st = h.player.status();
+        assert!((st.pos - 0.5).abs() < 1e-6, "{st:?}");
+        // and Play (resume) after it grew again
+        write(96000);
+        wait("listed a third time", &|| listed(2.0));
+        command(&h, "op=play").unwrap();
+        wait("reloaded by play", &|| (h.player.status().dur - 2.0).abs() < 1e-9);
         h.close();
         h.player.shutdown();
         h.takes.shutdown();

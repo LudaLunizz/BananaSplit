@@ -208,6 +208,17 @@ struct InRt {
     flush_seen: u32,
 }
 
+impl InRt {
+    /// The ring is empty: tell the receiver it may fill it again.
+    #[inline]
+    fn flushed(&mut self, slot: &InSlot, req: u32) {
+        self.flush_seen = req;
+        self.playing = false;
+        slot.playing.store(false, Relaxed);
+        slot.flush_ack.store(req, Release);
+    }
+}
+
 /// The engine's private VBAN state.
 #[derive(Debug, Default)]
 pub struct VbanRt {
@@ -224,10 +235,7 @@ impl VbanRt {
                 if let Some(ring) = slot.ring.get() {
                     ring.consume(ring.available());
                 }
-                st.flush_seen = req;
-                st.playing = false;
-                slot.playing.store(false, Relaxed);
-                slot.flush_ack.store(req, Release);
+                st.flushed(slot, req);
             }
         }
     }
@@ -252,17 +260,33 @@ impl VbanRt {
     }
 
     fn take(&mut self, tap: &VbanTap, n: usize, scratch: &mut [f32]) {
-        self.flushes(tap);
         if n == 0 || n > MAX_FRAMES || scratch.len() < NUM_STRIPS * 2 * MAX_FRAMES {
+            self.flushes(tap);
             return;
         }
         for (slot, st) in tap.ins.iter().zip(self.ins.iter_mut()) {
-            let Some(ring) = slot.ring.get() else { continue };
+            // A flush (the stream was switched off, renamed, or its sender
+            // restarted): a stream that is playing first fades out over this
+            // cycle, like one that is switched off, instead of stopping dead
+            // (a click); then the rest of the ring is dropped.
+            let req = slot.flush_req.load(Acquire);
+            let flush = req != st.flush_seen;
+            let Some(ring) = slot.ring.get() else {
+                if flush {
+                    st.flushed(slot, req);
+                }
+                continue;
+            };
             let target = slot.strip.load(Relaxed) as usize;
-            let stopping = target >= NUM_STRIPS;
+            let stopping = target >= NUM_STRIPS || flush;
             let avail = ring.available() / 2;
             let fade_in = !st.playing;
             if !st.playing {
+                if flush {
+                    ring.consume(ring.available());
+                    st.flushed(slot, req);
+                    continue;
+                }
                 let need = slot.resume.load(Relaxed) as usize;
                 if stopping || need == 0 || avail < need.max(n) {
                     continue;
@@ -302,6 +326,10 @@ impl VbanRt {
                 if under && !stopping {
                     slot.underruns.fetch_add(1, Relaxed);
                 }
+            }
+            if flush {
+                ring.consume(ring.available());
+                st.flushed(slot, req);
             }
         }
     }
@@ -393,6 +421,47 @@ mod tests {
         assert_eq!(slot.underruns.load(Relaxed), 1);
         assert!(!slot.playing.load(Relaxed));
         assert!(ring.is_empty());
+    }
+
+    #[test]
+    fn a_flush_fades_a_playing_stream_out() {
+        // What the receiver does when a playing stream is switched off
+        // (strip NONE, then a flush) or its sender restarts (a flush): the
+        // stream fades out over the next cycle, as when it is only switched
+        // off, instead of stopping dead (a click); the ring is emptied and
+        // the flush answered in that same cycle.
+        for off in [true, false] {
+            let tap = VbanTap::new();
+            let mut rt = VbanRt::default();
+            let slot = &tap.ins[0];
+            slot.strip.store(2, Relaxed);
+            slot.resume.store(1, Relaxed);
+            feed(slot.ring(), 1000, 0.25);
+            rt.pull(&tap, 64, &mut scratch(), Instant::now()); // fade in
+            rt.pull(&tap, 64, &mut scratch(), Instant::now());
+            if off {
+                slot.strip.store(NONE, Relaxed);
+            }
+            let req = slot.flush_req.fetch_add(1, Release) + 1;
+            let mut sc = scratch();
+            rt.pull(&tap, 64, &mut sc, Instant::now());
+            let s = &sc[4 * MAX_FRAMES..][..64];
+            assert!(s[0] > 0.24 && s[32] > 0.1 && s[63] == 0.0, "off={off}: faded out: {:?}", &s[..4]);
+            assert!(s.windows(2).all(|w| w[1] <= w[0]), "off={off}: a fade, no step");
+            assert_eq!(slot.flush_ack.load(Acquire), req);
+            assert_eq!(slot.ring().available(), 0);
+            assert!(!slot.playing.load(Relaxed));
+            assert_eq!(slot.underruns.load(Relaxed), 0);
+            // nothing more until the stream is filled again
+            let mut sc = scratch();
+            rt.pull(&tap, 64, &mut sc, Instant::now());
+            assert!(sc[4 * MAX_FRAMES..][..64].iter().all(|&v| v == 0.0));
+            if !off {
+                feed(slot.ring(), 1000, 0.25);
+                rt.pull(&tap, 64, &mut scratch(), Instant::now());
+                assert!(slot.playing.load(Relaxed), "plays again after the restart");
+            }
+        }
     }
 
     #[test]

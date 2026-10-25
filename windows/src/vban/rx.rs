@@ -377,6 +377,13 @@ impl RxStream {
         fs_out: u32,
         reserve_ms: f64,
     ) -> Result<(), String> {
+        // Another sender with the same stream name while this one plays (two
+        // computers both sending "Stream1", say) is not mixed in: their frame
+        // counters interleaved made nearly every packet a restart, and the
+        // stream went silent. It is listed among the streams seen instead.
+        if self.receiving(now) && self.from.is_some_and(|f| f != from) {
+            return Ok(());
+        }
         let slot = &tap.ins[k];
         let ring = slot.ring();
         let period = match tap.period.load(Relaxed) {
@@ -561,6 +568,7 @@ mod tests {
         /// Extra stalls: every `stall_every` s, a burst arrives `stall_s` late.
         stall_every: f64,
         stall_s: f64,
+        sender: SocketAddrV4,
     }
 
     impl Sim {
@@ -594,6 +602,7 @@ mod tests {
                 corrs: Vec::new(),
                 stall_every: 0.0,
                 stall_s: 0.0,
+                sender: "192.168.1.20:6980".parse().unwrap(),
             }
         }
 
@@ -635,7 +644,7 @@ mod tests {
                 return; // lost on the way
             }
             let Ok(proto::Packet::Audio(h, d)) = proto::parse(&p) else { panic!() };
-            let from = "192.168.1.20:6980".parse().unwrap();
+            let from = self.sender;
             self.rx.packet(&self.tap, 0, &h, d, from, now, self.fs_out, self.reserve_ms).unwrap();
         }
 
@@ -842,6 +851,49 @@ mod tests {
         s.send_packet(now + Duration::from_millis(1));
         assert_eq!(s.rx.stats.restarts, 1);
         s.run(3.0);
+        assert!(s.tap.ins[0].playing.load(Relaxed));
+    }
+
+    #[test]
+    fn a_second_sender_with_the_same_stream_name_is_not_mixed_in() {
+        // Two computers send "Stream1" to an input with `from = any`: the
+        // one that started first plays on (the other used to make every
+        // packet a restart: silence), and takes over when it stops.
+        let mut s = Sim::new(48_000, 0.0, 256, 1);
+        let (a, b): (SocketAddrV4, SocketAddrV4) = ("192.168.1.20:6980".parse().unwrap(), "192.168.1.30:6980".parse().unwrap());
+        let mut sc = vec![0.0f32; NUM_STRIPS * 2 * MAX_FRAMES];
+        let base = s.base;
+        let (mut fa, mut fb) = (1000u32, 5u32);
+        let mut played = 0usize;
+        let cycles = 48_000 * 4 / 128;
+        for c in 0..cycles {
+            let t = c as f64 * 128.0 / 48_000.0;
+            if c % 2 == 0 {
+                (s.sender, s.frame) = (a, fa);
+                s.send_packet(base + Duration::from_secs_f64(t));
+                fa = s.frame;
+                (s.sender, s.frame) = (b, fb);
+                s.send_packet(base + Duration::from_secs_f64(t + 1e-4));
+                fb = s.frame;
+            }
+            sc[..128].fill(0.0);
+            s.rt.pull(&s.tap, 128, &mut sc, base + Duration::from_secs_f64(t));
+            played += sc[..128].iter().filter(|v| v.abs() > 1e-6).count();
+        }
+        assert_eq!(s.rx.stats.restarts, 0);
+        assert_eq!(s.rx.from, Some(a));
+        assert!(played > 48_000 * 3, "plays: {played} of {} frames", 48_000 * 4);
+        // A stops: after a pause, B is heard
+        for c in cycles..cycles + 48_000 / 128 {
+            let t = c as f64 * 128.0 / 48_000.0;
+            if c % 2 == 0 {
+                (s.sender, s.frame) = (b, fb);
+                s.send_packet(base + Duration::from_secs_f64(t));
+                fb = s.frame;
+            }
+            s.rt.pull(&s.tap, 128, &mut sc, base + Duration::from_secs_f64(t));
+        }
+        assert_eq!(s.rx.from, Some(b));
         assert!(s.tap.ins[0].playing.load(Relaxed));
     }
 }
