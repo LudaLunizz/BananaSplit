@@ -40,6 +40,17 @@ pub fn names_cable(pattern: &str) -> bool {
     pattern.to_ascii_lowercase().contains("cable")
 }
 
+/// The Windows default device, when it is a VB-Audio cable: `@default`
+/// does not use it. BananaSplit records the cables and plays into them, so
+/// following such a default would feed the mixer into itself. That happens
+/// with two everyday setups: the default output set to "CABLE Input" (all
+/// desktop sound through the mixer: A1 would play into the cable a strip
+/// records), and the default input set to "CABLE Output" (the virtual mic
+/// for every app: the Mic strip would record what B1 plays into it).
+pub fn default_cable<'a>(devs: &'a [DevInfo], default_id: Option<&str>) -> Option<&'a DevInfo> {
+    default_id.and_then(|id| devs.iter().find(|d| d.id == id)).filter(|d| is_vb_cable(&d.name))
+}
+
 /// Find the device for one `connect` entry.
 pub fn resolve<'a>(
     pattern: &str,
@@ -47,10 +58,14 @@ pub fn resolve<'a>(
     default_id: Option<&str>,
 ) -> Option<&'a DevInfo> {
     if pattern == DEFAULT_DEVICE {
-        // Whatever Windows uses by default, virtual cable or not.
+        // Whatever Windows uses by default, unless that is a VB-Audio cable
+        // (see `default_cable`): then the real device `@physical` picks.
+        if default_cable(devs, default_id).is_some() {
+            return resolve(PHYSICAL, devs, default_id);
+        }
         return default_id
             .and_then(|id| devs.iter().find(|d| d.id == id))
-            .or_else(|| devs.first());
+            .or_else(|| devs.iter().find(|d| !is_vb_cable(&d.name)));
     }
     if pattern == PHYSICAL {
         let default = default_id.and_then(|id| devs.iter().find(|d| d.id == id));
@@ -95,6 +110,30 @@ mod tests {
                 id: format!("id{i}"),
             })
             .collect()
+    }
+
+    #[test]
+    fn default_never_follows_windows_into_a_cable() {
+        let outs = devs(&[
+            "CABLE Input (VB-Audio Virtual Cable)",
+            "Speakers (Realtek(R) Audio)",
+            "Headphones (USB Headset)",
+        ]);
+        // default output "CABLE Input" (desktop sound through the mixer):
+        // A1 plays on the speakers, not into the cable a strip records
+        assert_eq!(resolve(DEFAULT_DEVICE, &outs, Some("id0")).unwrap().id, "id1");
+        assert_eq!(default_cable(&outs, Some("id0")).unwrap().id, "id0");
+        // a real default is followed as before
+        assert_eq!(resolve(DEFAULT_DEVICE, &outs, Some("id2")).unwrap().id, "id2");
+        assert!(default_cable(&outs, Some("id2")).is_none());
+        // no default known: not a cable either
+        assert_eq!(resolve(DEFAULT_DEVICE, &outs, None).unwrap().id, "id1");
+        // default input "CABLE Output" (the virtual mic for every app): the
+        // Mic strip records the real microphone, not what B1 plays into it
+        let ins = devs(&["CABLE Output (VB-Audio Virtual Cable)", "Microphone (Yeti Stereo Microphone)"]);
+        assert_eq!(resolve(DEFAULT_DEVICE, &ins, Some("id0")).unwrap().id, "id1");
+        // only cables: nothing, rather than a loop
+        assert!(resolve(DEFAULT_DEVICE, &devs(&["CABLE Input (VB-Audio Virtual Cable)"]), Some("id0")).is_none());
     }
 
     #[test]

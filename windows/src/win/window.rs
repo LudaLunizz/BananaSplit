@@ -14,8 +14,9 @@
 //!
 //! It also owns BananaSplit's tray icon (`tray.rs`): a left click shows or
 //! hides the window; the menu has Show, Start/Stop recording and Quit.
-//! Closing the window hides it in the tray (without a notification area,
-//! as on a server without Explorer, it minimizes instead). With "Closing the
+//! Closing the window hides it in the tray (while the icon is not in the
+//! notification area, as on a server without Explorer, it minimizes
+//! instead). With "Closing the
 //! window keeps it running" off in the menu, closing it quits BananaSplit.
 //! Started hidden (`--hidden`, the autostart entry), only the icon shows.
 
@@ -36,6 +37,10 @@ use wry::{WebContext, WebViewBuilder};
 const DEFAULT_SIZE: (u32, u32) = (1200, 800);
 /// Report the size once it stops changing (not on every step of a drag).
 const SIZE_SETTLE: Duration = Duration::from_millis(500);
+/// Started hidden while the notification area is not there (at login,
+/// before Explorer): how long to wait for it before the window shows
+/// (minimized) instead, so BananaSplit can't end up with nothing to show.
+const TRAY_WAIT: Duration = Duration::from_secs(60);
 /// Clicking the tray icon takes the focus from the window first: a window
 /// that had it this recently counts as the one in front.
 const FOCUS_GRACE: Duration = Duration::from_millis(600);
@@ -248,6 +253,8 @@ fn run(opts: Opts) -> Result<(), String> {
     let mut told = Some((opened.width.round() as u32, opened.height.round() as u32));
     // When the window last lost the focus (None: it has it, or never had).
     let mut blurred: Option<Instant> = None;
+    // Started hidden, but the icon is not in the notification area yet.
+    let mut tray_wait = (opts.hidden && tray.as_ref().is_some_and(|t| !t.shown())).then(|| Instant::now() + TRAY_WAIT);
     event_loop.run(move |event, _, control_flow| {
         let _keep = (&webview, &context);
         match event {
@@ -292,7 +299,7 @@ fn run(opts: Opts) -> Result<(), String> {
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 if !owned {
                     quitting = true;
-                } else if close_to_tray && has_tray {
+                } else if close_to_tray && tray.as_ref().is_some_and(Tray::shown) {
                     report_size(&window, &mut told);
                     window.set_visible(false);
                 } else if close_to_tray {
@@ -311,16 +318,27 @@ fn run(opts: Opts) -> Result<(), String> {
                     resized_at = None;
                     report_size(&window, &mut told);
                 }
+                if tray_wait.is_some_and(|t| Instant::now() >= t) {
+                    tray_wait = None;
+                    if !window.is_visible() && !tray.as_ref().is_some_and(Tray::shown) {
+                        // No notification area after all: on the taskbar.
+                        window.set_visible(true);
+                        window.set_minimized(true);
+                    }
+                }
             }
             _ => {}
+        }
+        if tray_wait.is_some() && tray.as_ref().is_some_and(Tray::shown) {
+            tray_wait = None;
         }
         *control_flow = if quitting {
             // tao ends the process without running destructors: take the
             // icon out of the notification area now, or a dead one stays.
             tray = None;
             ControlFlow::Exit
-        } else if let Some(t) = resized_at {
-            ControlFlow::WaitUntil(t + SIZE_SETTLE)
+        } else if let Some(t) = [resized_at.map(|t| t + SIZE_SETTLE), tray_wait].into_iter().flatten().min() {
+            ControlFlow::WaitUntil(t)
         } else {
             ControlFlow::Wait
         };

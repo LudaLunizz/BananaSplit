@@ -15,9 +15,12 @@ pub fn installed_cables(en: &Enumerator) -> Vec<String> {
     v
 }
 
-/// Report missing drivers and let the user install them from the vendor.
-pub fn first_run(en: &Enumerator, _cfg: &mut Config, _headless: bool, notes: &mut Vec<String>) {
-    if installed_cables(en).is_empty() {
+/// Report missing drivers (a note for the status line). True if none is
+/// installed.
+pub fn first_run(en: &Enumerator, _cfg: &mut Config, _headless: bool, notes: &mut Vec<String>) -> bool {
+    let missing = installed_cables(en).is_empty();
+    if missing {
         notes.push(format!("VB-Audio virtual cables are not installed; install them from {VBCABLE_PAGE} to use virtual app inputs and outputs"));
     }
+    missing
 }

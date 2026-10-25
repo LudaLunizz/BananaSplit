@@ -1418,7 +1418,9 @@ fn mapped(a: SocketAddr) -> SocketAddr {
 fn peer_allowed(s: &TcpStream) -> bool {
     let (Ok(peer), Ok(us)) = (s.peer_addr(), s.local_addr()) else { return false };
     #[cfg(windows)]
-    { let _ = (peer, us); return true; }
+    {
+        return crate::sys::same_user(peer, us);
+    }
     #[cfg(unix)]
     {
         let Ok(t4) = std::fs::read_to_string("/proc/net/tcp") else { return true };

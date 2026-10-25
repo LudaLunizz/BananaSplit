@@ -44,17 +44,22 @@ pub struct Status {
     pub cpu: f32,
 }
 
-/// First-launch VB-CABLE check and install prompt.
+/// The VB-CABLE check at start (a note when none is installed). True if
+/// none is installed: on the very first start, the user is offered the
+/// download page (`desktop::cable_prompt`).
 pub fn first_run(
     cfg: &mut Config,
     _path: &std::path::Path,
     headless: bool,
     notes: &mut Vec<String>,
-) {
+) -> bool {
     let _com = ffi::ComInit::mta();
     match Enumerator::new() {
         Ok(en) => cables::first_run(&en, cfg, headless, notes),
-        Err(e) => notes.push(e),
+        Err(e) => {
+            notes.push(e);
+            false
+        }
     }
 }
 

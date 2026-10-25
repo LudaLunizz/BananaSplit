@@ -210,6 +210,8 @@ struct GuiOpts {
     port: u16,
     explicit_port: bool,
     no_open: bool,
+    /// The first start on this computer, without VB-Audio cables: offer them.
+    cable_prompt: bool,
 }
 
 /// The mixer's desktop window: a `bananasplit --window` process of its own
@@ -307,12 +309,17 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     let port = gui::start(hub.clone(), opts.port, opts.explicit_port)?;
     gui::note_port(&cfg.client_name, port);
     let url = gui::url(port);
+    let mut notes = notes;
     if port != opts.port {
-        eprintln!("bananasplit: port {} is busy, using {port} instead", opts.port);
+        notes.push(format!("port {} is busy, using {port} instead", opts.port));
     }
     eprintln!("bananasplit: GUI at {url}  (quit with the power button, or Ctrl-C)");
-    for n in notes {
+    for n in &notes {
         eprintln!("bananasplit: {n}");
+    }
+    if opts.cable_prompt {
+        // Not on this thread: the mixer starts meanwhile.
+        std::thread::spawn(desktop::cable_prompt);
     }
     let mut window = Window { proc: None, url: url.clone(), recording: false };
     // Started after the first frame is published (it takes a moment). In the
@@ -320,7 +327,9 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     let mut open_window = true;
     let mut was_recording = false;
 
-    let mut status = String::new();
+    // What happened at start shows in the page's status line: there is no
+    // console to print it to.
+    let mut status = notes.join(" | ");
     let mut view = tui::View::default();
     let mut last_scan = Instant::now() - Duration::from_secs(10);
     let mut last_slow = Instant::now() - Duration::from_secs(10);
@@ -612,9 +621,13 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    let mut notes = Vec::new();
     if let Ok(Some(note)) = Config::migrate_legacy(&args.path, &Config::legacy_path()) {
         eprintln!("bananasplit: {note}");
+        notes.push(note);
     }
+    // Before load_or_create writes it: the very first start.
+    let first_start = !args.path.exists();
     let mut cfg = match Config::load_or_create(&args.path) {
         Ok(c) => c,
         Err(e) => return fail(&e, args.headless),
@@ -633,8 +646,7 @@ fn main() -> ExitCode {
             // Its window comes to the front: this start may pass that on.
             sys::allow_foreground();
             if !gui::request_show(port, "") && !gui::open_window(&url) {
-                eprintln!("bananasplit: already running at {url}, but its window could not be opened");
-                return error_main();
+                return fail(&format!("BananaSplit is already running at {url}, but its window could not be opened"), false);
             }
             return ExitCode::SUCCESS;
         }
@@ -653,8 +665,7 @@ fn main() -> ExitCode {
     let player = Arc::new(Player::new(play_tap.clone(), rate));
     player.set_routes(cfg.recorder.play_to);
 
-    let mut notes = Vec::new();
-    win::first_run(&mut cfg, &args.path, args.headless, &mut notes);
+    let no_cables = win::first_run(&mut cfg, &args.path, args.headless, &mut notes);
     let session = match Session::open(&cfg, shared.clone(), rec_tap.clone(), vban_tap.clone(), play_tap.clone(), &mut notes) {
         Ok(s) => s,
         Err(e) => return fail(&e, args.headless),
@@ -671,9 +682,7 @@ fn main() -> ExitCode {
     // The graph Session::open built (opening every device again would only
     // take time); its connection errors.
     let (_, errs) = ctx.session.connect(&cfg, false);
-    for e in &errs {
-        eprintln!("bananasplit: {e}");
-    }
+    notes.extend(errs);
 
     // Logoff, shutdown and `taskkill` (without /f) save and stop it.
     win::endsession::watch();
@@ -684,7 +693,12 @@ fn main() -> ExitCode {
             &mut ctx,
             &mut cfg,
             notes,
-            &GuiOpts { port: args.port, explicit_port: args.explicit_port, no_open: args.no_open },
+            &GuiOpts {
+                port: args.port,
+                explicit_port: args.explicit_port,
+                no_open: args.no_open,
+                cable_prompt: first_start && no_cables && !args.no_open,
+            },
         )
     };
     match result {

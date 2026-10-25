@@ -5,6 +5,11 @@
 //! icon's messages to `wndproc` below. Left click shows or hides the
 //! window; the menu has Show, Start/Stop recording and Quit, like the Linux
 //! tray. The icon is added again when Explorer restarts.
+//!
+//! At login, Windows starts the autostart entry while Explorer is still
+//! starting, and the notification area may not take an icon yet. The icon's
+//! window then stays, and the icon is added when Explorer says the taskbar
+//! is there ("TaskbarCreated"), or by a retry every two seconds.
 
 use std::cell::RefCell;
 use std::ffi::c_void;
@@ -99,6 +104,8 @@ unsafe extern "system" {
     fn CreateIcon(instance: Handle, w: i32, h: i32, planes: u8, bits: u8, and: *const u8, xor: *const u8) -> Handle;
     fn DestroyIcon(icon: Handle) -> i32;
     fn GetSystemMetrics(index: i32) -> i32;
+    fn SetTimer(hwnd: Hwnd, id: usize, ms: u32, func: *const c_void) -> usize;
+    fn KillTimer(hwnd: Hwnd, id: usize) -> i32;
 }
 
 #[link(name = "kernel32")]
@@ -113,6 +120,10 @@ const WM_LBUTTONUP: u32 = 0x0202;
 const WM_RBUTTONUP: u32 = 0x0205;
 const WM_CONTEXTMENU: u32 = 0x007B;
 const WM_COMMAND: u32 = 0x0111;
+const WM_TIMER: u32 = 0x0113;
+/// The timer that retries adding the icon, and how often.
+const RETRY_TIMER: usize = 1;
+const RETRY_MS: u32 = 2000;
 const NIM_ADD: u32 = 0;
 const NIM_MODIFY: u32 = 1;
 const NIM_DELETE: u32 = 2;
@@ -142,6 +153,8 @@ pub enum TrayAction {
 struct State {
     hwnd: Hwnd,
     taskbar_created: u32,
+    /// The icon is in the notification area (else it is being retried).
+    shown: bool,
     recording: bool,
     icons: [Handle; 2],
     on_action: Box<dyn Fn(TrayAction)>,
@@ -217,6 +230,20 @@ fn copy_wide(dst: &mut [u16], s: &str) {
     let w: Vec<u16> = s.encode_utf16().take(dst.len() - 1).collect();
     dst[..w.len()].copy_from_slice(&w);
     dst[w.len()] = 0;
+}
+
+/// Add the icon; if the notification area does not take it (yet), keep
+/// retrying on a timer.
+fn try_add(st: &mut State) {
+    st.shown = notify(st, NIM_ADD);
+    // SAFETY: our own window; the timer is (re)set or killed on its thread.
+    unsafe {
+        if st.shown {
+            KillTimer(st.hwnd, RETRY_TIMER);
+        } else {
+            SetTimer(st.hwnd, RETRY_TIMER, RETRY_MS, std::ptr::null());
+        }
+    }
 }
 
 fn notify(st: &State, message: u32) -> bool {
@@ -296,11 +323,12 @@ unsafe extern "system" fn wndproc(hwnd: Hwnd, msg: u32, w: usize, l: isize) -> i
         return 0;
     }
     let readd = STATE.with(|s| s.borrow().as_ref().is_some_and(|st| st.taskbar_created != 0 && msg == st.taskbar_created));
-    if readd {
-        // Explorer restarted: the icon is gone, add it again.
+    if readd || (msg == WM_TIMER && w == RETRY_TIMER) {
+        // The taskbar is (back) there: Explorer started late, or restarted
+        // and lost the icon. Or the retry timer: try again.
         STATE.with(|s| {
-            if let Some(st) = s.borrow().as_ref() {
-                notify(st, NIM_ADD);
+            if let Some(st) = s.borrow_mut().as_mut() {
+                try_add(st);
             }
         });
         return 0;
@@ -313,6 +341,8 @@ pub struct Tray(());
 
 impl Tray {
     /// Add the icon. Must be called on the thread that runs the event loop.
+    /// If the notification area is not there yet, the icon comes as soon as
+    /// it is (`shown` says whether it has).
     pub fn add(on_action: impl Fn(TrayAction) + 'static) -> Result<Tray, String> {
         unsafe {
             let instance = GetModuleHandleW(std::ptr::null());
@@ -354,22 +384,15 @@ impl Tray {
             if hwnd.is_null() {
                 return Err("cannot create the tray window".into());
             }
-            let st = State {
+            let mut st = State {
                 hwnd,
                 taskbar_created: RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()),
+                shown: false,
                 recording: false,
                 icons: [make_icon(&IDLE), make_icon(&REC)],
                 on_action: Box::new(on_action),
             };
-            if !notify(&st, NIM_ADD) {
-                for i in st.icons {
-                    if !i.is_null() {
-                        DestroyIcon(i);
-                    }
-                }
-                DestroyWindow(hwnd);
-                return Err("the notification area did not take the icon".into());
-            }
+            try_add(&mut st);
             STATE.with(|s| *s.borrow_mut() = Some(st));
             Ok(Tray(()))
         }
@@ -381,18 +404,29 @@ impl Tray {
             if let Some(st) = s.borrow_mut().as_mut() {
                 if st.recording != on {
                     st.recording = on;
-                    notify(st, NIM_MODIFY);
+                    // Not shown yet: it is added with the right icon later.
+                    if st.shown {
+                        notify(st, NIM_MODIFY);
+                    }
                 }
             }
         });
+    }
+
+    /// Is the icon in the notification area now?
+    pub fn shown(&self) -> bool {
+        STATE.with(|s| s.borrow().as_ref().is_some_and(|st| st.shown))
     }
 }
 
 impl Drop for Tray {
     fn drop(&mut self) {
         if let Some(st) = STATE.with(|s| s.borrow_mut().take()) {
-            notify(&st, NIM_DELETE);
+            if st.shown {
+                notify(&st, NIM_DELETE);
+            }
             unsafe {
+                KillTimer(st.hwnd, RETRY_TIMER);
                 for i in st.icons {
                     if !i.is_null() {
                         DestroyIcon(i);
