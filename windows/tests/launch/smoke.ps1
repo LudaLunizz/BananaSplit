@@ -251,6 +251,8 @@ Annotate 'notice' "--list-devices (exit $LASTEXITCODE)" $l
 
 # ---- "Start with Windows" left by an older copy elsewhere ----
 $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+# (A fresh profile may not have the Run key yet.)
+if (-not (Test-Path $run)) { New-Item -Path $run | Out-Null }
 $savedRun = (Get-ItemProperty -Path $run -Name BananaSplit -ErrorAction SilentlyContinue).BananaSplit
 New-ItemProperty -Path $run -Name BananaSplit -Value '"C:\Old\bananasplit-2.7.0\bananasplit.exe" --gui --no-open' -PropertyType String -Force | Out-Null
 
@@ -295,7 +297,7 @@ $made = (& net.exe user $other $pw /add /y 2>&1 | Out-String)
 if ($LASTEXITCODE -ne 0) { Annotate 'warning' 'net user' $made }
 $out = 'C:\Users\Public\bs-other.txt'
 Remove-Item $out -ErrorAction SilentlyContinue
-$cmd = "try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 '$url/api/state').StatusCode } catch { if (`$_.Exception.Response) { [int]`$_.Exception.Response.StatusCode } else { 'error: ' + `$_.Exception.Message } } | Out-File -Encoding ascii '$out'"
+$cmd = "& { try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 '$url/api/state').StatusCode } catch { if (`$_.Exception.Response) { [int]`$_.Exception.Response.StatusCode } else { 'error: ' + `$_.Exception.Message } } } | Out-File -Encoding ascii '$out'"
 try {
     $cred = New-Object Management.Automation.PSCredential ($other, (ConvertTo-SecureString $pw -AsPlainText -Force))
     $o = Start-Process powershell.exe -Credential $cred -LoadUserProfile -WindowStyle Hidden -PassThru -Wait -ArgumentList '-NoProfile', '-Command', $cmd
