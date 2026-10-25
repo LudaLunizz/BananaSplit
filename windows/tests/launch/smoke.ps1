@@ -418,8 +418,31 @@ Check (Until { (Mixers).Count -eq 0 } 15) "no BananaSplit process is left"
 Check ((Saved-Ini) -match 'close_to_tray = false') "the setting was saved"
 if ($p4.HasExited) { Check ($p4.ExitCode -eq 0) "the mixer exit code is 0 (was $($p4.ExitCode))" }
 
+# ---- at login, the taskbar may come after BananaSplit ----
+# Windows starts the autostart entry while Explorer is still starting. Here:
+# no Explorer at all (Windows must not restart it by itself meanwhile).
+$winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+$ars = (Get-ItemProperty -Path $winlogon -Name AutoRestartShell -ErrorAction SilentlyContinue).AutoRestartShell
+Set-ItemProperty -Path $winlogon -Name AutoRestartShell -Value 0 -Type DWord -ErrorAction SilentlyContinue
+Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+Check (Until { @(Get-Process explorer -ErrorAction SilentlyContinue).Count -eq 0 } 15) "Explorer is stopped (no taskbar, as early at login)"
+$p9 = Start-App @('--gui', '--no-open') 'login'
+Check (Until { Use-NotedPort; (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "started in the background before the taskbar, the mixer answers"
+Start-Sleep -Seconds 5
+Check ((App-Windows).Count -eq 0) "it shows no window while it waits for the taskbar"
+Check ($null -ne (Tray-Window)) "its tray icon's window waits too"
+Start-Process explorer.exe
+if ($null -ne $ars) { Set-ItemProperty -Path $winlogon -Name AutoRestartShell -Value $ars -Type DWord -ErrorAction SilentlyContinue }
+else { Remove-ItemProperty -Path $winlogon -Name AutoRestartShell -ErrorAction SilentlyContinue }
+$came = Until { $t = Tray-Window; $t -and [BsSmoke.Win]::TrayIconShown($t) } 45
+Check $came "once the taskbar is there, the tray icon appears"
+Check ((App-Windows).Count -eq 0) "and the window stays in the tray"
+try { [void](Post-Cmd 'op=quit') } catch { }
+Wait-Gone $p9 "it quits"
+Screenshot 'after-explorer'
+
 $logs = [ordered]@{ 'Mixer' = 'mixer'; 'Second start' = 'second'; 'Third start' = 'third'; 'Hidden start' = 'hidden';
-    'Start while hidden' = 'hidden2'; 'taskkill run' = 'taskkill'; 'Tray quit run' = 'trayquit'; 'Last run' = 'mixer2' }
+    'Start while hidden' = 'hidden2'; 'taskkill run' = 'taskkill'; 'Tray quit run' = 'trayquit'; 'Last run' = 'mixer2'; 'Before the taskbar' = 'login' }
 foreach ($k in $logs.Keys) {
     Write-Output "`n---- $k stderr ----"
     Get-Content "$work\$($logs[$k]).err" -ErrorAction SilentlyContinue
