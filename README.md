@@ -79,8 +79,10 @@ The full Linux manual covering configuration, latency tuning, VBAN and the recor
 ### Windows
 
 1. Install the [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) if it is not already present.
-2. Extract the zip and run `bananasplit.exe`.
+2. Extract the zip and run `bananasplit.exe`. It is a single standalone program: no installer, no console window.
 3. For per-channel virtual cables, install [VB-Audio CABLE](https://vb-audio.com/Cable/) (CABLE, CABLE-A … CABLE-D).
+
+BananaSplit lives in the tray: closing the window keeps the mixer running there. **Install to Start Menu** and **Start with Windows** are in the app menu.
 
 See [`windows/README.md`](windows/README.md) for paths and command-line options.
 

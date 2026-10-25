@@ -12,9 +12,13 @@ The mixer core is shared with the [Linux app](../linux/README.md). See that manu
 
 ## Running
 
-Extract the release zip, put `bananasplit.exe` anywhere and start it. BananaSplit opens in its own window; no external browser is used.
+Extract the release zip, put `bananasplit.exe` anywhere (your Desktop, or a folder under Program Files) and double-click it. It is a single, self-contained program: BananaSplit opens in its own window, with no console window and no external browser.
 
-Closing the window minimizes it and leaves the mixer running; turn off **Closing the window keeps it running** in the app menu to make closing it quit BananaSplit. Use the quit button in the app or run `bananasplit.exe --quit` to quit. Starting it again brings up the running instance's window. The window always closes with the mixer.
+- **Tray icon.** BananaSplit lives in the notification area, like Voicemeeter. Closing the window hides it there and the mixer keeps running. Click the icon to bring the window back; right-click it for **Show**, **Start/Stop recording** and **Quit**. The icon turns red while recording.
+- **Quitting.** Use **Quit** in the tray menu, the power button in the app, or `bananasplit.exe --quit`. Turn off **Closing the window keeps it running** in the app menu if you want the close button to quit instead.
+- **Starting it again** brings up the running instance's window rather than starting a second mixer.
+- **Settings are saved** when you quit, every two minutes, and when you log off, restart or shut down Windows. `taskkill /im bananasplit.exe` (without `/f`) also quits cleanly.
+- **No WebView2?** BananaSplit opens the mixer in your web browser instead and offers Microsoft's download page for the WebView2 Runtime.
 
 ## Command line
 
@@ -22,13 +26,15 @@ Closing the window minimizes it and leaves the mixer running; turn off **Closing
 | --- | --- |
 | `--gui` | Run with the desktop window (default) |
 | `--headless` | Run the audio engine without any UI |
-| `--no-open`, `--hidden` | Start in the background, without a window (started from a shortcut or at login, it closes its console window right away) |
+| `--no-open`, `--hidden` | Start in the background: only the tray icon shows |
 | `--gui-port PORT` | Use a specific local port (default `8790`) |
 | `--config FILE` | Use a custom config file |
 | `--list-devices` | List WASAPI recording and playback devices |
 | `--print-default-config` | Print the default config and exit |
 | `--quit` | Quit a running instance |
 | `-V`, `--version` | Print the version |
+
+`bananasplit.exe` is a Windows program, not a console one. Run from cmd or PowerShell, it prints into that terminal, but the terminal doesn't wait for it, so its prompt may come back first. To wait and capture the output, pipe it (`bananasplit --list-devices | more`, or `| Out-String` in PowerShell) or use `start /wait bananasplit --list-devices`.
 
 ## Files
 
@@ -45,7 +51,7 @@ Closing the window minimizes it and leaves the mixer running; turn off **Closing
 From the app menu:
 
 - **Install to Start Menu** creates a shortcut.
-- **Start with Windows** registers BananaSplit under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. It then starts in the background, without a window; start BananaSplit to open it.
+- **Start with Windows** registers BananaSplit under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. At login it then starts quietly in the tray; click the icon (or start BananaSplit) to open the window.
 
 ## Virtual cables
 
@@ -58,6 +64,8 @@ Windows has no per-app stream routing like PipeWire, so device lists show WASAPI
 ```powershell
 cargo build --release
 ```
+
+`build.rs` embeds the app icon (`assets/icons/bananasplit.ico`), the version information and the application manifest. It needs no extra tools, but works with the MSVC toolchain only.
 
 Release builds in CI use a statically linked C runtime:
 
