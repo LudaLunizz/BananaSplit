@@ -1,16 +1,20 @@
-# BananaSplit.
+# BananaSplit: earlier versions
 
-Virtual audio software for Linux and Windows. This is pre-alpha software; treat it as such.
+This branch keeps every earlier version of BananaSplit (called vmix up to 2.4) as it was published, one folder per version. **The current version is on [`main`](https://github.com/LudaLunizz/BananaSplit/tree/main)**, and downloads are on the [Releases](https://github.com/LudaLunizz/BananaSplit/releases) page.
 
-## Downloads
+These versions are kept for reference only. They are not maintained; use the current release.
 
-| Platform | Development version | Downloads |
-| --- | --- | --- |
-| Windows x64 | 0.2.7 | [Portable EXE](0.2.7%20windows%20version/bananasplit.exe) · [Checksums](0.2.7%20windows%20version/bananasplit.exe.sha256) · [Release notes](0.2.7%20windows%20version/README.txt) · [Source](0.2.7%20windows%20version/bananasplit/) |
-| Linux x86-64 | 0.2.7 | [Debian/Ubuntu package](0.2.7%20channel%20menus%20%2B%20review%20fixes/bananasplit_2.7.0_amd64.deb) · [Portable archive](0.2.7%20channel%20menus%20%2B%20review%20fixes/bananasplit-2.7.0-linux-x86_64.tar.gz) · [Source archive](0.2.7%20channel%20menus%20%2B%20review%20fixes/bananasplit_2.7.tar.gz) · [Checksums](0.2.7%20channel%20menus%20%2B%20review%20fixes/SHA256SUMS.txt) |
+| Folder | Version | What it brought | Files |
+| --- | --- | --- | --- |
+| [`0.1.0`](0.1.0) | vmix, version 1 | The first version: a terminal mixer with 6 strips, 5 buses and virtual cables, on JACK or PipeWire | Source archive |
+| [`0.2.0`](0.2.0) | vmix, version 2 | An update of version 1 (same layout) | Source archive |
+| [`0.2.2 gui + recorder`](0.2.2%20gui%20%2B%20recorder) | vmix 2.2 | Web GUI and recorder | Source archive, screenshot |
+| [`0.2.3 review fixes`](0.2.3%20review%20fixes) | vmix 2.3 | Fixes from a code review | Source archive |
+| [`0.2.4 vban + eq`](0.2.4%20vban%20%2B%20eq) | vmix 2.4 | VBAN network audio and EQ | Source archive |
+| [`0.2.5 bananasplit + dark mode`](0.2.5%20bananasplit%20%2B%20dark%20mode) | BananaSplit 2.5 (Linux) | Renamed from vmix; dark mode | Source archive |
+| [`0.2.5 Windows`](0.2.5%20Windows) | BananaSplit 2.5 (Windows) | First Windows version | Installer, portable EXE, source archive, checksums, installer notes, security review |
+| [`0.2.6 studio gui + desktop app`](0.2.6%20studio%20gui%20%2B%20desktop%20app) | BananaSplit 2.6 (Linux) | Studio GUI; desktop app with window and tray | `.deb`, portable archive, source archive, checksums |
+| [`0.2.7 channel menus + review fixes`](0.2.7%20channel%20menus%20%2B%20review%20fixes) | BananaSplit 2.7.0 (Linux) | Channel menus, bus sends, review fixes | `.deb`, portable archive, source, checksums (also on the [v2.7.0 release](https://github.com/LudaLunizz/BananaSplit/releases/tag/v2.7.0)) |
+| [`0.2.7 windows version`](0.2.7%20windows%20version) | BananaSplit 2.7.0 (Windows) | Source for the native WebView2 window | Source; the EXE in this folder is the earlier browser-based build (see its README) |
 
-Linux packages require x86-64 and glibc 2.34 or newer. Debian, Ubuntu, Mint, and Pop!_OS users can install the `.deb` with `sudo apt install ./bananasplit_2.7.0_amd64.deb`. Other distributions can extract the portable archive and run `./install.sh`; see [Linux installation instructions](0.2.7%20channel%20menus%20%2B%20review%20fixes/INSTALL.txt).
-
-The Linux desktop app remains active in the system tray when its window is closed. Quit it from the tray icon or the window menu.
-
-The Windows 0.2.7 source now targets a native WASAPI desktop app window using Microsoft's WebView2 Runtime. The checked-in portable EXE is still the prior browser-based build pending a fresh build; see its [Windows release notes](0.2.7%20windows%20version/README.txt). The older [Windows installer notes](WINDOWS_INSTALLER.txt) apply to 0.2.5.
+The commit history of this branch is the repository's history up to 2.7.0, when every version was kept in a folder on `main`.
