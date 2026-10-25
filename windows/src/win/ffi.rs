@@ -142,6 +142,15 @@ pub const STD_INPUT_HANDLE: u32 = -10i32 as u32;
 pub const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
 pub const STD_ERROR_HANDLE: u32 = -12i32 as u32;
 pub const FILE_TYPE_PIPE: u32 = 3;
+pub const FILE_TYPE_UNKNOWN: u32 = 0;
+pub const INVALID_HANDLE_VALUE: HANDLE = -1isize as HANDLE;
+/// `AttachConsole`: the console of the process that started this one.
+pub const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+pub const GENERIC_READ: u32 = 0x8000_0000;
+pub const GENERIC_WRITE: u32 = 0x4000_0000;
+pub const FILE_SHARE_READ: u32 = 1;
+pub const FILE_SHARE_WRITE: u32 = 2;
+pub const OPEN_EXISTING: u32 = 3;
 pub const ENABLE_PROCESSED_INPUT: u32 = 0x1;
 pub const ENABLE_LINE_INPUT: u32 = 0x2;
 pub const ENABLE_ECHO_INPUT: u32 = 0x4;
@@ -345,6 +354,16 @@ unsafe extern "system" {
     pub fn FreeConsole() -> BOOL;
     pub fn SetStdHandle(which: u32, h: HANDLE) -> BOOL;
     pub fn GetFileType(h: HANDLE) -> u32;
+    pub fn AttachConsole(pid: u32) -> BOOL;
+    pub fn CreateFileW(
+        name: *const u16,
+        access: u32,
+        share: u32,
+        security: *mut c_void,
+        disposition: u32,
+        flags: u32,
+        template: HANDLE,
+    ) -> HANDLE;
 }
 
 /// `AllowSetForegroundWindow`: any process.

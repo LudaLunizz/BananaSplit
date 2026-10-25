@@ -193,27 +193,65 @@ pub fn pause_on_error() {
     }
 }
 
-/// Started hidden (`--no-open`: the autostart entry) with a console window
-/// of its own: close that window, so BananaSplit really runs in the
-/// background. What it prints from then on goes nowhere. Started from a
-/// terminal, nothing changes. True if it let go of a console.
-pub fn leave_own_console() -> bool {
-    if !owns_console() {
+/// Set once BananaSplit borrowed the console of the terminal it was run from.
+static ATTACHED: AtomicBool = AtomicBool::new(false);
+
+/// A standard handle that goes somewhere: a console, a file or a pipe.
+fn usable(which: u32) -> bool {
+    // SAFETY: plain Win32 calls on this process's standard handles.
+    unsafe {
+        let h = GetStdHandle(which);
+        !h.is_null() && h != INVALID_HANDLE_VALUE && GetFileType(h) != FILE_TYPE_UNKNOWN
+    }
+}
+
+/// BananaSplit is a Windows (GUI) program, so Windows gives it no console
+/// window. Run from a terminal (cmd, PowerShell) for a command-line option
+/// (`--help`, `--list-devices`, `--headless` …), it borrows that terminal's
+/// console for what it prints and for Ctrl-C. Output that is already
+/// redirected (to a file or a pipe) stays where it goes. True if it is
+/// now attached to a console.
+pub fn attach_parent() -> bool {
+    if usable(STD_OUTPUT_HANDLE) && usable(STD_ERROR_HANDLE) {
         return false;
     }
-    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-        let mut mode = 0u32;
-        // SAFETY: plain Win32 calls on this process's standard handles.
-        unsafe {
-            if GetConsoleMode(GetStdHandle(which), &mut mode) != 0 {
-                // No handle: Rust's standard streams then drop what is
-                // written to them (instead of failing on a closed console).
-                SetStdHandle(which, std::ptr::null_mut());
+    // SAFETY: plain Win32 calls; the handles opened here live as long as
+    // the process (they are its standard handles from now on).
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            return false;
+        }
+        for (which, name) in [(STD_INPUT_HANDLE, "CONIN$"), (STD_OUTPUT_HANDLE, "CONOUT$"), (STD_ERROR_HANDLE, "CONOUT$")] {
+            if usable(which) {
+                continue;
+            }
+            let n = wide(name);
+            let h = CreateFileW(
+                n.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            );
+            if h != INVALID_HANDLE_VALUE {
+                SetStdHandle(which, h);
             }
         }
     }
-    // SAFETY: as above.
-    unsafe { FreeConsole() != 0 }
+    ATTACHED.store(true, SeqCst);
+    // The terminal printed its prompt already (it does not wait for a
+    // Windows program): start on a line of our own.
+    eprintln!();
+    true
+}
+
+/// Is there someone to read what BananaSplit prints? (It borrowed a
+/// terminal's console, or its output is redirected.) If not, an error that
+/// stops it is shown in a dialog.
+pub fn has_output() -> bool {
+    ATTACHED.load(SeqCst) || usable(STD_ERROR_HANDLE)
 }
 
 #[cfg(test)]

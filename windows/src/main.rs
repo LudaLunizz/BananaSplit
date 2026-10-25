@@ -2,6 +2,14 @@
 //!
 //! The mixer itself (`bananasplit` crate) is shared with the Linux version;
 //! this binary supplies the Windows audio backend (`win/`) and the GUI.
+//!
+//! A Windows (GUI-subsystem) program: no console window opens, whether it
+//! is started from Explorer, the Start Menu or the autostart entry. Run from
+//! a terminal for a command-line option, it borrows that terminal's console
+//! (`win::console::attach_parent`).
+
+// Not for `cargo test`: the test harness prints to its console.
+#![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
 #[path = "gui.rs"]
 mod gui;
@@ -12,6 +20,9 @@ mod win;
 #[cfg(windows)]
 #[path = "win/window.rs"]
 mod app_window;
+#[cfg(windows)]
+#[path = "win/tray.rs"]
+mod tray;
 
 #[path = "win/desktop.rs"]
 pub mod desktop;
@@ -49,7 +60,7 @@ USAGE:
 OPTIONS:
     --gui                Run the desktop app window (default)
     --gui-port PORT      GUI port (default 8790)
-    --no-open, --hidden  Start in the background, without a window
+    --no-open, --hidden  Start in the background: only the tray icon shows
     --headless           Run the audio engine without a UI
     --list-devices       List Windows audio endpoints
     --print-default-config
@@ -131,11 +142,11 @@ fn error_main() -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// An error that stops BananaSplit: printed, and when it runs in the
-/// background without a console (the autostart entry), shown in a dialog.
-fn fail(e: &str, hidden: bool) -> ExitCode {
+/// An error that stops BananaSplit: printed, and shown in a dialog when
+/// nobody would read it (started from Explorer, a shortcut or autostart).
+fn fail(e: &str, headless: bool) -> ExitCode {
     eprintln!("error: {e}");
-    if hidden {
+    if !headless && !win::console::has_output() {
         desktop::error_dialog(&format!("BananaSplit stopped.\n\n{e}"));
     }
     error_main()
@@ -207,30 +218,43 @@ struct GuiOpts {
 struct Window {
     proc: Option<gui::WindowProc>,
     url: String,
+    /// Recording (the tray icon shows it).
+    recording: bool,
 }
 
 impl Window {
-    fn start(&mut self, cfg: &Config) {
+    /// Start the window process: its window, and its tray icon. `hidden`
+    /// (started in the background): only the tray icon shows.
+    fn start(&mut self, cfg: &Config, hidden: bool) {
         let opts = gui::WinOpts {
             url: &self.url,
-            hidden: false,
+            hidden,
             close_to_tray: cfg.gui.close_to_tray,
             size: cfg.gui.window,
             token: None,
         };
         match gui::WindowProc::spawn(&opts) {
-            Ok(p) => self.proc = Some(p),
+            Ok(p) => {
+                self.proc = Some(p);
+                if self.recording {
+                    self.send("rec 1");
+                }
+            }
             Err(e) => {
                 eprintln!("bananasplit: no window: {e}");
-                let text = format!(
-                    "BananaSplit could not open its desktop window.\n\n{e}\n\nInstall the Microsoft Edge \
-                     WebView2 Runtime and start BananaSplit again. The mixer keeps running; \
-                     `bananasplit --quit` stops it."
-                );
+                if hidden {
+                    return; // nothing was asked to show; the next start tries again
+                }
                 // Not on this thread: the mixer keeps running meanwhile.
-                std::thread::spawn(move || desktop::error_dialog(&text));
+                let url = self.url.clone();
+                std::thread::spawn(move || desktop::no_window(&e, &url));
             }
         }
+    }
+
+    /// Does the window process have a tray icon?
+    fn tray(&self) -> bool {
+        self.proc.as_ref().is_some_and(|p| p.tray)
     }
 
     /// Bring it up (BananaSplit was started again), or open it again.
@@ -240,7 +264,7 @@ impl Window {
             Some(p) if alive => p.send("show -"),
             _ => {
                 self.proc = None;
-                self.start(cfg);
+                self.start(cfg, false);
             }
         }
     }
@@ -290,9 +314,11 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     for n in notes {
         eprintln!("bananasplit: {n}");
     }
-    let mut window = Window { proc: None, url: url.clone() };
-    // Opened after the first frame is published (it takes a moment).
-    let mut open_window = !opts.no_open;
+    let mut window = Window { proc: None, url: url.clone(), recording: false };
+    // Started after the first frame is published (it takes a moment). In the
+    // background (`--no-open`), the window stays hidden: only the tray icon.
+    let mut open_window = true;
+    let mut was_recording = false;
 
     let mut status = String::new();
     let mut view = tui::View::default();
@@ -385,8 +411,16 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                     // Closed with "Closing the window keeps it running" off.
                     gui::WinMsg::Quit => quit = true,
                     gui::WinMsg::Size(w, h) => cfg.gui.window = Some((w.clamp(640, 16384), h.clamp(480, 16384))),
-                    // Tray menu items (Linux) and the reader's end.
-                    gui::WinMsg::Open | gui::WinMsg::Record | gui::WinMsg::Gone => {}
+                    // The tray menu.
+                    gui::WinMsg::Record => {
+                        let on = if rec.is_recording() { "0" } else { "1" };
+                        status = match gui::command(&hub, &format!("op=rec&v={on}")) {
+                            Ok(m) => m,
+                            Err(e) => format!("recorder: {e}"),
+                        };
+                    }
+                    // A browser (Linux without WebKitGTK); the reader's end.
+                    gui::WinMsg::Open | gui::WinMsg::Gone => {}
                 }
             }
             if !p.alive() {
@@ -452,7 +486,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             autostart: hub.autostart.load(SeqCst),
             installed: hub.installed.load(SeqCst),
             window: if window.proc.is_some() { "app" } else { "none" },
-            tray: false,
+            tray: window.tray(),
         };
         hub.publish(gui::state_json(
             &ctx.shared,
@@ -475,7 +509,15 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
         ));
 
         if std::mem::take(&mut open_window) {
-            window.start(cfg);
+            window.start(cfg, opts.no_open);
+        }
+        // The tray icon shows when it records; a finished take is listed.
+        let recording = rec.is_recording();
+        if recording != was_recording {
+            was_recording = recording;
+            window.recording = recording;
+            window.send(&format!("rec {}", u8::from(recording)));
+            takes.kick();
         }
         if last_save.elapsed() >= Duration::from_secs(120) {
             capture_all(cfg, &ctx.shared, &rec, &ctx.vban);
@@ -522,6 +564,7 @@ fn main() -> ExitCode {
     let args = match parse_args() {
         Ok(a) => a,
         Err(s) => {
+            win::console::attach_parent();
             if s == HELP || s.starts_with("BananaSplit ") {
                 print!("{s}");
                 return ExitCode::SUCCESS;
@@ -530,6 +573,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // The command-line uses print to the terminal they were run from.
+    if args.print_default || args.list || args.quit || args.headless {
+        win::console::attach_parent();
+    }
     if args.print_default {
         print!("{}", Config::default().to_ini());
         return ExitCode::SUCCESS;
@@ -565,16 +612,12 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // Started in the background (the autostart entry) with a console window
-    // of its own: let go of it first thing, so it is gone at once.
-    let hidden = args.no_open && !args.headless && sys::leave_own_console();
-
     if let Ok(Some(note)) = Config::migrate_legacy(&args.path, &Config::legacy_path()) {
         eprintln!("bananasplit: {note}");
     }
     let mut cfg = match Config::load_or_create(&args.path) {
         Ok(c) => c,
-        Err(e) => return fail(&e, hidden),
+        Err(e) => return fail(&e, args.headless),
     };
 
     // A second launch (the Start Menu shortcut while autostart already runs
@@ -614,7 +657,7 @@ fn main() -> ExitCode {
     win::first_run(&mut cfg, &args.path, args.headless, &mut notes);
     let session = match Session::open(&cfg, shared.clone(), rec_tap.clone(), vban_tap.clone(), play_tap.clone(), &mut notes) {
         Ok(s) => s,
-        Err(e) => return fail(&e, hidden),
+        Err(e) => return fail(&e, args.headless),
     };
 
     let mut ctx = Ctx {
@@ -632,6 +675,8 @@ fn main() -> ExitCode {
         eprintln!("bananasplit: {e}");
     }
 
+    // Logoff, shutdown and `taskkill` (without /f) save and stop it.
+    win::endsession::watch();
     let result = if args.headless {
         run_headless(&mut ctx, &cfg, notes)
     } else {
@@ -644,6 +689,6 @@ fn main() -> ExitCode {
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => fail(&e, hidden),
+        Err(e) => fail(&e, args.headless),
     }
 }

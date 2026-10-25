@@ -4,22 +4,27 @@
 //! …`, see `gui::WindowProc`), so the audio process never loads WebView2: if
 //! the window crashes, audio keeps running and the window can be opened again.
 //!
-//! It speaks the line protocol of the Linux window (`shell.rs`), without a
-//! tray. Mixer → here (stdin): `show TOKEN|-`, `hide`, `close-to-tray 0|1`,
-//! `quit` (`rec 0|1` is for a tray icon and ignored). The end of the input
-//! means the mixer is gone, however it went, and the window closes with it.
-//! Here → mixer (stdout): `ready app`, `fail REASON`, `quit` and `size W H`
-//! (logical pixels, remembered as `[gui] window`).
+//! It speaks the line protocol of the Linux window (`shell.rs`). Mixer →
+//! here (stdin): `show TOKEN|-`, `hide`, `close-to-tray 0|1`, `rec 0|1`
+//! (the tray icon shows recording) and `quit`. The end of the input means
+//! the mixer is gone, however it went, and the window closes with it.
+//! Here → mixer (stdout): `ready app [tray]`, `fail REASON`, `quit`,
+//! `record` (tray menu) and `size W H` (logical pixels, remembered as
+//! `[gui] window`).
 //!
-//! Closing the window minimizes it (there is no tray icon to come back from;
-//! the taskbar and starting BananaSplit again bring it back). With "Closing
-//! the window keeps it running" off in the menu, closing it quits BananaSplit.
+//! It also owns BananaSplit's tray icon (`tray.rs`): a left click shows or
+//! hides the window; the menu has Show, Start/Stop recording and Quit.
+//! Closing the window hides it in the tray (without a notification area,
+//! as on a server without Explorer, it minimizes instead). With "Closing the
+//! window keeps it running" off in the menu, closing it quits BananaSplit.
+//! Started hidden (`--hidden`, the autostart entry), only the icon shows.
 
 use crate::win::ffi::{GetFileType, GetStdHandle, SetForegroundWindow, FILE_TYPE_PIPE, HWND, STD_INPUT_HANDLE};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
+use crate::tray::{Tray, TrayAction};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
@@ -31,6 +36,9 @@ use wry::{WebContext, WebViewBuilder};
 const DEFAULT_SIZE: (u32, u32) = (1200, 800);
 /// Report the size once it stops changing (not on every step of a drag).
 const SIZE_SETTLE: Duration = Duration::from_millis(500);
+/// Clicking the tray icon takes the focus from the window first: a window
+/// that had it this recently counts as the one in front.
+const FOCUS_GRACE: Duration = Duration::from_millis(600);
 /// The page's background, shown until it has loaded.
 const BACKGROUND: (u8, u8, u8, u8) = (11, 16, 21, 255);
 /// The app icon (the tray pixmaps of the Linux version: ARGB32, big-endian).
@@ -137,6 +145,15 @@ fn report_size(window: &Window, told: &mut Option<(u32, u32)>) {
 enum FromMixer {
     Line(String),
     Gone,
+    /// Not from the mixer: the tray icon (same event loop).
+    Tray(TrayAction),
+}
+
+/// Show the window, bring it up, and bring it to the front.
+fn show(window: &Window) {
+    window.set_visible(true);
+    window.set_minimized(false);
+    bring_to_front(window);
 }
 
 /// `bananasplit --window …`: runs until the mixer goes away or says `quit`
@@ -166,6 +183,23 @@ fn run(opts: Opts) -> Result<(), String> {
         (s.width as u32, s.height as u32)
     });
     let (w, h) = fit_size(opts.size, screen);
+    // The tray icon, on this thread (its messages come through this event
+    // loop). Not when started by hand: there is no mixer to tell.
+    let mut tray = if owned {
+        let proxy = event_loop.create_proxy();
+        match Tray::add(move |a| {
+            let _ = proxy.send_event(FromMixer::Tray(a));
+        }) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                eprintln!("bananasplit window: no tray icon: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let has_tray = tray.is_some();
     let window = WindowBuilder::new()
         .with_title("BananaSplit")
         .with_inner_size(LogicalSize::new(f64::from(w), f64::from(h)))
@@ -173,9 +207,11 @@ fn run(opts: Opts) -> Result<(), String> {
         .with_background_color(BACKGROUND)
         .with_window_icon(icon(ICON_32, 32))
         .with_taskbar_icon(icon(ICON_64, 64))
+        // Started in the background with a tray icon: only the icon shows.
+        .with_visible(!(opts.hidden && has_tray))
         .build(&event_loop)
         .map_err(|e| format!("could not create the window: {e}"))?;
-    if opts.hidden {
+    if opts.hidden && !has_tray {
         window.set_minimized(true);
     }
     let mut context = WebContext::new(webview_data());
@@ -184,7 +220,7 @@ fn run(opts: Opts) -> Result<(), String> {
         .with_background_color(BACKGROUND)
         .build(&window)
         .map_err(|e| format!("could not start WebView2: {e}"))?;
-    tell("ready app");
+    tell(if has_tray { "ready app tray" } else { "ready app" });
 
     if owned {
         let proxy = event_loop.create_proxy();
@@ -210,23 +246,45 @@ fn run(opts: Opts) -> Result<(), String> {
     // choice: only report sizes the user makes.
     let opened = window.inner_size().to_logical::<f64>(window.scale_factor());
     let mut told = Some((opened.width.round() as u32, opened.height.round() as u32));
+    // When the window last lost the focus (None: it has it, or never had).
+    let mut blurred: Option<Instant> = None;
     event_loop.run(move |event, _, control_flow| {
         let _keep = (&webview, &context);
         match event {
             Event::UserEvent(FromMixer::Gone) => quitting = true,
+            Event::UserEvent(FromMixer::Tray(action)) => match action {
+                TrayAction::Toggle => {
+                    let in_front = window.is_focused() || blurred.is_some_and(|t| t.elapsed() < FOCUS_GRACE);
+                    if window.is_visible() && !window.is_minimized() && in_front {
+                        report_size(&window, &mut told);
+                        window.set_visible(false);
+                    } else {
+                        show(&window);
+                    }
+                }
+                TrayAction::Show => show(&window),
+                TrayAction::Record => tell("record"),
+                TrayAction::Quit => {
+                    // The mixer saves, then ends this window.
+                    report_size(&window, &mut told);
+                    window.set_visible(false);
+                    tell("quit");
+                }
+            },
             Event::UserEvent(FromMixer::Line(line)) => {
                 let (cmd, arg) = line.split_once(' ').unwrap_or((line.as_str(), ""));
                 match cmd {
-                    "show" => {
-                        window.set_visible(true);
-                        window.set_minimized(false);
-                        bring_to_front(&window);
-                    }
+                    "show" => show(&window),
                     "hide" => {
                         report_size(&window, &mut told);
                         window.set_visible(false);
                     }
                     "close-to-tray" => close_to_tray = arg != "0",
+                    "rec" => {
+                        if let Some(t) = &tray {
+                            t.set_recording(arg == "1");
+                        }
+                    }
                     "quit" => quitting = true,
                     _ => {}
                 }
@@ -234,6 +292,9 @@ fn run(opts: Opts) -> Result<(), String> {
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 if !owned {
                     quitting = true;
+                } else if close_to_tray && has_tray {
+                    report_size(&window, &mut told);
+                    window.set_visible(false);
                 } else if close_to_tray {
                     window.set_minimized(true);
                 } else {
@@ -244,6 +305,7 @@ fn run(opts: Opts) -> Result<(), String> {
                 }
             }
             Event::WindowEvent { event: WindowEvent::Resized(_), .. } => resized_at = Some(Instant::now()),
+            Event::WindowEvent { event: WindowEvent::Focused(f), .. } => blurred = if f { None } else { Some(Instant::now()) },
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 if resized_at.is_some_and(|t| t.elapsed() >= SIZE_SETTLE) {
                     resized_at = None;
@@ -253,6 +315,9 @@ fn run(opts: Opts) -> Result<(), String> {
             _ => {}
         }
         *control_flow = if quitting {
+            // tao ends the process without running destructors: take the
+            // icon out of the notification area now, or a dead one stays.
+            tray = None;
             ControlFlow::Exit
         } else if let Some(t) = resized_at {
             ControlFlow::WaitUntil(t + SIZE_SETTLE)

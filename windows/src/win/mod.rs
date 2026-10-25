@@ -10,6 +10,7 @@
 pub mod cables;
 pub mod chanmenu;
 pub mod console;
+pub mod endsession;
 pub mod ffi;
 pub mod route;
 pub mod wasapi;

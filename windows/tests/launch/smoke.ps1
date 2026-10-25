@@ -1,10 +1,16 @@
 # Launches the real bananasplit.exe the way a user does and checks that it
-# works: a double-click start opens the mixer and its desktop window; a
-# second start brings that window up instead of starting a second mixer or
-# window; the close button minimizes the window (BananaSplit keeps running);
-# --quit saves and closes everything, the window too; and with "Closing the
-# window keeps it running" off, closing the window quits. Run on a Windows
-# desktop session (CI: windows-latest).
+# works as a standalone Windows app:
+# - the exe: a Windows (GUI) program with the app icon and version info,
+#   whose command-line options still print;
+# - a double-click start opens the mixer, its window and its tray icon; a
+#   second start brings that window up instead of starting a second mixer;
+# - the close button hides the window in the tray (BananaSplit keeps
+#   running); the tray icon brings it back, and records;
+# - --quit, the tray's Quit, `taskkill` (without /f) and the end of the
+#   Windows session all save and close everything, the window too;
+# - the autostart start (--no-open) shows only the tray icon;
+# - with "Closing the window keeps it running" off, closing the window quits.
+# Run on a Windows desktop session (CI: windows-latest).
 #
 #   pwsh windows/tests/launch/smoke.ps1 -Exe path\to\bananasplit.exe
 #
@@ -81,6 +87,28 @@ using System.Text;
 namespace BsSmoke {
     public static class Win {
         [DllImport("user32.dll", SetLastError = true)] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern uint ExtractIconEx(string file, int index, IntPtr[] large, IntPtr[] small, uint count);
+        [StructLayout(LayoutKind.Sequential)] public struct NotifyIconIdentifier { public uint cbSize; public IntPtr hWnd; public uint uID; public Guid guidItem; }
+        [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+        [DllImport("shell32.dll")] static extern int Shell_NotifyIconGetRect(ref NotifyIconIdentifier id, out Rect rect);
+        // Is BananaSplit's icon (id 1 of this window) in the notification area?
+        public static bool TrayIconShown(IntPtr hWnd) {
+            var id = new NotifyIconIdentifier { cbSize = (uint)Marshal.SizeOf(typeof(NotifyIconIdentifier)), hWnd = hWnd, uID = 1, guidItem = Guid.Empty };
+            Rect r;
+            return Shell_NotifyIconGetRect(ref id, out r) == 0;
+        }
+        // Top-level windows of this class (visible or not).
+        public static IntPtr[] OfClass(string name) {
+            var found = new List<IntPtr>();
+            EnumWindows((h, l) => {
+                var cls = new StringBuilder(256);
+                GetClassName(h, cls, cls.Capacity);
+                if (cls.ToString() == name) found.Add(h);
+                return true;
+            }, IntPtr.Zero);
+            return found.ToArray();
+        }
         [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -131,6 +159,39 @@ function Window-Minimized {
     $h = App-Window
     [bool]($h -and [BsSmoke.Win]::IsIconic($h))
 }
+# A window of a bananasplit process, by class: the tray icon's window (in
+# the window process) and the mixer's hidden one (session end, taskkill).
+function Class-Window([string]$cls) {
+    @([BsSmoke.Win]::OfClass($cls) | Where-Object {
+        (Get-Process -Id ([BsSmoke.Win]::ProcessOf($_)) -ErrorAction SilentlyContinue).ProcessName -eq 'bananasplit'
+    }) | Select-Object -First 1
+}
+function Tray-Window { Class-Window 'BananaSplitTray' }
+function Mixer-Window { Class-Window 'BananaSplitMixer' }
+function Send([IntPtr]$h, [uint32]$msg, [long]$w, [long]$l, [int]$ms = 10000) {
+    $r = [IntPtr]::Zero
+    $ok = [BsSmoke.Win]::SendMessageTimeout($h, $msg, [IntPtr]$w, [IntPtr]$l, 2, $ms, [ref]$r)
+    if ($ok -eq [IntPtr]::Zero) { return $null }
+    return $r.ToInt64()
+}
+# A left click on the tray icon (what Explorer sends the icon's window).
+function Tray-Click { $t = Tray-Window; if ($t) { [void](Send $t 0x8001 1 0x0202) } }
+# A tray menu item: 1 Show, 2 Start/Stop recording, 3 Quit.
+function Tray-Item([int]$id) { $t = Tray-Window; if ($t) { [void][BsSmoke.Win]::PostMessage($t, 0x0111, [IntPtr]$id, [IntPtr]::Zero) } }
+function Start-App([string[]]$argv, [string]$log) {
+    $a = @{ FilePath = $Exe; PassThru = $true; RedirectStandardError = "$work\$log.err"; RedirectStandardOutput = "$work\$log.out" }
+    if ($argv) { $a.ArgumentList = $argv }
+    Start-Process @a
+}
+function Saved-Ini { Get-Content -Raw "$work\Roaming\bananasplit\bananasplit.ini" -ErrorAction SilentlyContinue }
+function Wait-Gone($p, [string]$what) {
+    $ended = $p.WaitForExit(15000)
+    Check $ended "$what"
+    Check (Until { (Mixers).Count -eq 0 } 15) "no BananaSplit process is left (window closed too)"
+    if ($ended) { Check ($p.ExitCode -eq 0) "the mixer exit code is 0 (was $($p.ExitCode))" }
+    Get-Process bananasplit -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
 # For the annotations when a window check fails.
 function Window-State {
     $fg = [BsSmoke.Win]::GetForegroundWindow()
@@ -155,9 +216,20 @@ function Use-NotedPort {
     }
 }
 
-# ---- the command line still works ----
+# ---- the exe: a Windows program, with its icon and version ----
+$bytes = [IO.File]::ReadAllBytes($Exe)
+$pe = [BitConverter]::ToInt32($bytes, 0x3C)
+$subsystem = [BitConverter]::ToUInt16($bytes, $pe + 0x5C)
+Check ($subsystem -eq 2) "bananasplit.exe is a Windows (GUI) program, so no console window opens (subsystem $subsystem)"
+$icons = [BsSmoke.Win]::ExtractIconEx($Exe, -1, $null, $null, 0)
+Check ($icons -ge 1) "it has the app icon ($icons icon group(s))"
+$vi = (Get-Item $Exe).VersionInfo
+Check ($vi.ProductName -eq 'BananaSplit' -and $vi.ProductVersion -match '^\d+\.\d+\.\d+' -and $vi.FileVersion -match '^\d+\.\d+\.\d+\.\d+$') "it has version information ($($vi.ProductName) $($vi.ProductVersion), file $($vi.FileVersion))"
+
+# ---- the command line still works (output to a pipe, as from a script) ----
 $v = (& $Exe --version 2>&1 | Out-String)
 Check ($LASTEXITCODE -eq 0 -and $v -match 'BananaSplit \d+\.\d+\.\d+') "--version prints the version ($($v.Trim()))"
+Check ($v -match [regex]::Escape($vi.ProductVersion)) "the same version as the file's version information"
 $d = (& $Exe --print-default-config 2>&1 | Out-String)
 Check ($LASTEXITCODE -eq 0 -and $d -match '\[strip\.1\]|\[strip1\]|\[global\]') "--print-default-config prints a config"
 $l = (& $Exe --list-devices 2>&1 | Out-String)
@@ -165,7 +237,7 @@ Write-Output "--list-devices (exit $LASTEXITCODE):"; Write-Output $l
 Annotate 'notice' "--list-devices (exit $LASTEXITCODE)" $l
 
 # ---- a double-click start: no arguments ----
-$p = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\mixer.err" -RedirectStandardOutput "$work\mixer.out"
+$p = Start-App @() 'mixer'
 Check (Until { (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "the mixer answers on $url"
 $state = $null
 Check (Until { $script:state = Get-Http '/api/state' | ConvertFrom-Json; $null -ne $script:state.ch }) "it publishes its state (valid JSON, with the channels)"
@@ -176,43 +248,103 @@ if ($state) {
 }
 Check (Until { (App-Windows).Count -ge 1 } 30) "a window titled BananaSplit opens"
 Check (Until { @(Get-NetTCPConnection -LocalPort $Port -State Established -ErrorAction SilentlyContinue).Count -ge 1 } 30) "the window's page connects to the mixer"
+Check (Until { $t = Tray-Window; $t -and [BsSmoke.Win]::TrayIconShown($t) } 15) "the tray icon is in the notification area"
+Check (Until { (Get-Http '/api/state' | ConvertFrom-Json).app.tray -eq $true } 10) "the page knows there is a tray icon"
+Check ($null -ne (Mixer-Window)) "the mixer listens for the end of the Windows session"
 Start-Sleep -Seconds 3
 Screenshot 'launch'
 Check (-not $p.HasExited) "the mixer keeps running"
 
 # ---- starting it again brings up the running one ----
-$p2 = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\second.err" -RedirectStandardOutput "$work\second.out"
+$p2 = Start-App @() 'second'
 Check ($p2.WaitForExit(15000) -and $p2.ExitCode -eq 0) "a second start hands over to the running mixer and exits"
 Check ((Get-Http '/api/ping') -eq 'bananasplit-gui' -and -not $p.HasExited) "the first mixer is still the one running"
 Start-Sleep -Seconds 2
 Check ((App-Windows).Count -eq 1) "it brought up the open window instead of opening another"
 
-# ---- the close button keeps BananaSplit running ----
+# ---- the close button hides the window in the tray ----
 $before = Window-State
 $posted = Close-Window
-$minimized = Until { Window-Minimized } 10
-Check $minimized "closing the window minimizes it"
-if (-not $minimized) { Annotate 'warning' 'Window state' "before: $before`n$posted`nafter: $(Window-State)" }
+$hidden = Until { (App-Windows).Count -eq 0 } 10
+Check $hidden "closing the window hides it (in the tray)"
+if (-not $hidden) { Annotate 'warning' 'Window state' "before: $before`n$posted`nafter: $(Window-State)" }
 Start-Sleep -Seconds 1
 Check (-not $p.HasExited -and (Mixers).Count -ge 2) "and the mixer and its window keep running"
-$p3 = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\third.err" -RedirectStandardOutput "$work\third.out"
+Check ((Tray-Window) -and [BsSmoke.Win]::TrayIconShown((Tray-Window))) "the tray icon stays"
+Tray-Click
+$back = Until { (App-Windows).Count -eq 1 -and -not (Window-Minimized) } 10
+Check $back "a click on the tray icon brings the window back"
+if (-not $back) { Annotate 'warning' 'Window state' (Window-State) }
+[void](Close-Window)
+Check (Until { (App-Windows).Count -eq 0 } 10) "closed again, it is back in the tray"
+$p3 = Start-App @() 'third'
 Check ($p3.WaitForExit(15000) -and $p3.ExitCode -eq 0) "starting BananaSplit again"
 $back = Until { (App-Windows).Count -eq 1 -and -not (Window-Minimized) } 10
 Check $back "brings the window back"
 if (-not $back) { Annotate 'warning' 'Window state' (Window-State) }
 Screenshot 'restored'
 
+# ---- the tray menu records ----
+# Takes go to the test folder; A1 is armed.
+try { [void](Post-Cmd ('op=recset&folder=' + [uri]::EscapeDataString("$work\takes"))) } catch { }
+try { [void](Post-Cmd 'op=link&ch=6&v=1') } catch { }
+Tray-Item 2
+Check (Until { (Get-Http '/api/state' | ConvertFrom-Json).rec.on -eq $true } 10) "the tray's Start recording starts a take"
+Tray-Item 2
+Check (Until { (Get-Http '/api/state' | ConvertFrom-Json).rec.on -eq $false } 10) "and its Stop recording stops it"
+$takes = @(Get-ChildItem -Recurse -Filter *.wav "$work\takes" -ErrorAction SilentlyContinue)
+Check ($takes.Count -ge 1) "the take was written ($(($takes | Select-Object -First 1).Name))"
+
 # ---- quitting saves and closes everything ----
-& $Exe --quit
-Check ($LASTEXITCODE -eq 0) "--quit is accepted"
-Check ($p.WaitForExit(15000)) "the mixer exits after --quit"
-Check (Until { (Mixers).Count -eq 0 } 15) "no BananaSplit process is left (window closed too)"
-$ini = "$work\Roaming\bananasplit\bananasplit.ini"
-Check (Test-Path $ini) "the settings were saved"
-if ($p.HasExited) { Check ($p.ExitCode -eq 0) "the mixer exit code is 0 (was $($p.ExitCode))" }
+$q = Start-Process -FilePath $Exe -ArgumentList '--quit' -PassThru -Wait -RedirectStandardError "$work\quit.err" -RedirectStandardOutput "$work\quit.out"
+Check ($q.ExitCode -eq 0) "--quit is accepted"
+Wait-Gone $p "the mixer exits after --quit"
+Check (Test-Path "$work\Roaming\bananasplit\bananasplit.ini") "the settings were saved"
+
+# ---- the autostart start: only the tray icon ----
+$p5 = Start-App @('--gui', '--no-open') 'hidden'
+Check (Until { Use-NotedPort; (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "started in the background (--no-open), the mixer answers"
+Check (Until { $t = Tray-Window; $t -and [BsSmoke.Win]::TrayIconShown($t) } 30) "and its tray icon shows"
+Start-Sleep -Seconds 2
+Check ((App-Windows).Count -eq 0) "but no window"
+$p6 = Start-App @() 'hidden2'
+Check ($p6.WaitForExit(15000) -and $p6.ExitCode -eq 0) "starting BananaSplit then"
+Check (Until { (App-Windows).Count -eq 1 -and -not (Window-Minimized) } 15) "shows its window"
+
+# ---- the end of the Windows session saves the settings ----
+try { [void](Post-Cmd 'op=gain&ch=0&v=-7.5') } catch { }
+$m = Mixer-Window
+Check ($null -ne $m) "the mixer's session window is there"
+if ($m) {
+    $query = Send $m 0x0011 0 0x80000000
+    Check ($query -eq 1) "logging off: the mixer does not hold it up (WM_QUERYENDSESSION answered $query)"
+    $t0 = [Diagnostics.Stopwatch]::StartNew()
+    $end = Send $m 0x0016 1 0x80000000 15000
+    Check ($null -ne $end -and $t0.Elapsed.TotalSeconds -lt 6) ("WM_ENDSESSION returns within the time Windows allows ({0:N1} s)" -f $t0.Elapsed.TotalSeconds)
+    Check ((Saved-Ini) -match 'gain_db = -7\.5') "the change made just before was saved"
+}
+Wait-Gone $p5 "the mixer ends with the session"
+
+# ---- taskkill (without /f) quits cleanly ----
+$p7 = Start-App @() 'taskkill'
+Check (Until { Use-NotedPort; (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "started again, the mixer answers"
+Check (Until { (App-Windows).Count -ge 1 } 30) "and opens its window"
+try { [void](Post-Cmd 'op=gain&ch=0&v=-3') } catch { }
+& taskkill.exe /pid $p7.Id | Out-Null
+Wait-Gone $p7 "taskkill /pid (without /f) quits it"
+Check ((Saved-Ini) -match 'gain_db = -3\r?\n') "and it saved first"
+
+# ---- the tray's Quit ----
+$p8 = Start-App @() 'trayquit'
+Check (Until { Use-NotedPort; (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "started again, the mixer answers"
+Check (Until { $t = Tray-Window; $t -and [BsSmoke.Win]::TrayIconShown($t) } 30) "with its tray icon"
+$tw = Tray-Window
+Tray-Item 3
+Wait-Gone $p8 "the tray's Quit quits BananaSplit"
+Check (-not [BsSmoke.Win]::TrayIconShown($tw)) "and its icon left the notification area"
 
 # ---- with "Closing the window keeps it running" off, closing it quits ----
-$p4 = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\mixer2.err" -RedirectStandardOutput "$work\mixer2.out"
+$p4 = Start-App @() 'mixer2'
 Check (Until { Use-NotedPort; (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "started again, the mixer answers on $url"
 Check (Until { (App-Windows).Count -ge 1 } 30) "and opens its window"
 $said = $null
@@ -227,10 +359,11 @@ $quit = $p4.WaitForExit(15000)
 Check $quit "closing the window quits BananaSplit"
 if (-not $quit) { Annotate 'warning' 'Window state' "before: $before`n$posted`nafter: $(Window-State)" }
 Check (Until { (Mixers).Count -eq 0 } 15) "no BananaSplit process is left"
-Check ((Get-Content -Raw $ini -ErrorAction SilentlyContinue) -match 'close_to_tray = false') "the setting was saved"
+Check ((Saved-Ini) -match 'close_to_tray = false') "the setting was saved"
 if ($p4.HasExited) { Check ($p4.ExitCode -eq 0) "the mixer exit code is 0 (was $($p4.ExitCode))" }
 
-$logs = [ordered]@{ 'Mixer' = 'mixer'; 'Second start' = 'second'; 'Third start' = 'third'; 'Second mixer run' = 'mixer2' }
+$logs = [ordered]@{ 'Mixer' = 'mixer'; 'Second start' = 'second'; 'Third start' = 'third'; 'Hidden start' = 'hidden';
+    'Start while hidden' = 'hidden2'; 'taskkill run' = 'taskkill'; 'Tray quit run' = 'trayquit'; 'Last run' = 'mixer2' }
 foreach ($k in $logs.Keys) {
     Write-Output "`n---- $k stderr ----"
     Get-Content "$work\$($logs[$k]).err" -ErrorAction SilentlyContinue

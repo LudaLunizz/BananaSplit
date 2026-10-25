@@ -1813,6 +1813,8 @@ pub struct WindowProc {
     child: Child,
     stdin: Option<ChildStdin>,
     pub mode: WinMode,
+    /// It has a tray icon (`ready app tray`): closing the window hides it there.
+    pub tray: bool,
     rx: mpsc::Receiver<WinMsg>,
     gone: bool,
 }
@@ -1847,14 +1849,15 @@ impl WindowProc {
         let mut child = cmd.spawn().map_err(|e| format!("cannot start the window: {e}"))?;
         let stdout = child.stdout.take().ok_or("no pipe from the window")?;
         let (tx, rx) = mpsc::channel();
-        let (ready_tx, ready_rx) = mpsc::channel::<Result<WinMode, String>>();
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<(WinMode, bool), String>>();
         let reader = std::thread::Builder::new().name("bs-window".into()).spawn(move || {
             let mut ready = Some(ready_tx);
             for line in BufReader::new(stdout).lines() {
                 let Ok(line) = line else { break };
                 if let Some(r) = ready.take() {
                     let first = if let Some(m) = line.strip_prefix("ready ") {
-                        Ok(if m.starts_with("app") { WinMode::App } else { WinMode::Tray })
+                        let mode = if m.starts_with("app") { WinMode::App } else { WinMode::Tray };
+                        Ok((mode, m.split_whitespace().any(|w| w == "tray")))
                     } else {
                         Err(line.strip_prefix("fail ").unwrap_or(&line).to_string())
                     };
@@ -1880,7 +1883,7 @@ impl WindowProc {
         }
         let stdin = child.stdin.take();
         match ready_rx.recv_timeout(Duration::from_secs(15)) {
-            Ok(Ok(mode)) => Ok(WindowProc { child, stdin, mode, rx, gone: false }),
+            Ok(Ok((mode, tray))) => Ok(WindowProc { child, stdin, mode, tray, rx, gone: false }),
             Ok(Err(why)) => {
                 let _ = child.wait();
                 Err(why)

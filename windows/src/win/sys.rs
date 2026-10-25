@@ -8,7 +8,7 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-pub use crate::win::console::{install_signal_handlers, leave_own_console, pause_on_error, spawn_input_thread, stdin_is_tty, RawTerminal, QUIT};
+pub use crate::win::console::{install_signal_handlers, pause_on_error, spawn_input_thread, stdin_is_tty, RawTerminal, QUIT};
 
 /// Started by the user (a double-click, the Start menu), this process may
 /// bring a window to the front. Pass that on, so the running BananaSplit's

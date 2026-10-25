@@ -42,7 +42,15 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const SW_SHOWNORMAL: i32 = 1;
 const MB_OK: u32 = 0x00000000;
+const MB_YESNO: u32 = 0x00000004;
 const MB_ICONERROR: u32 = 0x00000010;
+const MB_ICONWARNING: u32 = 0x00000030;
+const MB_SETFOREGROUND: u32 = 0x0001_0000;
+const IDYES: i32 = 6;
+
+/// Microsoft's page for the WebView2 Runtime (the window needs it; it is
+/// part of Windows 11 and of most up-to-date Windows 10 installations).
+pub const WEBVIEW2_PAGE: &str = "https://developer.microsoft.com/microsoft-edge/webview2/";
 
 fn exe_path() -> PathBuf {
     let mut buf = vec![0u16; 1024];
@@ -87,7 +95,7 @@ fn reg_set_run(enable: bool) -> Result<(), String> {
 
 pub fn set_autostart(enable: bool) -> Result<String, String> {
     reg_set_run(enable)?;
-    if enable { Ok("BananaSplit will start with Windows (hidden in the background).".into()) } else { Ok("BananaSplit will not start with Windows.".into()) }
+    if enable { Ok("BananaSplit will start with Windows, in the tray.".into()) } else { Ok("BananaSplit will not start with Windows.".into()) }
 }
 
 pub fn autostart_enabled() -> bool {
@@ -125,8 +133,34 @@ pub fn menu_installed() -> bool {
         .unwrap_or(false)
 }
 
+/// Open a web page (or the mixer's own page) in the default browser.
+pub fn open_url(url: &str) -> bool {
+    let (open, u) = (wide("open"), wide(url));
+    // SAFETY: NUL-terminated UTF-16 strings.
+    let r = unsafe { ShellExecuteW(std::ptr::null_mut(), open.as_ptr(), u.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+    r as usize > 32
+}
+
+/// The desktop window could not start (usually: no WebView2 Runtime). The
+/// mixer runs anyway, so its page opens in the browser, and the user can
+/// get WebView2 from Microsoft.
+pub fn no_window(why: &str, mixer_url: &str) {
+    let text = format!(
+        "BananaSplit's window could not open:\n{why}\n\nIt needs the Microsoft Edge WebView2 Runtime. \
+         The mixer is running, and opens in your web browser for now.\n\n\
+         Open Microsoft's download page for WebView2?"
+    );
+    let (cap, t) = (wide("BananaSplit"), wide(&text));
+    // SAFETY: NUL-terminated UTF-16 strings.
+    let answer = unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND) };
+    if answer == IDYES {
+        open_url(WEBVIEW2_PAGE);
+    }
+    open_url(mixer_url);
+}
+
 pub fn error_dialog(text: &str) {
     let cap = wide("BananaSplit");
     let t = to_wide(text);
-    unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR); }
+    unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR | MB_SETFOREGROUND); }
 }
