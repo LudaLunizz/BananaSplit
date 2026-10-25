@@ -627,7 +627,10 @@ fn main() -> ExitCode {
         win::console::attach_parent();
     }
     if args.update {
-        return match update::cli() {
+        // A running app would start its window from the new file.
+        let client = Config::load_or_default(&args.path).map(|c| c.client_name).unwrap_or_else(|_| Config::default().client_name);
+        let running = gui::find_running(&client, args.explicit_port.then_some(args.port)).is_some();
+        return match update::cli(running) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("bananasplit: {e}");

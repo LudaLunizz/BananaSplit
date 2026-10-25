@@ -105,7 +105,7 @@ async function until(pred, what, ms = 4000) {
     LD_LIBRARY_PATH: MOCK, MOCKJACK_REPORT: path.join(home, "report.txt"), MOCKJACK_REALTIME: "1", MOCKJACK_CYCLES: "100000000",
     // a webcam, a USB mic and its headphones, and a 440 Hz tone on system:capture
     MOCKJACK_DEVICES: "1", MOCKJACK_TONE: "440",
-    BANANASPLIT_UPDATE_SOURCE: "http://127.0.0.1:" + ghServer.address().port, BANANASPLIT_UPDATE_DELAY: "0.5",
+    BANANASPLIT_UPDATE_SOURCE: "http://127.0.0.1:" + ghServer.address().port, BANANASPLIT_UPDATE_DELAY: "3600", // no automatic check while the test switches it on
   });
   delete env.DISPLAY; delete env.WAYLAND_DISPLAY;
   const log = fs.openSync(path.join(home, "bananasplit.log"), "w");

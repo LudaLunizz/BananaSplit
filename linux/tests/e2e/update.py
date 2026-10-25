@@ -304,6 +304,30 @@ try:
     check(left == [], f"the downloads folder is emptied: {left}")
     check(m.proc.poll() is None, "the running mixer goes on (the old program, until a restart)")
     check(m.update()["canInstall"] is False, "nothing more to install")
+    # a check that fails now (offline, GitHub's limit) keeps the restart
+    fake.mode = "limited"
+    m.post(op="update", a="check")
+    u = m.until(lambda u: u["phase"] == "ready" and "Checking again failed" in u["message"], "a failed check after Install still offers the restart")
+    st, msg = m.post(op="update", a="restart")
+    fake.mode = "good"
+    check(st == 200, f"and Restart now works then: {st} {msg}")
+    try:
+        m.proc.wait(10)
+    except subprocess.TimeoutExpired:
+        pass
+    check(m.wait_up(15), "the new version comes up")
+    marker = open(m.marker).read() if os.path.exists(m.marker) else ""
+    check(marker.count("wait=") == 1, f"started once: {marker!r}")
+    # (that one is the real program again, so the restart below starts over)
+    m.post(op="quit")
+    time.sleep(1.5)
+    os.remove(m.marker)
+    shutil.copy2(binary, m.app)
+    m.start()
+    m.post(op="update", a="check")
+    m.until(lambda u: u["phase"] == "available", "checked again")
+    m.post(op="update", a="install")
+    m.until(lambda u: u["phase"] == "ready", "installed again")
     st, msg = m.post(op="update", a="check")
     time.sleep(1.0)
     u = m.until(lambda u: u["phase"] == "ready", "checking again keeps it ready for the restart", secs=8)

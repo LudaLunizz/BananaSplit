@@ -604,7 +604,13 @@ pub struct Offer {
 }
 
 fn clean_url(u: &str, prefix: &str) -> bool {
-    u.starts_with(prefix) && u.len() < 2048 && !u.chars().any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '\\')
+    let rest = &u[prefix.len().min(u.len())..];
+    u.starts_with(prefix)
+        && u.len() < 2048
+        && !u.chars().any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '\\')
+        // no way out of the prefix: no dot segments, also not percent-encoded
+        && !rest.split('/').any(|seg| seg == "." || seg == "..")
+        && !rest.to_ascii_lowercase().contains("%2e")
 }
 
 fn asset_of(a: &Json, src: &Source, max: u64) -> Option<Asset> {
@@ -704,6 +710,7 @@ pub fn which(name: &str) -> Option<PathBuf> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tool {
     Curl(PathBuf),
+    #[cfg_attr(windows, allow(dead_code))]
     Wget(PathBuf),
 }
 
@@ -724,6 +731,27 @@ pub fn find_tool() -> Option<Tool> {
     {
         which("curl").map(Tool::Curl).or_else(|| which("wget").map(Tool::Wget))
     }
+}
+
+/// `curl -V`'s version (major, minor), asked once.
+#[cfg(windows)]
+fn curl_version(curl: &Path) -> Option<(u32, u32)> {
+    static V: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        let mut c = command(curl);
+        c.arg("-V");
+        let never = AtomicBool::new(false);
+        let (_, out, _) = run(c, Duration::from_secs(10), &never, &mut || Ok(())).ok()?;
+        parse_curl_version(&out)
+    })
+}
+
+/// "curl 8.4.0 (Windows) libcurl/8.4.0 …" -> (8, 4)
+#[cfg_attr(unix, allow(dead_code))]
+fn parse_curl_version(out: &str) -> Option<(u32, u32)> {
+    let v = first_line(out).strip_prefix("curl ")?.split_whitespace().next()?;
+    let mut it = v.split('.');
+    Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
 }
 
 const NO_TOOL: &str = if cfg!(windows) {
@@ -817,8 +845,11 @@ pub fn fetch(src: &Source, url: &str, dest: &Path, max: u64, json: bool, stop: &
             if json {
                 c.args(["-H", "Accept: application/vnd.github+json", "-H", "X-GitHub-Api-Version: 2022-11-28"]);
             }
+            // Schannel: a network that blocks revocation lists (curl 7.70 and later)
             #[cfg(windows)]
-            c.arg("--ssl-revoke-best-effort"); // Schannel: a network that blocks revocation lists
+            if curl_version(p).is_some_and(|v| v >= (7, 70)) {
+                c.arg("--ssl-revoke-best-effort");
+            }
             c.args(["-w", "%{http_code}", "-o"]).arg(&part).arg(url);
             c
         }
@@ -940,6 +971,7 @@ impl Method {
 }
 
 const DEB_PROGRAM: &str = "/usr/bin/bananasplit";
+#[cfg(unix)]
 const APT_GET: &str = "/usr/bin/apt-get";
 
 /// `/usr/bin/bananasplit`, installed by the bananasplit .deb.
@@ -969,6 +1001,7 @@ fn writable(dir: &Path) -> bool {
     }
 }
 
+#[cfg(unix)]
 fn same_file(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(x), Ok(y)) => x == y,
@@ -997,6 +1030,7 @@ pub fn method() -> Method {
             return Method::Manual(format!("{} was installed by a package manager: update BananaSplit there", exe.display()));
         }
     }
+    #[cfg_attr(windows, allow(unused_mut))]
     let mut targets = vec![exe];
     // The copy BananaSplit's own app-menu entry starts (`--install`), when
     // this one is another (run from the unpacked package).
@@ -1031,7 +1065,7 @@ pub fn find(src: &Source, pkg: Package, stop: &AtomicBool) -> Result<Option<Offe
 }
 
 /// Check a downloaded file against everything the release says about it.
-pub fn verify(file: &Path, offer: &Offer, sums: Option<&str>) -> Result<(), String> {
+pub fn verify(file: &Path, offer: &Offer, sums: Option<&str>) -> Result<[u8; 32], String> {
     let name = &offer.asset.name;
     let len = std::fs::metadata(file).map_err(|e| format!("{}: {e}", file.display()))?.len();
     if len != offer.asset.size {
@@ -1050,11 +1084,11 @@ pub fn verify(file: &Path, offer: &Offer, sums: Option<&str>) -> Result<(), Stri
             return Err(format!("{name} does not match {from} (damaged or not the released file); nothing was changed"));
         }
     }
-    Ok(())
+    Ok(got)
 }
 
-/// Download the release file and check it. Returns its path.
-pub fn download(src: &Source, offer: &Offer, stop: &AtomicBool, progress: &mut dyn FnMut(u64)) -> Result<PathBuf, String> {
+/// Download the release file and check it. Returns its path and SHA-256.
+pub fn download(src: &Source, offer: &Offer, stop: &AtomicBool, progress: &mut dyn FnMut(u64)) -> Result<(PathBuf, [u8; 32]), String> {
     let dir = make_cache()?;
     clean_cache(&dir);
     let sums = match &offer.sums {
@@ -1069,11 +1103,13 @@ pub fn download(src: &Source, offer: &Offer, stop: &AtomicBool, progress: &mut d
     };
     let file = dir.join(&offer.asset.name);
     fetch(src, &offer.asset.url, &file, offer.asset.size, false, stop, progress).map_err(|e| format!("downloading {}: {e}", offer.asset.name))?;
-    if let Err(e) = verify(&file, offer, sums.as_deref()) {
-        let _ = std::fs::remove_file(&file);
-        return Err(e);
+    match verify(&file, offer, sums.as_deref()) {
+        Ok(hash) => Ok((file, hash)),
+        Err(e) => {
+            let _ = std::fs::remove_file(&file);
+            Err(e)
+        }
     }
-    Ok(file)
 }
 
 /// Remove what earlier downloads left in the downloads folder.
@@ -1181,11 +1217,43 @@ fn staging_name(target: &Path) -> PathBuf {
     }
 }
 
+/// Set while program files are being renamed: quitting waits for it, so
+/// the program is never left without its file (Windows renames twice).
+static RENAMING: AtomicBool = AtomicBool::new(false);
+
+struct Renaming;
+impl Renaming {
+    fn start() -> Renaming {
+        RENAMING.store(true, SeqCst);
+        Renaming
+    }
+}
+impl Drop for Renaming {
+    fn drop(&mut self) {
+        RENAMING.store(false, SeqCst);
+    }
+}
+
 /// Put `new` (a checked BananaSplit `version`) in the place of each target.
 /// The first target is the running program; nothing is changed unless the
-/// new program runs here.
-pub fn replace(new: &Path, targets: &[PathBuf], version: &str) -> Result<(), String> {
+/// new program runs here. A later target (the app menu's copy) that cannot
+/// be replaced is a warning: the running program is new by then.
+pub fn replace(new: &Path, targets: &[PathBuf], version: &str) -> Result<Vec<String>, String> {
+    let mut warnings = Vec::new();
     for (k, target) in targets.iter().enumerate() {
+        let result = replace_one(new, target, version, k == 0);
+        match result {
+            Ok(()) => {}
+            Err(e) if k == 0 => return Err(e),
+            Err(e) => warnings.push(format!("{} was not updated ({e})", target.display())),
+        }
+    }
+    Ok(warnings)
+}
+
+fn replace_one(new: &Path, target: &Path, version: &str, first: bool) -> Result<(), String> {
+    {
+        let k = usize::from(!first);
         let stage = staging_name(target);
         let _ = std::fs::remove_file(&stage);
         let staged = (|| -> Result<(), String> {
@@ -1211,6 +1279,7 @@ pub fn replace(new: &Path, targets: &[PathBuf], version: &str) -> Result<(), Str
             let _ = std::fs::remove_file(&stage);
             return Err(e);
         }
+        let _renaming = Renaming::start();
         #[cfg(unix)]
         if let Err(e) = retry(|| std::fs::rename(&stage, target)) {
             let _ = std::fs::remove_file(&stage);
@@ -1233,8 +1302,10 @@ pub fn replace(new: &Path, targets: &[PathBuf], version: &str) -> Result<(), Str
                 return Err(format!("{}: {e}", target.display()));
             }
             if k == 0 {
-                *lock(&MOVED) = Some(old);
-                *lock(&ORIGINAL) = Some(target.clone());
+                // The first update of this session moved the program that
+                // runs; a second one moves the first one's file, not this.
+                lock(&MOVED).get_or_insert(old);
+                lock(&ORIGINAL).get_or_insert(target.to_path_buf());
             }
         }
     }
@@ -1270,16 +1341,37 @@ pub fn clean_leftovers() {
     }
 }
 
-/// Linux: install the new .deb (the desktop asks for the password).
+/// Linux: install the new .deb. From the app, the desktop asks for the
+/// password; from a terminal (`interactive`), pkexec asks in it.
 #[cfg(unix)]
-fn install_deb(deb: &Path, version: &str, stop: &AtomicBool) -> Result<(), String> {
+fn install_deb(deb: &Path, version: &str, stop: &AtomicBool, interactive: bool) -> Result<(), String> {
     let Some(pkexec) = which("pkexec") else {
         return Err(format!("installing a package needs pkexec, which is not here. Install it in a terminal:  sudo apt install {}", deb.display()));
     };
-    let mut c = command(&pkexec);
-    c.arg(APT_GET).arg("install").arg("-y").arg(deb);
-    // No time limit: the password dialog waits for the user.
-    match run(c, Duration::from_secs(24 * 3600), stop, &mut || Ok(())) {
+    install_deb_with(&pkexec, Path::new(APT_GET), Path::new(DEB_PROGRAM), deb, version, stop, interactive)
+}
+
+#[cfg(unix)]
+fn install_deb_with(pkexec: &Path, apt: &Path, program: &Path, deb: &Path, version: &str, stop: &AtomicBool, interactive: bool) -> Result<(), String> {
+    let result = if interactive {
+        // In the terminal's foreground, with its input and output: pkexec's
+        // text agent reads the password there.
+        crate::sys::cloexec_all();
+        std::process::Command::new(pkexec)
+            .arg(apt)
+            .arg("install")
+            .arg("-y")
+            .arg(deb)
+            .status()
+            .map(|s| (s.code(), String::new(), String::new()))
+            .map_err(|e| format!("cannot run {}: {e}", pkexec.display()))
+    } else {
+        let mut c = command(pkexec);
+        c.arg(apt).arg("install").arg("-y").arg(deb);
+        // No time limit: the password dialog waits for the user.
+        run(c, Duration::from_secs(24 * 3600), stop, &mut || Ok(()))
+    };
+    match result {
         Ok((Some(0), _, _)) => {}
         Ok((Some(126), _, _)) => return Err("installing was cancelled (no password given)".into()),
         Ok((Some(127), _, err)) => {
@@ -1292,19 +1384,20 @@ fn install_deb(deb: &Path, version: &str, stop: &AtomicBool) -> Result<(), Strin
         }
         Err(e) => return Err(e),
     }
-    check_program(Path::new(DEB_PROGRAM), version)
+    check_program(program, version)
 }
 
-/// Install a downloaded, checked release file.
-pub fn install(method: &Method, offer: &Offer, file: &Path, stop: &AtomicBool) -> Result<String, String> {
-    let _ = stop;
+/// Install a downloaded, checked release file. Returns where it went, and
+/// warnings (a copy that could not be updated).
+pub fn install(method: &Method, offer: &Offer, file: &Path, stop: &AtomicBool, interactive: bool) -> Result<(String, Vec<String>), String> {
+    let _ = (stop, interactive);
     match method {
         Method::Manual(why) => Err(why.clone()),
         Method::Deb => {
             #[cfg(unix)]
             {
-                install_deb(file, &offer.version, stop)?;
-                Ok(DEB_PROGRAM.to_string())
+                install_deb(file, &offer.version, stop, interactive)?;
+                Ok((DEB_PROGRAM.to_string(), Vec::new()))
             }
             #[cfg(windows)]
             Err("no packages on Windows".into())
@@ -1319,8 +1412,8 @@ pub fn install(method: &Method, offer: &Offer, file: &Path, stop: &AtomicBool) -
             if let Some(d) = program.parent().and_then(Path::parent) {
                 let _ = std::fs::remove_dir_all(d); // the unpacked folder
             }
-            r?;
-            Ok(targets.iter().map(|t| t.display().to_string()).collect::<Vec<_>>().join(", "))
+            let warnings = r?;
+            Ok((targets.iter().map(|t| t.display().to_string()).collect::<Vec<_>>().join(", "), warnings))
         }
     }
 }
@@ -1378,8 +1471,9 @@ pub struct Status {
     /// The version this session installed (it runs after a restart).
     pub installed: Option<String>,
     pub method: Method,
-    /// The .deb, downloaded and checked.
+    /// The .deb, downloaded and checked, and its SHA-256 then.
     pub prepared: Option<PathBuf>,
+    pub prepared_hash: Option<[u8; 32]>,
     /// Bumped on every change but progress (the page fetches the notes).
     pub rev: u64,
 }
@@ -1396,6 +1490,9 @@ struct Inner {
     next_auto: Option<Instant>,
     /// Something the session line should say (an automatic update).
     event: Option<String>,
+    /// Automatic installs of this version that failed: after two, it is
+    /// left to the user (no new download every hour).
+    auto_fails: (String, u32),
     done: bool,
 }
 
@@ -1432,11 +1529,13 @@ impl Updater {
                     installed: None,
                     method: Method::Manual(String::new()),
                     prepared: None,
+                    prepared_hash: None,
                     rev: 0,
                 },
                 job: None,
                 next_auto: None,
                 event: None,
+                auto_fails: (String::new(), 0),
                 done: false,
             }),
             cv: Condvar::new(),
@@ -1472,6 +1571,12 @@ impl Updater {
             return Err("already busy with an update".into());
         }
         g.job = Some(job);
+        // busy from now on, also for the page's next frame
+        g.st.phase = match job {
+            Job::Check { .. } => Phase::Checking,
+            Job::Install { .. } => Phase::Installing,
+        };
+        g.st.rev += 1;
         drop(g);
         self.cv.notify_all();
         Ok(())
@@ -1499,7 +1604,8 @@ impl Updater {
 
     /// A restart would start the version this session installed.
     pub fn ready(&self) -> bool {
-        lock(&self.inner).st.phase == Phase::Ready
+        let g = lock(&self.inner);
+        g.st.installed.is_some() && !g.st.phase.busy()
     }
 
     /// What the session line should say about an automatic update.
@@ -1531,7 +1637,13 @@ impl Updater {
         let g = lock(&self.inner);
         self.cv.notify_all();
         // Not for long: a password dialog may be open (its apt-get goes on).
-        let _ = self.cv.wait_timeout_while(g, Duration::from_secs(3), |i| !i.done);
+        let g = self.cv.wait_timeout_while(g, Duration::from_secs(3), |i| !i.done);
+        drop(g);
+        // But never in the middle of renaming the program's files.
+        let t0 = Instant::now();
+        while RENAMING.load(SeqCst) && t0.elapsed() < Duration::from_secs(30) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     fn work(&self) {
@@ -1588,16 +1700,23 @@ impl Updater {
             let have = s.installed.clone().unwrap_or_else(|| VERSION.to_string());
             match found {
                 Err(e) => {
-                    s.phase = Phase::Failed;
-                    s.message = format!("Could not check for updates: {e}");
+                    if s.installed.is_some() {
+                        // what was installed still waits for the restart
+                        s.phase = Phase::Ready;
+                        s.message = format!("BananaSplit {have} is installed: restart BananaSplit to use it. (Checking again failed: {e})");
+                    } else {
+                        s.phase = Phase::Failed;
+                        s.message = format!("Could not check for updates: {e}");
+                    }
                     if auto {
                         inner.next_auto = Some(Instant::now() + RETRY);
                     }
                 }
                 Ok(Some(o)) if newer(&o.version, &have) => {
-                    let keep = s.prepared.is_some() && s.offer.as_ref().is_some_and(|p| p.version == o.version && p.asset == o.asset);
+                    let keep = s.prepared.as_ref().is_some_and(|p| p.is_file()) && s.offer.as_ref().is_some_and(|p| p.version == o.version && p.asset == o.asset);
                     if !keep {
                         s.prepared = None;
+                        s.prepared_hash = None;
                     }
                     s.message = match &method {
                         Method::Manual(why) => format!("BananaSplit {} is available. It cannot install itself here: {why}.", o.version),
@@ -1605,7 +1724,8 @@ impl Updater {
                         _ => format!("BananaSplit {} is available.", o.version),
                     };
                     s.phase = if keep { Phase::Prepared } else { Phase::Available };
-                    if auto {
+                    let gave_up = inner.auto_fails.0 == o.version && inner.auto_fails.1 >= 2;
+                    if auto && !gave_up {
                         if matches!(method, Method::Manual(_)) || keep {
                             inner.event = Some(format!("BananaSplit {} is available: Menu ▸ Updates", o.version));
                         } else {
@@ -1624,6 +1744,7 @@ impl Updater {
                     }
                     s.offer = o;
                     s.prepared = None;
+                    s.prepared_hash = None;
                 }
             }
         }
@@ -1649,11 +1770,20 @@ impl Updater {
             if auto {
                 g.event = Some(format!("Automatic update to BananaSplit {v} failed: Menu ▸ Updates"));
                 g.next_auto = Some(Instant::now() + RETRY);
+                if g.auto_fails.0 == v {
+                    g.auto_fails.1 += 1;
+                } else {
+                    g.auto_fails = (v.clone(), 1);
+                }
             }
         };
+        if method == Method::Deb && self.src.is_test() {
+            // a package is installed as root: only ever from GitHub
+            return fail("a package is installed only from GitHub, not from a test server".into());
+        }
         // The .deb that was already downloaded and checked, still unchanged.
-        let ready = st.prepared.filter(|p| offer.asset.digest.is_none_or(|d| sha256_file(p).ok() == Some(d)));
-        let file = match ready {
+        let ready = st.prepared.clone().zip(st.prepared_hash).filter(|(p, h)| sha256_file(p).ok() == Some(*h));
+        let (file, hash) = match ready {
             Some(f) => f,
             None => {
                 self.set(|s| {
@@ -1662,6 +1792,7 @@ impl Updater {
                     s.total = offer.asset.size;
                     s.message = format!("downloading BananaSplit {v}…");
                     s.prepared = None;
+                    s.prepared_hash = None;
                 });
                 let mut progress = |n: u64| lock(&self.inner).st.got = n.min(offer.asset.size);
                 match download(&self.src, &offer, &self.stop, &mut progress) {
@@ -1674,6 +1805,7 @@ impl Updater {
             let mut g = lock(&self.inner);
             g.st.phase = Phase::Prepared;
             g.st.prepared = Some(file);
+            g.st.prepared_hash = Some(hash);
             g.st.message = format!("BananaSplit {v} is downloaded and checked: install it now (asks for your password).");
             g.st.rev += 1;
             g.event = Some(format!("BananaSplit {v} is ready to install: Menu ▸ Updates"));
@@ -1683,17 +1815,24 @@ impl Updater {
             s.phase = Phase::Installing;
             s.message = if method == Method::Deb { format!("installing BananaSplit {v} (enter your password)…") } else { format!("installing BananaSplit {v}…") };
         });
-        let r = install(&method, &offer, &file, &self.stop);
-        if let Some(d) = file.parent() {
+        let r = install(&method, &offer, &file, &self.stop, false);
+        if r.is_err() && method == Method::Deb {
+            // kept (checked) for another try, and for the command the message names
+            let mut g = lock(&self.inner);
+            g.st.prepared = Some(file.clone());
+            g.st.prepared_hash = Some(hash);
+        } else if let Some(d) = file.parent() {
             clean_cache(d);
         }
         match r {
-            Ok(_) => {
+            Ok((_, warnings)) => {
                 let mut g = lock(&self.inner);
                 g.st.phase = Phase::Ready;
                 g.st.installed = Some(v.clone());
                 g.st.prepared = None;
-                g.st.message = format!("BananaSplit {v} is installed. Restart BananaSplit to use it.");
+                g.st.prepared_hash = None;
+                let extra = if warnings.is_empty() { String::new() } else { format!(" Note: {}.", warnings.join("; ")) };
+                g.st.message = format!("BananaSplit {v} is installed. Restart BananaSplit to use it.{extra}");
                 g.st.rev += 1;
                 if auto {
                     g.event = Some(format!("BananaSplit {v} was installed: restart BananaSplit to use it (Menu ▸ Updates)"));
@@ -1802,8 +1941,19 @@ fn pid_alive(pid: &str) -> bool {
     return pid.parse().is_ok_and(alive);
     #[cfg(windows)]
     {
-        let _ = pid;
-        false
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        const WAIT_TIMEOUT: u32 = 0x102;
+        let Ok(pid) = pid.parse::<u32>() else { return false };
+        // SAFETY: a handle we open and close; a zero wait only asks.
+        unsafe {
+            let h = OpenProcess(SYNCHRONIZE, 0, pid);
+            if h.is_null() {
+                return false;
+            }
+            let running = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+            CloseHandle(h);
+            running
+        }
     }
 }
 
@@ -1856,7 +2006,9 @@ pub fn wait_for_previous() {
 
 /// Check, and install a new version if there is one (no restart: the next
 /// start runs it).
-pub fn cli() -> Result<(), String> {
+/// `running`: a BananaSplit app runs (Windows: it would start its window
+/// from the new file, which is not its version; update it from its menu).
+pub fn cli(running: bool) -> Result<(), String> {
     let src = Source::from_env();
     let never = AtomicBool::new(false);
     let method = method();
@@ -1869,19 +2021,30 @@ pub fn cli() -> Result<(), String> {
     if let Method::Manual(why) = &method {
         return Err(format!("it cannot install itself here: {why}"));
     }
+    if running {
+        return Err("BananaSplit is running: update it from its Menu ▸ Check for updates…, or quit it first".into());
+    }
+    if method == Method::Deb && !src.https {
+        return Err("a package is installed only from GitHub, not from a test server".into());
+    }
     println!("bananasplit: downloading {} ({:.1} MB) …", offer.asset.name, offer.asset.size as f64 / 1e6);
-    let file = download(&src, &offer, &never, &mut |_| {})?;
+    let (file, _) = download(&src, &offer, &never, &mut |_| {})?;
     println!("bananasplit: the download matches the release's checksums");
     #[cfg(unix)]
     if method == Method::Deb && !crate::sys::stdin_is_tty() {
         return Err(format!("installing the package needs your password; in a terminal run:  sudo apt install {}", file.display()));
     }
-    let r = install(&method, &offer, &file, &never);
-    if let Some(d) = file.parent() {
-        clean_cache(d);
+    let r = install(&method, &offer, &file, &never, true);
+    if r.is_ok() || method != Method::Deb {
+        if let Some(d) = file.parent() {
+            clean_cache(d);
+        }
     }
-    let r = r?;
+    let (r, warnings) = r?;
     println!("bananasplit: installed BananaSplit {} ({r}); a running BananaSplit uses it after a restart", offer.version);
+    for w in warnings {
+        println!("bananasplit: note: {w}");
+    }
     Ok(())
 }
 
@@ -2061,6 +2224,26 @@ mod tests {
         assert_eq!(pick(&Json::parse(&j).unwrap(), Package::Deb, &src).unwrap(), None, "an upload that did not finish");
         let j = format!(r#"[{{"tag_name":"v9","assets":[{{"name":"bananasplit_9.0.0_amd64.deb","size":5,"browser_download_url":"{good}"}}]}}]"#);
         assert_eq!(pick(&Json::parse(&j).unwrap(), Package::Deb, &src).unwrap(), None, "draft/prerelease must say false");
+    }
+
+    #[test]
+    fn curl_versions_are_read() {
+        assert_eq!(parse_curl_version("curl 8.4.0 (Windows) libcurl/8.4.0 Schannel\nRelease-Date: x\n"), Some((8, 4)));
+        assert_eq!(parse_curl_version("curl 7.55.1 (Windows) libcurl/7.55.1 WinSSL\n"), Some((7, 55)));
+        assert!(parse_curl_version("curl 7.55.1").unwrap() < (7, 70) && (7, 70) <= parse_curl_version("curl 7.70.0").unwrap());
+        assert_eq!(parse_curl_version("wget 1.21"), None);
+        assert_eq!(parse_curl_version(""), None);
+    }
+
+    #[test]
+    fn download_links_cannot_leave_the_releases() {
+        let p = "https://github.com/LudaLunizz/BananaSplit/releases/download/";
+        assert!(clean_url(&format!("{p}v9/bananasplit_9.0.0_amd64.deb"), p));
+        assert!(clean_url(&format!("{p}v9/a.b..c.deb"), p), "dots inside a name are fine");
+        for bad in ["v9/../../../other/x.deb", "v9/./x.deb", "v9/%2e%2e/x.deb", "v9/%2E%2E/x.deb", "..", "v9/x .deb", "v9/x\"y.deb"] {
+            assert!(!clean_url(&format!("{p}{bad}"), p), "{bad}");
+        }
+        assert!(!clean_url("https://github.com/LudaLunizz/BananaSplit/", p));
     }
 
     #[test]
@@ -2266,6 +2449,60 @@ mod tests {
         assert_eq!(std::fs::read_dir(&a).unwrap().count(), 1);
         assert!(check_program(&t1, "9.9.9").is_ok());
         assert!(check_program(&t1, "9.9").is_err(), "the whole version");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_that_cannot_be_replaced_after_the_running_one_is_a_warning() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = temp("partial");
+        let (a, b) = (d.join("app"), d.join("ro"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let (t1, t2) = (a.join("bananasplit"), b.join("bananasplit"));
+        std::fs::write(&t1, b"old").unwrap();
+        std::fs::write(&t2, b"old").unwrap();
+        let new = d.join("new");
+        script(&new, "#!/bin/sh\necho 'BananaSplit 9.9.9'\n");
+        // a second "copy" whose folder is gone: it cannot be written
+        let gone = d.join("gone").join("bananasplit");
+        let w = replace(&new, &[t1.clone(), gone.clone()], "9.9.9").unwrap();
+        assert_eq!(std::fs::read(&t1).unwrap(), std::fs::read(&new).unwrap(), "the running program is new");
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].contains("was not updated"), "{w:?}");
+        // the first one failing is an error
+        assert!(replace(&new, &[gone, t2.clone()], "9.9.9").is_err());
+        assert_eq!(std::fs::read(&t2).unwrap(), b"old");
+        let _ = std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_package_goes_through_pkexec_apt_get() {
+        let d = temp("deb");
+        let log = d.join("log");
+        let pkexec = d.join("pkexec");
+        let program = d.join("bananasplit");
+        let deb = d.join("bananasplit_9.9.9_amd64.deb");
+        std::fs::write(&deb, b"deb").unwrap();
+        let never = AtomicBool::new(false);
+        let apt = Path::new("/usr/bin/apt-get");
+        for (code, installs, want) in [(0, true, ""), (126, false, "cancelled"), (127, false, "could not get permission"), (100, false, "apt-get failed (exit 100)")] {
+            script(&pkexec, &format!("#!/bin/sh\necho \"$@\" > {}\necho 'E: something' >&2\nexit {code}\n", log.display()));
+            script(&program, "#!/bin/sh\necho 'BananaSplit 9.9.9'\n");
+            let r = install_deb_with(&pkexec, apt, &program, &deb, "9.9.9", &never, false);
+            assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), format!("/usr/bin/apt-get install -y {}", deb.display()));
+            match installs {
+                true => assert!(r.is_ok(), "{r:?}"),
+                false => assert!(r.as_ref().unwrap_err().contains(want), "{code}: {r:?}"),
+            }
+        }
+        // installed, but the program is not the new version: an error
+        script(&pkexec, "#!/bin/sh\nexit 0\n");
+        script(&program, "#!/bin/sh\necho 'BananaSplit 2.7.3'\n");
+        assert!(install_deb_with(&pkexec, apt, &program, &deb, "9.9.9", &never, false).unwrap_err().contains("not 9.9.9"));
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -1642,8 +1642,9 @@ function openUpdates() {
 }
 $("m-update").addEventListener("click", openUpdates);
 $("updclose").addEventListener("click", () => $("upddlg").close());
-$("upd-check").addEventListener("click", () => send({ op: "update", a: "check" }, true));
-$("upd-install").addEventListener("click", () => send({ op: "update", a: "install" }, true));
+// disabled until the state says what happened (no double click)
+$("upd-check").addEventListener("click", () => { $("upd-check").disabled = true; send({ op: "update", a: "check" }, true); });
+$("upd-install").addEventListener("click", () => { $("upd-install").disabled = true; send({ op: "update", a: "install" }, true); });
 $("upd-page").addEventListener("click", () => send({ op: "update", a: "page" }, false));
 $("upd-restart").addEventListener("click", () => {
   // while recording, a second click: the restart ends the take

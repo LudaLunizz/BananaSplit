@@ -314,7 +314,7 @@ fn run(args: Args) -> Result<(), String> {
             println!("bananasplit: {}", desktop::uninstall()?);
             return Ok(());
         }
-        Mode::Update => return update::cli(),
+        Mode::Update => return update::cli(false),
         Mode::QuitRunning => {
             let client = Config::load_or_default(&args.config).unwrap_or_default().client_name;
             let Some(port) = gui::find_running(&client, args.gui_port) else {
