@@ -123,11 +123,24 @@ try:
         time.sleep(0.05)
     check(p0 is not None, "the take plays")
     if p0 is not None:
+        # The position comes from the state, a snapshot of up to one GUI
+        # frame (33 ms) before, and the mock server runs its cycles in
+        # bursts: two readings 1 s apart were off by up to 6 %. The slope of
+        # a least-squares line through readings every 40 ms is not.
         dur = state()["player"]["dur"]
-        time.sleep(max(0.3, min(1.0, dur - p0 - 0.25)))
-        p1, t1 = state()["player"]["pos"], time.time()
-        speed = (p1 - p0) / (t1 - t0)
-        check(abs(speed - 1.0) < 0.06, f"the player runs at {speed:.3f}x")
+        until = t0 + max(0.3, min(1.0, dur - p0 - 0.25))
+        pts = [(t0, p0)]
+        while time.time() < until:
+            time.sleep(0.04)
+            p = state()["player"]
+            if p["state"] != "playing":
+                break
+            pts.append((time.time(), p["pos"]))
+        n = len(pts)
+        mt, mp = sum(t for t, _ in pts) / n, sum(p for _, p in pts) / n
+        var = sum((t - mt) ** 2 for t, _ in pts)
+        speed = sum((t - mt) * (p - mp) for t, p in pts) / var if n > 2 and var > 0 else 0.0
+        check(abs(speed - 1.0) < 0.06, f"the player runs at {speed:.3f}x ({n} readings)")
         cmd(op="stop")
 finally:
     proc.terminate()

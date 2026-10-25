@@ -391,7 +391,9 @@ rm -rf "$TMP"
 # 8.8 % too fast. And when the server changes its rate during a take
 # (pw-metadata clock.force-rate), the take goes on in a second file.
 python3 "$HERE/rec_rate.py" "$BIN" "$HERE" 2.0 1 MOCKJACK_RATE=44100 MOCKJACK_PRE_RATE=48000 || fail "8: recording at 44.1 kHz"
-python3 "$HERE/rec_rate.py" "$BIN" "$HERE" 2.0 2 MOCKJACK_RATE=48000 MOCKJACK_RATE_SWITCH=800:96000 || fail "8: rate change during a take"
+# 3 s: the take continues in a file of its own after the switch (a take of
+# its own in the list), long enough to time the player over a second
+python3 "$HERE/rec_rate.py" "$BIN" "$HERE" 3.0 2 MOCKJACK_RATE=48000 MOCKJACK_RATE_SWITCH=800:96000 || fail "8: rate change during a take"
 python3 "$HERE/rec_rate.py" "$BIN" "$HERE" 2.0 1 MOCKJACK_RATE=48000 MOCKJACK_PRE_RATE=44100 MOCKJACK_NO_SRATE_CB=1 || fail "8: libjack without the rate callback"
 echo "E2E PASS: recordings carry the rate the server really runs at, play at 1.0x, and follow a rate change"
 
