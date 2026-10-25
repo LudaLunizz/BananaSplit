@@ -426,6 +426,14 @@ impl Graph {
             let mut idx: Vec<usize> = Vec::new();
             let mut shown: Vec<String> = Vec::new();
             for pat in patterns {
+                if pat == bananasplit::config::DEFAULT_DEVICE {
+                    if let Some(c) = route::default_cable(infos, def) {
+                        errs.push(format!(
+                            "{row}: the Windows default is {}, a virtual cable BananaSplit uses, so it would feed back; using the real device instead",
+                            route::short_name(&c.name)
+                        ));
+                    }
+                }
                 match route::resolve(pat, infos, def) {
                     Some(d) => {
                         let i = infos.iter().position(|x| x.id == d.id).expect("from list");
