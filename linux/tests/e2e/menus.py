@@ -42,12 +42,17 @@ out = open(os.path.join(home, "log.txt"), "w")
 proc = subprocess.Popen([binary, "--gui", "--no-open", "--gui-port", str(port)], env=env, stdout=out, stderr=out)
 url = f"http://127.0.0.1:{port}"
 failed = []
+TITLE = "Channel menus (menus.py)"
 
 
 def check(ok, what):
     print(("ok   " if ok else "FAIL ") + what)
     if not ok:
         failed.append(what)
+        # on GitHub Actions also an annotation, shown on the run's page
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            text = what.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print(f"::error title={TITLE}::{text}", flush=True)
 
 
 def post(**kw):

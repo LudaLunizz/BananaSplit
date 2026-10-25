@@ -22,9 +22,23 @@ $url = "http://127.0.0.1:$Port"
 
 $script:checks = 0
 $script:failures = 0
+# On GitHub Actions, failures and the app's own messages also become
+# annotations, shown on the run's summary page (no need to open the log).
+$script:onGitHub = $env:GITHUB_ACTIONS -eq 'true'
+function Annotate([string]$level, [string]$title, [string]$text) {
+    if (-not $script:onGitHub -or -not $text) { return }
+    $t = $text.Trim()
+    if ($t.Length -gt 4000) { $t = $t.Substring(0, 4000) + ' ...' }
+    $t = $t.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+    Write-Output "::${level} title=${title}::${t}"
+}
 function Check([bool]$ok, [string]$what) {
     $script:checks++
-    if ($ok) { Write-Output "ok   $what" } else { $script:failures++; Write-Output "FAIL $what" }
+    if ($ok) { Write-Output "ok   $what" } else {
+        $script:failures++
+        Write-Output "FAIL $what"
+        Annotate 'error' 'Windows launch' $what
+    }
 }
 function Until([scriptblock]$cond, [int]$seconds = 20) {
     $t = [Diagnostics.Stopwatch]::StartNew()
@@ -61,6 +75,7 @@ $d = (& $Exe --print-default-config 2>&1 | Out-String)
 Check ($LASTEXITCODE -eq 0 -and $d -match '\[strip\.1\]|\[strip1\]|\[global\]') "--print-default-config prints a config"
 $l = (& $Exe --list-devices 2>&1 | Out-String)
 Write-Output "--list-devices (exit $LASTEXITCODE):"; Write-Output $l
+Annotate 'notice' "--list-devices (exit $LASTEXITCODE)" $l
 
 # ---- a double-click start: no arguments ----
 $p = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\mixer.err" -RedirectStandardOutput "$work\mixer.out"
@@ -69,7 +84,9 @@ $state = $null
 try { $state = Get-Http '/api/state' | ConvertFrom-Json } catch { }
 Check ($null -ne $state) "its state is valid JSON"
 if ($state) {
-    Write-Output ("state: rate={0} block={1} cables={2} status='{3}' channels={4}" -f $state.sr, $state.bs, $state.cables, $state.status, @($state.ch).Count)
+    $line = "state: rate={0} block={1} cables={2} status='{3}' channels={4}" -f $state.sr, $state.bs, $state.cables, $state.status, @($state.ch).Count
+    Write-Output $line
+    Annotate 'notice' 'Mixer state' $line
 }
 Check (Until { (Windows-Titled 'BananaSplit').Count -ge 1 } 30) "a window titled BananaSplit opens"
 Check (Until { @(Get-NetTCPConnection -LocalPort $Port -State Established -ErrorAction SilentlyContinue).Count -ge 1 } 30) "the window's page connects to the mixer"
@@ -95,7 +112,14 @@ Write-Output "`n---- mixer stderr ----"
 Get-Content "$work\mixer.err" -ErrorAction SilentlyContinue
 Write-Output "---- second start stderr ----"
 Get-Content "$work\second.err" -ErrorAction SilentlyContinue
+if ($script:failures -gt 0) {
+    Annotate 'warning' 'Mixer stderr' ((Get-Content -Raw "$work\mixer.err" -ErrorAction SilentlyContinue) + (Get-Content -Raw "$work\mixer.out" -ErrorAction SilentlyContinue))
+    Annotate 'warning' 'Second start stderr' ((Get-Content -Raw "$work\second.err" -ErrorAction SilentlyContinue) + (Get-Content -Raw "$work\second.out" -ErrorAction SilentlyContinue))
+    $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle } | ForEach-Object { "$($_.ProcessName) [$($_.Id)]: $($_.MainWindowTitle)" }
+    Annotate 'warning' 'Windows with a title' ($procs -join "`n")
+}
 Get-Process bananasplit -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 Write-Output "`n$($script:checks - $script:failures) of $($script:checks) checks passed"
+Annotate $(if ($script:failures -gt 0) { 'error' } else { 'notice' }) 'Windows launch' "$($script:checks - $script:failures) of $($script:checks) checks passed"
 if ($script:failures -gt 0) { exit 1 }

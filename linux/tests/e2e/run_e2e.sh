@@ -11,7 +11,12 @@ PID=$!
 sleep 7
 kill -INT $PID; wait $PID; RC=$?
 cat "$TMP/stderr.txt"; cat "$MOCKJACK_REPORT"
-fail() { echo "E2E FAIL: $1"; exit 1; }
+fail() {
+  echo "E2E FAIL: $1"
+  # on GitHub Actions also an annotation, shown on the run's page
+  [ "${GITHUB_ACTIONS:-}" = true ] && printf '::error title=End-to-end test::%s\n' "$(printf '%s' "$1" | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' | sed 's/%0A$//')"
+  exit 1
+}
 [ $RC -eq 0 ] || fail "exit code $RC"
 grep -q GARBAGE "$MOCKJACK_REPORT" && fail "output buffers not fully written"
 grep -q "Speakers:monitor" "$MOCKJACK_REPORT" && fail "@physical picked a monitor port (feedback loop)"

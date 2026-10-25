@@ -21,10 +21,15 @@ const PORT = 18950;
 const URL = `http://127.0.0.1:${PORT}/`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0, checks = 0;
+const TITLE = "GUI test (ui_check.js)";
+// On GitHub Actions a failure is also an annotation, shown on the run's page.
+function annotate(what) {
+  if (process.env.GITHUB_ACTIONS === "true") console.log("::error title=" + TITLE + "::" + String(what).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A"));
+}
 function check(ok, what) {
   checks++;
   if (ok) console.log("ok   " + what);
-  else { failures++; console.log("FAIL " + what); }
+  else { failures++; console.log("FAIL " + what); annotate(what); }
 }
 async function state() { return (await fetch(URL + "api/state")).json(); }
 async function devices() { return (await fetch(URL + "api/devices")).json(); }

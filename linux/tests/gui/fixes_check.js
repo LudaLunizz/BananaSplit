@@ -23,9 +23,14 @@ const BIN = process.argv[2] || path.join(ROOT, "target/release/bananasplit");
 const MOCK = path.join(ROOT, "tests/e2e");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
+const TITLE = "GUI test (fixes_check.js)";
+// On GitHub Actions a failure is also an annotation, shown on the run's page.
+function annotate(what) {
+  if (process.env.GITHUB_ACTIONS === "true") console.log("::error title=" + TITLE + "::" + String(what).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A"));
+}
 function check(ok, what) {
   console.log((ok ? "ok   " : "FAIL ") + what);
-  if (!ok) failures++;
+  if (!ok) { failures++; annotate(what); }
 }
 
 // BananaSplit --gui with this config (and environment) on a port of its own.

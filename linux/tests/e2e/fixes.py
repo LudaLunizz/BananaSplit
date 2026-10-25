@@ -47,12 +47,17 @@ import urllib.request
 
 binary, here = sys.argv[1], sys.argv[2]
 failed = []
+TITLE = "2.7.1 fixes (fixes.py)"
 
 
 def check(ok, what):
     print(("ok   " if ok else "FAIL ") + what)
     if not ok:
         failed.append(what)
+        # on GitHub Actions also an annotation, shown on the run's page
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            text = what.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print(f"::error title={TITLE}::{text}", flush=True)
 
 
 class Mixer:

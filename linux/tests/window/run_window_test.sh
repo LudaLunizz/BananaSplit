@@ -45,6 +45,8 @@ PID=""; TRAY=""
 
 fail() {
   echo "WINDOW TEST FAIL: $1"
+  # on GitHub Actions also an annotation, shown on the run's page
+  [ "${GITHUB_ACTIONS:-}" = true ] && printf '::error title=Window test::%s\n' "$(printf '%s' "$1" | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' | sed 's/%0A$//')"
   for f in out.txt tray.log webkit.log browser.log; do [ -f "$T/$f" ] && { echo "--- $f"; tail -25 "$T/$f"; }; done
   "$PYTHON" "$HERE/xtool.py" list
   [ -n "$PID" ] && kill "$PID" 2>/dev/null
