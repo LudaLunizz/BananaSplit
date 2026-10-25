@@ -441,6 +441,8 @@ fn valid_client_name(v: &str) -> bool {
 
 impl Config {
     pub fn parse(text: &str) -> Result<Config, ParseError> {
+        // a file saved by an editor that starts it with a byte order mark
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         let mut cfg = Config::default();
         let mut sec = Section::None;
         // A `connect` list from the file replaces the default list the first
@@ -873,10 +875,40 @@ impl Config {
                 std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             }
         }
-        let tmp = path.with_extension("ini.tmp");
-        std::fs::write(&tmp, self.to_ini()).map_err(|e| format!("{}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+        write_replacing(path, &self.to_ini())
     }
+}
+
+/// Write `text` to `path` all at once: into a temporary file next to it,
+/// renamed over it. A symlink (a config kept with the dotfiles) stays a
+/// link, and the file it points at is written; the file keeps its
+/// permissions (`chmod 600`).
+pub fn write_replacing(path: &Path, text: &str) -> Result<(), String> {
+    let target = real_file(path);
+    let mut tmp = target.clone().into_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    if let Ok(m) = std::fs::metadata(&target) {
+        let _ = std::fs::set_permissions(&tmp, m.permissions());
+    }
+    std::fs::rename(&tmp, &target).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("{}: {e}", target.display())
+    })
+}
+
+/// The file `path` names, through symlinks (also one whose file does not
+/// exist yet).
+fn real_file(path: &Path) -> PathBuf {
+    let mut p = path.to_path_buf();
+    for _ in 0..16 {
+        match std::fs::read_link(&p) {
+            Ok(to) => p = if to.is_absolute() { to } else { p.parent().unwrap_or(Path::new("")).join(to) },
+            Err(_) => break,
+        }
+    }
+    p
 }
 
 /// The JACK name vmix (this program before 2.5) used by default.
@@ -894,6 +926,33 @@ fn config_home() -> PathBuf {
 #[cfg(test)]
 mod tests {
 
+    #[cfg(unix)]
+    #[test]
+    fn saving_keeps_a_symlink_and_the_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("bs-cfg-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("dotfiles")).unwrap();
+        std::fs::create_dir_all(d.join("cfg")).unwrap();
+        let real = d.join("dotfiles/bananasplit.ini");
+        let link = d.join("cfg/bananasplit.ini");
+        let mut c = Config::default();
+        c.save(&real).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink("../dotfiles/bananasplit.ini", &link).unwrap();
+        c.strips[0].name = "Saved through the link".into();
+        c.save(&link).unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "still a link");
+        assert_eq!(Config::load_or_default(&real).unwrap().strips[0].name, "Saved through the link");
+        assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o600);
+        // a link whose file is not there yet: the file is made where it points
+        let _ = std::fs::remove_file(&real);
+        c.save(&link).unwrap();
+        assert!(real.is_file() && std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(!d.join("cfg/bananasplit.ini.tmp").exists() && !d.join("dotfiles/bananasplit.ini.tmp").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     /// The example in the README is a config file people copy: it must load.
     #[test]
     fn the_readme_example_loads() {
@@ -904,6 +963,12 @@ mod tests {
         assert_eq!(c.buffer_size, 128);
         assert_eq!(c.strips[1].connect, ["^Firefox:output_F[LR]$"]);
         assert_eq!(c.recorder.folder, "~/Music/BananaSplit");
+    }
+
+    #[test]
+    fn a_file_with_a_byte_order_mark_loads() {
+        let c = Config::parse("\u{feff}[global]\nbuffer_size = 256\n").unwrap();
+        assert_eq!(c.buffer_size, 256);
     }
 
     #[test]

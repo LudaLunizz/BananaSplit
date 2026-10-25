@@ -1411,22 +1411,35 @@ fn mapped(a: SocketAddr) -> SocketAddr {
     }
 }
 
-/// Only processes of the user BananaSplit runs as may use it: other users
-/// on this computer can reach 127.0.0.1 too. (Without /proc, as in 2.5.)
-fn peer_allowed(s: &TcpStream) -> bool {
+/// Is the other end of this local connection a process of the user
+/// BananaSplit runs as? Other users on this computer can reach 127.0.0.1
+/// too: the server answers only its own user, and a BananaSplit that looks
+/// for a running one (`--gui`, `--quit`) talks only to its own user's.
+/// (Without /proc, as in 2.5: yes.)
+fn same_user(s: &TcpStream) -> bool {
     let (Ok(peer), Ok(us)) = (s.peer_addr(), s.local_addr()) else { return false };
-    let Ok(t4) = std::fs::read_to_string("/proc/net/tcp") else { return true };
-    let owner = socket_owner(&t4, peer, us).or_else(|| {
-        let t6 = std::fs::read_to_string("/proc/net/tcp6").ok()?;
-        socket_owner(&t6, mapped(peer), mapped(us))
-    });
-    owner == Some(crate::sys::uid())
+    // Seen from the client, the server's end may show a moment after
+    // `connect` returns.
+    for attempt in 0..4 {
+        let Ok(t4) = std::fs::read_to_string("/proc/net/tcp") else { return true };
+        let owner = socket_owner(&t4, peer, us).or_else(|| {
+            let t6 = std::fs::read_to_string("/proc/net/tcp6").ok()?;
+            socket_owner(&t6, mapped(peer), mapped(us))
+        });
+        if let Some(o) = owner {
+            return o == crate::sys::uid();
+        }
+        if attempt < 3 {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    false
 }
 
 fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
     let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(5)));
-    if !peer_allowed(&s) {
+    if !same_user(&s) {
         return respond(&mut s, 403, "text/plain; charset=utf-8", b"BananaSplit only answers the user it runs as", "");
     }
     let req = match read_request(&mut s) {
@@ -1625,6 +1638,9 @@ pub fn find_running(client: &str, explicit: Option<u16>) -> Option<u16> {
 pub fn probe(port: u16, client: &str) -> bool {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(300)) else { return false };
+    if !same_user(&s) {
+        return false; // another user's program on this port: not ours
+    }
     let _ = s.set_read_timeout(Some(Duration::from_millis(800)));
     let _ = s.set_write_timeout(Some(Duration::from_millis(800)));
     let req = format!("GET /api/ping HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
@@ -1709,6 +1725,9 @@ fn url_encode(s: &str) -> String {
 fn post_cmd(port: u16, body: &str) -> Option<(u16, String)> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok()?;
+    if !same_user(&s) {
+        return None; // never send requests (or a launch token) to another user
+    }
     let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
     let req = format!(
@@ -2388,7 +2407,8 @@ mod tests {
         let (srv, _) = l.accept().unwrap();
         if let Ok(t) = std::fs::read_to_string("/proc/net/tcp") {
             assert_eq!(socket_owner(&t, srv.peer_addr().unwrap(), srv.local_addr().unwrap()), Some(crate::sys::uid()));
-            assert!(peer_allowed(&srv));
+            assert!(same_user(&srv), "the server sees its own user");
+            assert!(same_user(&c), "and so does the client, of the server's end");
         }
         drop(c);
     }

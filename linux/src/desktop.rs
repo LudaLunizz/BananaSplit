@@ -217,6 +217,19 @@ pub fn autostart_enabled() -> bool {
     !t.lines().map(str::trim).any(|l| l == "Hidden=true" || l == "X-GNOME-Autostart-enabled=false")
 }
 
+/// The copy in `~/.local/bin` that BananaSplit's own app-menu entry starts
+/// (`--install`, or Add to the app menu).
+fn installed_program() -> Option<PathBuf> {
+    let menu = menu_entry_path()?;
+    if !ours(&menu, MENU_MARK) {
+        return None;
+    }
+    let entry = std::fs::read_to_string(&menu).ok()?;
+    user_bin()
+        .filter(|b| b.is_file())
+        .filter(|b| entry.lines().any(|l| l == format!("Exec={} --gui", exec_quote(&b.to_string_lossy()))))
+}
+
 /// Turn starting with the session on or off.
 pub fn set_autostart(on: bool) -> Result<String, String> {
     let path = autostart_path().ok_or("no home folder")?;
@@ -224,7 +237,9 @@ pub fn set_autostart(on: bool) -> Result<String, String> {
         if path.exists() && !ours(&path, AUTOSTART_MARK) {
             return Err(format!("{} exists and was not made by BananaSplit; remove it first", path.display()));
         }
-        let prog = program_path().ok_or("cannot find this program's path")?;
+        // The copy the app menu starts, if BananaSplit was added to it:
+        // this one may run from a download folder that goes away.
+        let prog = installed_program().or_else(program_path).ok_or("cannot find this program's path")?;
         write_atomic(&path, autostart_entry(&prog.to_string_lossy()).as_bytes())?;
         Ok("BananaSplit starts in the tray when you log in".into())
     } else {
@@ -317,10 +332,7 @@ pub fn uninstall() -> Result<String, String> {
     let installed = ours(&menu, MENU_MARK);
     if installed {
         // The copy in ~/.local/bin goes only if this entry starts it.
-        let entry = std::fs::read_to_string(&menu).unwrap_or_default();
-        let bin = user_bin()
-            .filter(|b| b.is_file())
-            .filter(|b| entry.lines().any(|l| l == format!("Exec={} --gui", exec_quote(&b.to_string_lossy()))));
+        let bin = installed_program();
         std::fs::remove_file(&menu).map_err(|e| format!("{}: {e}", menu.display()))?;
         removed.push(menu.display().to_string());
         if let Some(data) = data_home() {

@@ -56,6 +56,9 @@ const BUCKETS: usize = 20;
 /// No packet for this long: the sender paused or stopped.
 pub const IDLE: Duration = Duration::from_millis(300);
 const MAX_GAP: i32 = 64;
+/// Late packets in a row that are no longer stray late packets: the sender
+/// restarted with lower numbers, or does not number its packets.
+const LATE_RUN: u32 = 8;
 /// Level term: ppm per second of level error, and its limit.
 const KP: f64 = 0.19;
 const LEVEL_MAX: f64 = 0.0005;
@@ -262,6 +265,9 @@ pub struct RxStats {
     pub restarts: u32,
     /// Far too much was buffered (e.g. after a network stall): emptied.
     pub resyncs: u32,
+    /// The stream ran dry while packets kept coming (not when the sender
+    /// paused), since it was switched on: what the status calls dropouts.
+    pub dropouts: u32,
 }
 
 /// Receiver state for one incoming stream.
@@ -271,6 +277,12 @@ pub struct RxStream {
     pub format: Option<SampleFormat>,
     pub from: Option<SocketAddrV4>,
     expect: Option<u32>,
+    /// The last packet's frame counter, and late packets in a row.
+    last_frame: Option<u32>,
+    late_run: u32,
+    /// The sender does not count its packets (the same number every time):
+    /// they are taken in the order they come.
+    unnumbered: bool,
     rs: Option<Resampler>,
     ctl: Control,
     fill: Window,
@@ -296,6 +308,9 @@ impl Default for RxStream {
             format: None,
             from: None,
             expect: None,
+            last_frame: None,
+            late_run: 0,
+            unnumbered: false,
             rs: None,
             ctl: Control::default(),
             fill: Window::default(),
@@ -410,15 +425,34 @@ impl RxStream {
         let idle = !self.receiving(now);
         self.last_packet = Some(now);
         let mut gap = 0usize;
-        if let (Some(e), false) = (self.expect, idle) {
+        let last = self.last_frame.replace(h.frame);
+        if self.expect == Some(h.frame) {
+            self.unnumbered = false; // it counts (again)
+        }
+        if let (Some(e), false, false) = (self.expect, idle, self.unnumbered) {
             let d = h.frame.wrapping_sub(e) as i32;
+            let mut restart = false;
             if (1..=MAX_GAP).contains(&d) {
                 self.stats.lost += d as u64;
                 gap = d as usize * h.samples;
             } else if (-MAX_GAP..0).contains(&d) {
                 self.stats.late += 1;
-                return Ok(());
+                self.late_run += 1;
+                if self.late_run < LATE_RUN {
+                    return Ok(());
+                }
+                // Not a stray late packet: the same number again and again
+                // (the sender does not count its packets), or numbers going
+                // on from lower down (it restarted).
+                if last == Some(h.frame) {
+                    self.unnumbered = true;
+                } else {
+                    restart = true;
+                }
             } else if d != 0 {
+                restart = true;
+            }
+            if restart {
                 self.stats.restarts += 1;
                 self.flush(slot);
                 if let Some(r) = self.rs.as_mut() {
@@ -426,6 +460,7 @@ impl RxStream {
                 }
             }
         }
+        self.late_run = 0;
         self.expect = Some(h.frame.wrapping_add(1));
         if idle {
             // After a pause: start again from silence, but keep the clock
@@ -479,6 +514,7 @@ impl RxStream {
         // Dropouts while packets keep coming: keep more in reserve.
         let u = slot.underruns.load(Relaxed);
         if u != self.seen_underruns {
+            self.stats.dropouts = self.stats.dropouts.saturating_add(u.wrapping_sub(self.seen_underruns));
             self.seen_underruns = u;
             self.extra_ms = (self.extra_ms + EXTRA_STEP_MS).min(EXTRA_MAX_MS);
             self.calm_since = Some(now);
@@ -821,6 +857,8 @@ mod tests {
         s.stall = Some((t + 0.5, t + 0.54));
         s.run(5.0);
         assert!(s.underruns() >= 1, "the stall caused a dropout");
+        let dropouts = s.rx.stats.dropouts;
+        assert!(dropouts >= 1, "the status counts it");
         assert_eq!(s.rx.extra_ms, 5.0, "and more reserve");
         assert!(s.tap.ins[0].playing.load(Relaxed), "playing again");
         // the sender pauses for a second: not the network's fault
@@ -830,11 +868,16 @@ mod tests {
         s.run(5.0);
         assert!(s.underruns() > before, "ran dry during the pause");
         assert_eq!(s.rx.extra_ms, 5.0, "pauses do not add reserve");
+        assert_eq!(s.rx.stats.dropouts, dropouts, "nor dropouts in the status");
         assert!(s.tap.ins[0].playing.load(Relaxed), "playing again");
         assert_eq!(s.rx.stats.restarts, 0);
         // the extra reserve wears off again
         s.run(200.0);
         assert_eq!(s.rx.extra_ms, 0.0);
+        // switched off and on: counted from 0 again
+        let slot = &s.tap.ins[0];
+        s.rx.stop(slot);
+        assert_eq!(s.rx.stats.dropouts, 0);
     }
 
     #[test]
@@ -895,5 +938,51 @@ mod tests {
         }
         assert_eq!(s.rx.from, Some(b));
         assert!(s.tap.ins[0].playing.load(Relaxed));
+    }
+
+    /// One 256-sample packet every two 128-frame cycles for `secs`, the
+    /// frame counter from `frame(packet number)`; the frames heard.
+    fn heard(s: &mut Sim, secs: f64, start_cycle: u64, frame: &dyn Fn(u64) -> u32) -> usize {
+        let mut sc = vec![0.0f32; NUM_STRIPS * 2 * MAX_FRAMES];
+        let base = s.base;
+        let mut played = 0;
+        let cycles = (48_000.0 * secs / 128.0) as u64;
+        for c in start_cycle..start_cycle + cycles {
+            let t = c as f64 * 128.0 / 48_000.0;
+            if c % 2 == 0 {
+                s.frame = frame(c / 2);
+                s.send_packet(base + Duration::from_secs_f64(t));
+            }
+            sc[..128].fill(0.0);
+            s.rt.pull(&s.tap, 128, &mut sc, base + Duration::from_secs_f64(t));
+            played += sc[..128].iter().filter(|v| v.abs() > 1e-6).count();
+        }
+        played
+    }
+
+    #[test]
+    fn a_sender_that_does_not_count_its_packets_is_heard() {
+        // Every packet numbered 0: they all looked late, and after the
+        // first one nothing was heard while the status said "receiving".
+        let mut s = Sim::new(48_000, 0.0, 256, 1);
+        let played = heard(&mut s, 3.0, 0, &|_| 0);
+        assert!(played > 48_000 * 2, "heard {played} of {} frames", 48_000 * 3);
+        assert!(s.rx.stats.late <= LATE_RUN as u64, "{:?}", s.rx.stats);
+        // and when it counts again, gaps count as lost packets again
+        let n = 48_000 * 3 / 256;
+        heard(&mut s, 1.0, 48_000 * 3 / 128, &|p| (p - n as u64) as u32 + 5);
+        assert!(!s.rx.unnumbered);
+    }
+
+    #[test]
+    fn a_sender_that_restarts_with_lower_numbers_is_heard_again_soon() {
+        // A quick restart (counter 64 or fewer lower, within the 300 ms
+        // idle time): its packets looked late until the numbers caught up.
+        let mut s = Sim::new(48_000, 0.0, 256, 1);
+        heard(&mut s, 2.0, 0, &|p| 1000 + p as u32);
+        let n = 48_000 * 2 / 256;
+        let played = heard(&mut s, 1.0, 48_000 * 2 / 128, &|p| 1000 + n as u32 - 50 + (p - n as u64) as u32);
+        assert_eq!(s.rx.stats.restarts, 1, "{:?}", s.rx.stats);
+        assert!(played > 48_000 / 2, "heard {played} of 48000 frames after the restart");
     }
 }

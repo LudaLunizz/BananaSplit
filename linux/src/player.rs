@@ -647,14 +647,79 @@ pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
             Some(TakeInfo { key, when, tracks, sample_rate: first.sample_rate, kind: first.kind, frames, bytes, mtime })
         })
         .collect();
-    // A total order (the sort may panic on anything less): other files
-    // first, by date; then recordings by their time stamp, which sorts as
-    // text; the key breaks ties.
-    takes.sort_by_cached_key(|t| match &t.when {
-        Some(w) => (1, w.clone(), t.key.clone()),
-        None => (0, format!("{:020}", t.mtime), t.key.clone()),
-    });
+    order_takes(&mut takes);
     takes
+}
+
+/// Seconds since 1970 of a key's `YYYY-MM-DD_HH-MM-SS` read as if it were
+/// UTC (it is the local time it was recorded at).
+fn naive_secs(key: &str) -> Option<i64> {
+    let n = |r: std::ops::Range<usize>| key.get(r)?.parse::<i64>().ok();
+    let (y, m, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
+    let (h, mi, s) = (n(11..13)?, n(14..16)?, n(17..19)?);
+    // days from the civil date (H. Hinnant's algorithm)
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
+    Some(days * 86_400 + h * 3600 + mi * 60 + s)
+}
+
+/// The `k` of a key `<stamp>-k` (a second take in the same second, or a
+/// take continued at a new rate); 1 without.
+fn stamp_suffix(key: &str) -> u32 {
+    let rest = key.get(19..).unwrap_or("");
+    let rest = rest.strip_prefix('Z').unwrap_or(rest);
+    rest.strip_prefix('-').and_then(|d| d.parse().ok()).unwrap_or(1)
+}
+
+/// Takes further apart than this (by their stamps) are separate sessions.
+const SESSION_GAP: i64 = 2 * 3600;
+
+/// Oldest first, as a total order (the sort may panic on anything less):
+/// other files by date; then recordings by their time stamp, `-k` as a
+/// number (`-10` after `-2`).
+///
+/// A stamp is local time without its offset from UTC, so when the clocks go
+/// back (the end of summer time) the takes of the hour that comes twice
+/// sorted among each other. One recorder makes takes one after another:
+/// within a session, each take's offset is estimated from its files (it
+/// started at their modification time minus its length) and, if the
+/// offsets of the session tell of a clock change (two values at most an
+/// hour apart), the takes are ordered by their time in UTC. Files whose
+/// times say nothing (copied without them, so they are hours off) keep the
+/// stamp order.
+fn order_takes(takes: &mut Vec<TakeInfo>) {
+    let (mut recs, mut out): (Vec<TakeInfo>, Vec<TakeInfo>) = takes.drain(..).partition(|t| t.when.is_some());
+    out.sort_by_cached_key(|t| (t.mtime, t.key.clone()));
+    let naive = |t: &TakeInfo| naive_secs(&t.key).unwrap_or(0);
+    recs.sort_by_cached_key(|t| (naive(t), stamp_suffix(&t.key), t.key.clone()));
+    let mut i = 0;
+    while i < recs.len() {
+        let mut j = i + 1;
+        while j < recs.len() && naive(&recs[j]) - naive(&recs[j - 1]) <= SESSION_GAP {
+            j += 1;
+        }
+        let session = &mut recs[i..j];
+        // the offset from UTC each take was recorded at, to 15 minutes
+        let offset = |t: &TakeInfo| {
+            let started = t.mtime as i64 - t.secs().round() as i64;
+            ((naive(t) - started) as f64 / 900.0).round() as i64 * 900
+        };
+        let mut seen: Vec<i64> = session.iter().map(offset).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        let clock_change = seen.len() == 2
+            && seen[1] - seen[0] <= 3600
+            && seen.iter().all(|o| o.abs() <= 15 * 3600);
+        if clock_change {
+            session.sort_by_cached_key(|t| (naive(t) - offset(t), stamp_suffix(&t.key), t.key.clone()));
+        }
+        i = j;
+    }
+    out.extend(recs);
+    *takes = out;
 }
 
 /// The sum of a take's tracks, `buckets` peak values in percent of full
@@ -1362,6 +1427,71 @@ mod tests {
         std::fs::remove_file(d.join("Song.WAV")).unwrap();
         assert_eq!(scan(&d, &mut cache).len(), 2);
         assert!(scan(&d.join("missing"), &mut cache).is_empty());
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn takes_are_in_the_order_they_were_recorded() {
+        assert_eq!(naive_secs("2026-10-25_00-00-00_mix"), Some(1_792_886_400));
+        assert_eq!(naive_secs("2024-02-29_23-59-59-2_mix"), Some(1_709_251_199));
+        assert_eq!((stamp_suffix("2026-10-25_00-00-00"), stamp_suffix("2026-10-25_00-00-00-10")), (1, 10));
+        let d = tmpdir("order");
+        // a 1 s take named `stamp`, whose file was last written at `utc_end`
+        // (a stamp read as UTC), or now (copied without its times)
+        let take = |stamp: &str, utc_end: Option<&str>| {
+            let p = d.join(format!("{stamp}_mix.wav"));
+            write_wav(&p, Format::Wav16, 48000, 48000, |_| (0.1, 0.1));
+            if let Some(e) = utc_end {
+                let secs = naive_secs(e).unwrap() as u64;
+                let f = std::fs::File::options().write(true).open(&p).unwrap();
+                f.set_modified(UNIX_EPOCH + Duration::from_secs(secs)).unwrap();
+            }
+        };
+        let keys = || scan(&d, &mut ScanCache::default()).into_iter().map(|t| t.key).collect::<Vec<_>>();
+        let empty = || {
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+        };
+        // three takes in one second: -10 after -2
+        take("2026-10-21_10-00-00", None);
+        take("2026-10-21_10-00-00-2", None);
+        take("2026-10-21_10-00-00-10", None);
+        assert_eq!(keys(), ["2026-10-21_10-00-00", "2026-10-21_10-00-00-2", "2026-10-21_10-00-00-10"]);
+        empty();
+        // The night summer time ends in Brussels (2026-10-25: 03:00 CEST is
+        // 02:00 CET): 01:30 and 02:50 are CEST (UTC+2), then 02:10 CET (UTC+1).
+        take("2026-10-25_01-30-00", Some("2026-10-24_23-30-01"));
+        take("2026-10-25_02-50-00", Some("2026-10-25_00-50-01"));
+        take("2026-10-25_02-10-00", Some("2026-10-25_01-10-01"));
+        take("2026-10-25_04-00-00", Some("2026-10-25_03-00-01"));
+        assert_eq!(keys(), ["2026-10-25_01-30-00", "2026-10-25_02-50-00", "2026-10-25_02-10-00", "2026-10-25_04-00-00"]);
+        // copied without their times (all "now"): the stamps decide
+        empty();
+        for s in ["2026-10-25_01-30-00", "2026-10-25_02-50-00", "2026-10-25_02-10-00"] {
+            take(s, None);
+        }
+        assert_eq!(keys(), ["2026-10-25_01-30-00", "2026-10-25_02-10-00", "2026-10-25_02-50-00"]);
+        // an ordinary evening at UTC+2: the stamps decide
+        empty();
+        take("2026-07-01_20-00-00", Some("2026-07-01_18-00-01"));
+        take("2026-07-01_20-30-00", Some("2026-07-01_18-30-01"));
+        assert_eq!(keys(), ["2026-07-01_20-00-00", "2026-07-01_20-30-00"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_channel_called_part2_stays_one_track() {
+        // what the recorder names the files of a channel "Guitar part2"
+        // whose take went on past 4 GiB
+        let d = tmpdir("part2");
+        let label = crate::recorder::source_label(0, "Guitar part2");
+        for f in [format!("S_{label}.wav"), format!("S_{label}_part2.wav")] {
+            write_wav(&d.join(f.replace('S', "2026-10-21_14-03-05")), Format::Wav16, 48000, 10, |_| (0.1, 0.1));
+        }
+        let t = scan(&d, &mut ScanCache::default());
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].tracks.len(), 1, "{:?}", t[0].tracks);
+        assert_eq!((t[0].tracks[0].label.as_str(), t[0].tracks[0].parts.len()), ("1-Guitar-part2", 2));
         let _ = std::fs::remove_dir_all(d);
     }
 

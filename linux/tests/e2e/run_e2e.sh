@@ -375,6 +375,14 @@ grep -qx "Exec=$TMP/bin/bananasplit --gui --hidden" "$AUTO" || fail "7: autostar
 grep -qx "TryExec=$TMP/bin/bananasplit" "$AUTO" || fail "7: autostart TryExec"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-BananaSplit: 1' --data 'op=autostart&v=0' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: autostart off"
 [ ! -e "$AUTO" ] || fail "7: autostart file not removed"
+# Added to the app menu, then Start with the system: the autostart entry
+# starts the copy the menu starts, not this one (a download folder, say),
+# whichever was clicked first.
+[ "$(curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' --data 'op=install' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: install: $(cat "$TMP/resp")"
+[ "$(curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' --data 'op=autostart&v=1' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: autostart after install: $(cat "$TMP/resp")"
+grep -qx "Exec=$TMP/home/.local/bin/bananasplit --gui --hidden" "$AUTO" || fail "7: autostart after Add to the app menu: $(grep Exec "$AUTO")"
+env HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" "$TMP/home/.local/bin/bananasplit" --uninstall >/dev/null 2>&1 || fail "7: uninstall"
+[ ! -e "$AUTO" ] && [ ! -e "$TMP/home/.local/bin/bananasplit" ] || fail "7: uninstall left the autostart entry or the copy"
 (app --quit) || fail "7: --quit did not find the GUI on the noted port"
 RC=0; wait $PID || RC=$?; trap - EXIT
 [ $RC -eq 0 ] || fail "7: exit code $RC after --quit"

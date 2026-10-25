@@ -140,6 +140,28 @@ async function pollPage(page, fn, pred, what, ms = 5000) {
     await bs.stop();
   }
 
+  // ---- 2.7.3: a window that got "too many windows open" connects later ------
+  {
+    const bs = await start("[global]\ncreate_cables = false\n", {}, 18830);
+    // every stream the server allows is taken (other windows, browser tabs)
+    const held = [];
+    for (let i = 0; i < 8; i++) {
+      const ac = new AbortController();
+      const r = await fetch(bs.url + "api/events", { signal: ac.signal });
+      held.push({ ac, r });
+    }
+    const page = await browser.newPage({ viewport: { width: 1760, height: 960 } });
+    await page.goto(bs.url);
+    await page.waitForSelector(".strip");
+    await sleep(3500);
+    check(await page.evaluate(() => document.getElementById("overlay").classList.contains("show")), "with every stream taken, the page says it lost the connection");
+    for (const h of held) h.ac.abort();
+    await pollPage(page, () => !document.getElementById("overlay").classList.contains("show") && document.getElementById("engine").classList.contains("off") === false,
+      (v) => v, "a stream is free again: the page connects by itself", 8000);
+    await page.close();
+    await bs.stop();
+  }
+
   await browser.close();
   console.log(failures ? `GUI FIXES FAIL: ${failures}` : "GUI FIXES PASS");
   process.exit(failures ? 1 : 0);

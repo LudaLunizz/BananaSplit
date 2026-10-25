@@ -202,7 +202,15 @@ pub fn source_label(i: usize, name: &str) -> String {
             clean.push(c);
         }
     }
-    let clean: String = clean.trim_matches('_').chars().take(32).collect();
+    let mut clean: String = clean.trim_matches('_').chars().take(32).collect();
+    // `_part2` at the end of a file name is a take's second part (4 GiB):
+    // a channel called "Guitar part2" is `Guitar-part2`.
+    if let Some(p) = clean.rfind("_part") {
+        let n = &clean[p + 5..];
+        if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) {
+            clean.replace_range(p..=p, "-");
+        }
+    }
     if clean.is_empty() { source_id(i).to_string() } else { format!("{}-{clean}", source_id(i)) }
 }
 
@@ -680,11 +688,18 @@ impl Take {
         }
         std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         let align = 2 * format.bytes_per_sample() as u64;
+        // A take's files share `<stamp>[-k]_`: that key must be new, not
+        // only these file names (a mix take and a multi-track take started
+        // in the same second were listed, and played, as one take).
+        let taken: Vec<String> = std::fs::read_dir(folder)
+            .map(|d| d.flatten().filter_map(|e| e.file_name().to_str().map(str::to_string)).collect())
+            .unwrap_or_default();
         let mut chosen = None;
         for k in 1..1000u32 {
             let suffix = if k == 1 { String::new() } else { format!("-{k}") };
-            let bases: Vec<PathBuf> = labels.iter().map(|l| folder.join(format!("{stamp}{suffix}_{l}"))).collect();
-            if bases.iter().all(|b| !with_ext(b, 1).exists()) {
+            let key = format!("{stamp}{suffix}_");
+            let bases: Vec<PathBuf> = labels.iter().map(|l| folder.join(format!("{key}{l}"))).collect();
+            if !taken.iter().any(|n| n.starts_with(&key)) && bases.iter().all(|b| !with_ext(b, 1).exists()) {
                 chosen = Some(bases);
                 break;
             }
@@ -1328,6 +1343,11 @@ mod tests {
         assert_eq!(source_label(0, "Mic"), "1-Mic");
         assert_eq!(source_label(6, "My Speakers / L+R"), "A1-My_Speakers_L_R");
         assert_eq!(source_label(10, "  "), "B2");
+        // never `_part<n>` at the end: that is how a take's later parts end
+        assert_eq!(source_label(0, "Guitar part2"), "1-Guitar-part2");
+        assert_eq!(source_label(0, "Guitar_part12"), "1-Guitar-part12");
+        assert_eq!(source_label(0, "Guitar part"), "1-Guitar_part");
+        assert_eq!(source_label(0, "part2"), "1-part2");
         assert_eq!(Format::parse("WAV24").unwrap(), Format::Wav24);
         assert!(Format::parse("mp3").is_err());
         assert_eq!(Mode::parse("multitrack").unwrap(), Mode::Multi);
@@ -1614,6 +1634,11 @@ mod tests {
         let t2 = Take::create(&dir, "S", &labels, Format::Wav16, 48000, MAX_WAV_DATA_BYTES).unwrap();
         assert!(t2.files()[0].ends_with("S-2_1-Mic.wav"));
         t2.finish().unwrap();
+        // another take in that second with other tracks (a mix take after a
+        // multi-track one): a key of its own, not one take with S's files
+        let t3 = Take::create(&dir, "S", &["mix".to_string()], Format::Wav16, 48000, MAX_WAV_DATA_BYTES).unwrap();
+        assert!(t3.files()[0].ends_with("S-3_mix.wav"), "{:?}", t3.files());
+        t3.finish().unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1769,7 +1794,8 @@ mod tests {
         sh.rec_links.store(parse_links("1,A1").unwrap(), Relaxed);
         let mix = rec.start(sh.rec_links.load(Relaxed), &names, "T").unwrap();
         assert_eq!(mix.len(), 1);
-        assert!(mix[0].ends_with("T_mix.wav"));
+        // the same second as the multi-track take: a take of its own
+        assert!(mix[0].ends_with("T-2_mix.wav"), "{mix:?}");
         for cycle in 0..6 {
             run(&mut eng, cycle == 2);
         }

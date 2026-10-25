@@ -13,6 +13,26 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.7.3
+
+Fixes from two reviews of 2.7.1. Nothing to change on your side: configs, scenes and recordings load as they are. (There is no 2.7.2.)
+
+* **The recordings list keeps working with any file name.** A folder or file in the recordings folder whose name ends in certain non-Latin or accented letters (`録音`, `Größe`) stopped the list for the rest of the session: new takes never showed up until BananaSplit was restarted.
+* **A take played while it was being recorded plays to its end.** Play after the recording stopped played only what was there when you first selected it, and a click past that point on the waveform stopped playback.
+* **Takes are listed in the order you recorded them**: also the tenth take in one second (it came before the second), and on the night summer time ends, when the clock shows the same hour twice.
+* **A channel called "Guitar part2"** is recorded as `1-Guitar-part2`, so a take longer than 4 GB still lists it as one track (it became two, played on top of each other).
+* **A mix take and a multi-track take started in the same second** are two takes (they were listed, and played, as one).
+* **Switching off a VBAN input that is playing fades it out** instead of stopping it dead with a click; so does renaming it, or the sender restarting.
+* **Two computers sending the same VBAN stream name** (Voicemeeter's default `Stream1`, say) to an input that takes any sender: the first one plays on, instead of both giving silence. The second one is listed under the streams BananaSplit sees, so you can give it an input of its own; it takes over when the first one stops.
+* **VBAN senders that restart, or that do not number their packets**, are heard again at once (a restart with lower numbers was silent until the numbers caught up; unnumbered packets were never heard after the first).
+* **"N dropouts" in a VBAN stream's status** counts dropouts since you switched the stream on, and no longer the sender's pauses.
+* **The example config in this README loads.** Its comments after the values made BananaSplit refuse it (and became part of names and connect patterns). A comment after a value now gets an error that says where comments go: on a line of their own.
+* **Saving keeps a config that is a link** (a dotfiles folder) a link, and keeps its permissions; scenes too.
+* **Configs and scenes saved by an editor that adds a byte order mark** (Notepad) load, and such scenes are listed.
+* **"Start with the system" starts the copy in your app menu** (`~/.local/bin`) when BananaSplit was added to it, not the copy you happened to run (from a download folder that may go away).
+* **A window that found BananaSplit's page full** ("too many windows open") connects by itself once another window closes; it said "Trying again" and never did.
+* **Another user of this computer can no longer pose as your BananaSplit.** `bananasplit --gui` and `--quit` talked to whatever answered on port 8790: another user's program there could make BananaSplit think it was already running, or get the quit command. They now only talk to a BananaSplit of your own user, as the page server already only answered its own user.
+
 ## What's new in 2.7.1
 
 Fourteen fixes from a review of 2.7. Nothing to change on your side: configs and scenes load as they are.
@@ -115,14 +135,14 @@ ASIO and WASAPI are **Windows-only** driver APIs and do not exist on Linux. What
 **Debian, Ubuntu, Mint, Pop!_OS:** install the package, which pulls in what it needs:
 
 ```sh
-sudo apt install ./bananasplit_2.7.1_amd64.deb
+sudo apt install ./bananasplit_2.7.3_amd64.deb
 ```
 
 **Any other distribution (Fedora, Arch, openSUSE, …):** unpack the portable package and run its installer. It copies `bananasplit` to `~/.local/bin` and adds BananaSplit with its icon to your app menu; nothing outside your home folder is touched (`./install.sh --uninstall` removes it again).
 
 ```sh
-tar -xzf bananasplit-2.7.1-linux-x86_64.tar.gz
-cd bananasplit-2.7.1-linux-x86_64 && ./install.sh
+tar -xzf bananasplit-2.7.3-linux-x86_64.tar.gz
+cd bananasplit-2.7.3-linux-x86_64 && ./install.sh
 ```
 
 Then start **BananaSplit** from the app menu. What it needs from the system (PipeWire is the default on current Fedora, Ubuntu, Debian, Arch, and others; the .deb asks for these itself):
@@ -477,6 +497,8 @@ The GUI phase also sets an EQ and VBAN streams over HTTP, checks that bad values
 Unit tests also cover the VBAN header against the specification (every sample rate and format, every rejection rule, random garbage), the resampler (44.1 ↔ 48 kHz, 8 to 192 kHz, aliasing below −85 dB), the drift tracking (simulated senders whose clocks run up to 2000 ppm off, with jitter, lost packets, stalls and pauses), two VBAN instances talking over real sockets, the EQ against the Audio EQ Cookbook formulas at three sample rates, and the EQ's click-free changes.
 
 The no-allocation tests run thousands of cycles with parameters changing underneath: one with the recorder recording (both modes, live link changes, a full buffer), one with every EQ changing and VBAN streams flowing both ways (underruns, a full outgoing buffer, flushes), and one with the player playing, pausing, seeking and changing buses while input gain and pan move. A counting allocator proves the audio path never touches the heap.
+
+New in 2.7.3: every fix has a check that fails on 2.7.1. Unit tests: the recordings scan with names in other scripts, take order (`-10` after `-2`, the night summer time ends, folders copied without their file times), a channel called "part2" through a 4 GB split, two takes in one second, a take that grew while selected, a VBAN stream switched off while playing, two senders of one stream, senders that restart or do not number packets, the dropout count, the README's example config, comments after values, saving through a symlink, byte order marks, and the owner of the other end of a local connection. The seventh end-to-end phase adds Start with the system after Add to the app menu; `tests/gui/fixes_check.js` takes every event stream the server allows and checks that the page connects once one is free.
 
 New in 2.7.1:
 
