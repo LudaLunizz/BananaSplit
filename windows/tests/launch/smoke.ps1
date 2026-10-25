@@ -70,37 +70,73 @@ function Screenshot([string]$name) {
 function Windows-Titled([string]$title) {
     @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq $title })
 }
-Add-Type -Namespace BsSmoke -Name Win -MemberDefinition @'
-[DllImport("user32.dll", SetLastError = true)] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
-[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+# The app's windows, found by title. Not Process.MainWindowTitle: that is
+# the first visible window of a process in z-order, and once the app window
+# is minimized it can be tao's (invisible, untitled) event window instead.
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace BsSmoke {
+    public static class Win {
+        [DllImport("user32.dll", SetLastError = true)] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+        [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr lParam);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
+        // Visible top-level windows with this title (minimized ones too).
+        public static IntPtr[] Titled(string title) {
+            var found = new List<IntPtr>();
+            EnumWindows((h, l) => {
+                if (IsWindowVisible(h)) {
+                    var sb = new StringBuilder(256);
+                    GetWindowText(h, sb, sb.Capacity);
+                    if (sb.ToString() == title) found.Add(h);
+                }
+                return true;
+            }, IntPtr.Zero);
+            return found.ToArray();
+        }
+        public static uint ProcessOf(IntPtr hWnd) {
+            uint pid;
+            GetWindowThreadProcessId(hWnd, out pid);
+            return pid;
+        }
+    }
+}
 '@
-function App-Window { Windows-Titled 'BananaSplit' | Select-Object -First 1 }
+# BananaSplit's windows (of bananasplit processes, titled BananaSplit).
+function App-Windows {
+    @([BsSmoke.Win]::Titled('BananaSplit') | Where-Object {
+        (Get-Process -Id ([BsSmoke.Win]::ProcessOf($_)) -ErrorAction SilentlyContinue).ProcessName -eq 'bananasplit'
+    })
+}
+function App-Window { App-Windows | Select-Object -First 1 }
 # What the window's close button (or Alt+F4) sends.
 function Close-Window {
-    $w = App-Window
-    if (-not $w) { return 'no window to close' }
-    $ok = [BsSmoke.Win]::PostMessage($w.MainWindowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+    $h = App-Window
+    if (-not $h) { return 'no window to close' }
+    $ok = [BsSmoke.Win]::PostMessage($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
     if ($ok) { 'WM_CLOSE posted' } else { "PostMessage failed (error $([Runtime.InteropServices.Marshal]::GetLastWin32Error()))" }
+}
+function Window-Minimized {
+    $h = App-Window
+    [bool]($h -and [BsSmoke.Win]::IsIconic($h))
 }
 # For the annotations when a window check fails.
 function Window-State {
-    $w = App-Window
     $fg = [BsSmoke.Win]::GetForegroundWindow()
-    [uint32]$fgPid = 0
-    [void][BsSmoke.Win]::GetWindowThreadProcessId($fg, [ref]$fgPid)
+    $fgPid = [BsSmoke.Win]::ProcessOf($fg)
     $fgName = (Get-Process -Id $fgPid -ErrorAction SilentlyContinue).ProcessName
-    $mine = if ($w) {
-        $h = $w.MainWindowHandle
-        "window pid $($w.Id) hwnd $h minimized $([BsSmoke.Win]::IsIconic($h)) visible $([BsSmoke.Win]::IsWindowVisible($h))"
+    $all = App-Windows
+    $mine = if ($all.Count) {
+        ($all | ForEach-Object { "window pid $([BsSmoke.Win]::ProcessOf($_)) hwnd $_ minimized $([BsSmoke.Win]::IsIconic($_))" }) -join ', '
     } else { 'no window titled BananaSplit' }
     "$mine; foreground: $fgName [$fgPid] hwnd $fg"
-}
-function Window-Minimized {
-    $w = App-Window
-    [bool]($w -and [BsSmoke.Win]::IsIconic($w.MainWindowHandle))
 }
 function Post-Cmd([string]$body) {
     (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop -Method Post -Uri "$url/api/cmd" `
@@ -134,7 +170,7 @@ if ($state) {
     Write-Output $line
     Annotate 'notice' 'Mixer state' $line
 }
-Check (Until { (Windows-Titled 'BananaSplit').Count -ge 1 } 30) "a window titled BananaSplit opens"
+Check (Until { (App-Windows).Count -ge 1 } 30) "a window titled BananaSplit opens"
 Check (Until { @(Get-NetTCPConnection -LocalPort $Port -State Established -ErrorAction SilentlyContinue).Count -ge 1 } 30) "the window's page connects to the mixer"
 Start-Sleep -Seconds 3
 Screenshot 'launch'
@@ -145,7 +181,7 @@ $p2 = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\secon
 Check ($p2.WaitForExit(15000) -and $p2.ExitCode -eq 0) "a second start hands over to the running mixer and exits"
 Check ((Get-Http '/api/ping') -eq 'bananasplit-gui' -and -not $p.HasExited) "the first mixer is still the one running"
 Start-Sleep -Seconds 2
-Check ((Windows-Titled 'BananaSplit').Count -eq 1) "it brought up the open window instead of opening another"
+Check ((App-Windows).Count -eq 1) "it brought up the open window instead of opening another"
 
 # ---- the close button keeps BananaSplit running ----
 $before = Window-State
@@ -157,7 +193,7 @@ Start-Sleep -Seconds 1
 Check (-not $p.HasExited -and (Mixers).Count -ge 2) "and the mixer and its window keep running"
 $p3 = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\third.err" -RedirectStandardOutput "$work\third.out"
 Check ($p3.WaitForExit(15000) -and $p3.ExitCode -eq 0) "starting BananaSplit again"
-$back = Until { (Windows-Titled 'BananaSplit').Count -eq 1 -and -not (Window-Minimized) } 10
+$back = Until { (App-Windows).Count -eq 1 -and -not (Window-Minimized) } 10
 Check $back "brings the window back"
 if (-not $back) { Annotate 'warning' 'Window state' (Window-State) }
 Screenshot 'restored'
@@ -174,7 +210,7 @@ if ($p.HasExited) { Check ($p.ExitCode -eq 0) "the mixer exit code is 0 (was $($
 # ---- with "Closing the window keeps it running" off, closing it quits ----
 $p4 = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\mixer2.err" -RedirectStandardOutput "$work\mixer2.out"
 Check (Until { Use-NotedPort; (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "started again, the mixer answers on $url"
-Check (Until { (Windows-Titled 'BananaSplit').Count -ge 1 } 30) "and opens its window"
+Check (Until { (App-Windows).Count -ge 1 } 30) "and opens its window"
 $said = $null
 try { $said = Post-Cmd 'op=closetray&v=0' } catch { }
 Check ($said -eq 'ok') "the menu's 'Closing the window keeps it running' is switched off"
