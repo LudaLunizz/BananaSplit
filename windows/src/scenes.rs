@@ -37,9 +37,15 @@ const HEADER: &str = "# BananaSplit scene";
 
 fn is_scene(path: &Path) -> bool {
     use std::io::Read;
-    let mut b = [0u8; HEADER.len()];
-    std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut b)).is_ok() && b == *HEADER.as_bytes()
+    let mut b = [0u8; 3 + HEADER.len()];
+    let Ok(n) = std::fs::File::open(path).and_then(|f| f.take(b.len() as u64).read(&mut b)) else { return false };
+    // (saved by an editor that starts files with a byte order mark: Windows)
+    let b = b[..n].strip_prefix(BOM.as_bytes()).unwrap_or(&b[..n]);
+    b.starts_with(HEADER.as_bytes())
 }
+
+/// The UTF-8 byte order mark some editors (Notepad) put at the start of a file.
+const BOM: &str = "\u{feff}";
 
 /// The scene file for the current mixer state.
 pub fn to_ini(sh: &Shared) -> String {
@@ -80,6 +86,7 @@ pub fn to_ini(sh: &Shared) -> String {
 /// Check that `text` only holds keys a scene may hold, then parse it with
 /// the config parser. Errors carry a line number.
 pub fn parse(text: &str) -> Result<Config, String> {
+    let text = text.strip_prefix(BOM).unwrap_or(text);
     let mut section = String::new();
     for (i, raw) in text.lines().enumerate() {
         let line = raw.trim();
@@ -167,9 +174,7 @@ impl SceneStore {
         let path = self.path(name)?;
         Self::check_ours(&path)?;
         std::fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
-        let tmp = path.with_extension("ini.tmp");
-        std::fs::write(&tmp, to_ini(sh)).map_err(|e| format!("{}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+        crate::config::write_replacing(&path, &to_ini(sh))
     }
 
     /// Load scene `name` into the mixer.
@@ -201,6 +206,24 @@ mod tests {
         for bad in ["", "  ", ".hidden", "a/b", "../x", "a\\b", "x\ny", &"a".repeat(41), "a:b", "nul\0"] {
             assert!(validate_name(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn a_scene_saved_with_a_byte_order_mark_is_listed_and_loads() {
+        // (copied to Windows, edited in Notepad, copied back)
+        let dir = std::env::temp_dir().join(format!("bs-scenes-bom-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = SceneStore::new(dir.clone());
+        let sh = Shared::new();
+        sh.strips[1].gain_db.store(-9.0);
+        store.save("Win", &sh).unwrap();
+        let text = std::fs::read_to_string(dir.join("Win.ini")).unwrap();
+        std::fs::write(dir.join("WinBom.ini"), format!("\u{feff}{text}")).unwrap();
+        assert_eq!(store.list(), ["Win", "WinBom"]);
+        let sh2 = Shared::new();
+        store.load("WinBom", &sh2).unwrap();
+        assert_eq!(sh2.strips[1].gain_db.load(), -9.0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

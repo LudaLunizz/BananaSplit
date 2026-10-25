@@ -2273,6 +2273,13 @@ function connect() {
     if (document.hidden) { hiddenFrame = ev.data; return; }
     showFrame(ev.data);
   };
+  // The browser tries again by itself when BananaSplit is not there, but
+  // not after an answer other than the stream ("too many windows open"):
+  // then try again here, until a window closes or BananaSplit restarts.
+  es.onerror = () => {
+    if (es.readyState !== EventSource.CLOSED || stopped || events !== es) return;
+    setTimeout(() => { if (events === es && !stopped) connect(); }, 2000);
+  };
 }
 let hiddenFrame = null;
 function showFrame(data) {

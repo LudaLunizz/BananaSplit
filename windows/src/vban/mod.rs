@@ -260,6 +260,7 @@ pub struct InStatus {
     pub packets: u64,
     pub lost: u64,
     pub late: u64,
+    /// Dropouts since the stream was switched on (not the sender's pauses).
     pub underruns: u32,
     pub error: Option<String>,
 }
@@ -675,7 +676,7 @@ fn rx_thread(inner: &Inner) {
                         packets: s.stats.packets,
                         lost: s.stats.lost,
                         late: s.stats.late,
-                        underruns: tap.ins[k].underruns.load(Relaxed),
+                        underruns: s.stats.dropouts,
                         error: errors[k].clone(),
                     }
                 };

@@ -1,6 +1,6 @@
 [package]
 name = "bananasplit"
-version = "2.7.1"
+version = "2.7.3"
 edition = "2024"
 description = "6-strip, 5-bus low-latency virtual audio mixer for Windows (WASAPI), with EQ, a recorder and player, scenes and Voicemeeter-compatible VBAN"
 license = "MIT"
