@@ -133,6 +133,19 @@ namespace BsSmoke {
             }, IntPtr.Zero);
             return found.ToArray();
         }
+        // Message boxes (#32770) of this process.
+        public static IntPtr[] Dialogs(uint pid) {
+            var found = new List<IntPtr>();
+            EnumWindows((h, l) => {
+                var cls = new StringBuilder(256);
+                GetClassName(h, cls, cls.Capacity);
+                uint p;
+                GetWindowThreadProcessId(h, out p);
+                if (cls.ToString() == "#32770" && p == pid && IsWindowVisible(h)) found.Add(h);
+                return true;
+            }, IntPtr.Zero);
+            return found.ToArray();
+        }
         public static uint ProcessOf(IntPtr hWnd) {
             uint pid;
             GetWindowThreadProcessId(hWnd, out pid);
@@ -236,7 +249,12 @@ $l = (& $Exe --list-devices 2>&1 | Out-String)
 Write-Output "--list-devices (exit $LASTEXITCODE):"; Write-Output $l
 Annotate 'notice' "--list-devices (exit $LASTEXITCODE)" $l
 
-# ---- a double-click start: no arguments ----
+# ---- "Start with Windows" left by an older copy elsewhere ----
+$run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$savedRun = (Get-ItemProperty -Path $run -Name BananaSplit -ErrorAction SilentlyContinue).BananaSplit
+New-ItemProperty -Path $run -Name BananaSplit -Value '"C:\Old\bananasplit-2.7.0\bananasplit.exe" --gui --no-open' -PropertyType String -Force | Out-Null
+
+# ---- a double-click start: no arguments (the first start on this PC) ----
 $p = Start-App @() 'mixer'
 Check (Until { (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "the mixer answers on $url"
 $state = $null
@@ -247,10 +265,41 @@ if ($state) {
     Annotate 'notice' 'Mixer state' $line
 }
 Check (Until { (App-Windows).Count -ge 1 } 30) "a window titled BananaSplit opens"
+# The first start, without VB-Audio cables (the runner has none): the
+# welcome dialog offers them, and what happened at start is on the page.
+$welcome = $null
+Check (Until { $script:welcome = [BsSmoke.Win]::Dialogs([uint32]$p.Id) | Select-Object -First 1; $null -ne $script:welcome } 15) "the first start offers the VB-Audio cables in a dialog"
+if ($welcome) { [void][BsSmoke.Win]::PostMessage($welcome, 0x0111, [IntPtr]7, [IntPtr]::Zero) } # No
+Check (Until { [BsSmoke.Win]::Dialogs([uint32]$p.Id).Count -eq 0 } 10) "the dialog closes"
+$st0 = Get-Http '/api/state' | ConvertFrom-Json
+Check ($st0.status -match 'VB-Audio') "the start-up notes are in the page's status line ('$($st0.status)')"
 Check (Until { @(Get-NetTCPConnection -LocalPort $Port -State Established -ErrorAction SilentlyContinue).Count -ge 1 } 30) "the window's page connects to the mixer"
 Check (Until { $t = Tray-Window; $t -and [BsSmoke.Win]::TrayIconShown($t) } 15) "the tray icon is in the notification area"
 Check (Until { (Get-Http '/api/state' | ConvertFrom-Json).app.tray -eq $true } 10) "the page knows there is a tray icon"
 Check ($null -ne (Mixer-Window)) "the mixer listens for the end of the Windows session"
+Check ((Get-Http '/api/state' | ConvertFrom-Json).app.autostart -eq $false) "a Run entry of an older copy does not count as 'Start with Windows'"
+try { [void](Post-Cmd 'op=autostart&v=1') } catch { }
+$entry = (Get-ItemProperty -Path $run -Name BananaSplit -ErrorAction SilentlyContinue).BananaSplit
+Check ($entry -like "*$Exe*" -and (Until { (Get-Http '/api/state' | ConvertFrom-Json).app.autostart -eq $true } 10)) "ticking it points the entry at this program ($entry)"
+try { [void](Post-Cmd 'op=autostart&v=0') } catch { }
+Check ($null -eq (Get-ItemProperty -Path $run -Name BananaSplit -ErrorAction SilentlyContinue)) "unticking it removes the entry"
+
+# ---- other users of this PC can't drive the mixer ----
+$other = 'bs-other'
+$pw = 'Bs!' + [guid]::NewGuid().ToString('N').Substring(0, 16) + 'a1'
+& net.exe user $other $pw /add 2>&1 | Out-Null
+$out = 'C:\Users\Public\bs-other.txt'
+Remove-Item $out -ErrorAction SilentlyContinue
+$cmd = "try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 '$url/api/state').StatusCode } catch { if (`$_.Exception.Response) { [int]`$_.Exception.Response.StatusCode } else { 'error: ' + `$_.Exception.Message } } | Out-File -Encoding ascii '$out'"
+try {
+    $cred = New-Object Management.Automation.PSCredential ($other, (ConvertTo-SecureString $pw -AsPlainText -Force))
+    $o = Start-Process powershell.exe -Credential $cred -LoadUserProfile -WindowStyle Hidden -PassThru -Wait -ArgumentList '-NoProfile', '-Command', $cmd
+    $said = (Get-Content -Raw $out -ErrorAction SilentlyContinue)
+    $said = if ($said) { $said.Trim() } else { "nothing (exit $($o.ExitCode))" }
+    Check ($said -eq '403') "another Windows user is refused ($said)"
+} catch { Check $false "another Windows user is refused (could not run as them: $_)" }
+& net.exe user $other /delete 2>&1 | Out-Null
+Check ((Get-Http '/api/ping') -eq 'bananasplit-gui') "and this user still gets in"
 Start-Sleep -Seconds 3
 Screenshot 'launch'
 Check (-not $p.HasExited) "the mixer keeps running"
@@ -377,6 +426,8 @@ if ($script:failures -gt 0) {
     Annotate 'warning' 'Windows with a title' ($procs -join "`n")
 }
 Get-Process bananasplit -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+if ($savedRun) { New-ItemProperty -Path $run -Name BananaSplit -Value $savedRun -PropertyType String -Force | Out-Null }
+else { Remove-ItemProperty -Path $run -Name BananaSplit -ErrorAction SilentlyContinue }
 
 Write-Output "`n$($script:checks - $script:failures) of $($script:checks) checks passed"
 Annotate $(if ($script:failures -gt 0) { 'error' } else { 'notice' }) 'Windows launch' "$($script:checks - $script:failures) of $($script:checks) checks passed"
