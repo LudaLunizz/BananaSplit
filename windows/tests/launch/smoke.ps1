@@ -420,7 +420,7 @@ Check (Until { (Mixers).Count -eq 0 } 15) "no BananaSplit process is left"
 Check ((Saved-Ini) -match 'close_to_tray = false') "the setting was saved"
 if ($p4.HasExited) { Check ($p4.ExitCode -eq 0) "the mixer exit code is 0 (was $($p4.ExitCode))" }
 
-# ---- the updater (2.7.4): a new version from a stand-in for GitHub ----
+# ---- the updater (2.8.0): a new version from a stand-in for GitHub ----
 # The new version is a small program that says it is BananaSplit 9.9.9 and
 # starts the real one (a copy in another folder), so a restart can be seen.
 $upd = "$work\update"

@@ -14,8 +14,8 @@
 //! What counts as a release: a GitHub release of `LudaLunizz/BananaSplit`
 //! that is published (not a draft) and not marked pre-release, with this
 //! platform's file. The file's version is in its name
-//! (`bananasplit-2.7.4-linux-x86_64.tar.gz`, `bananasplit_2.7.4_amd64.deb`,
-//! `bananasplit-2.7.4-windows-x64.exe`), the same names the release
+//! (`bananasplit-2.8.0-linux-x86_64.tar.gz`, `bananasplit_2.8.0_amd64.deb`,
+//! `bananasplit-2.8.0-windows-x64.exe`), the same names the release
 //! workflow gives them.
 //!
 //! What is checked before anything is replaced:
@@ -2101,7 +2101,7 @@ mod tests {
 
     #[test]
     fn versions_compare_as_numbers() {
-        assert!(newer("2.7.4", "2.7.3"));
+        assert!(newer("2.8.0", "2.7.3"));
         assert!(newer("2.10.0", "2.9.9"));
         assert!(newer("3", "2.99.99"));
         assert!(newer("2.7.3.1", "2.7.3"));
@@ -2112,10 +2112,10 @@ mod tests {
         assert!(!newer("", "1.0"));
         assert!(!newer("1.0.0.0.0", "0.1"));
         assert!(newer(VERSION, "0.0.1") && parse_version(VERSION).is_some());
-        assert_eq!(Package::Tarball.version_of("bananasplit-2.7.4-linux-x86_64.tar.gz").as_deref(), Some("2.7.4"));
-        assert_eq!(Package::Deb.version_of("bananasplit_2.7.4_amd64.deb").as_deref(), Some("2.7.4"));
-        assert_eq!(Package::WindowsExe.version_of("bananasplit-2.7.4-windows-x64.exe").as_deref(), Some("2.7.4"));
-        assert_eq!(Package::WindowsExe.version_of("bananasplit-2.7.4-windows-x64.zip"), None);
+        assert_eq!(Package::Tarball.version_of("bananasplit-2.8.0-linux-x86_64.tar.gz").as_deref(), Some("2.8.0"));
+        assert_eq!(Package::Deb.version_of("bananasplit_2.8.0_amd64.deb").as_deref(), Some("2.8.0"));
+        assert_eq!(Package::WindowsExe.version_of("bananasplit-2.8.0-windows-x64.exe").as_deref(), Some("2.8.0"));
+        assert_eq!(Package::WindowsExe.version_of("bananasplit-2.8.0-windows-x64.zip"), None);
         assert_eq!(Package::Tarball.version_of("bananasplit-2.7-beta-linux-x86_64.tar.gz"), None);
         assert_eq!(Package::Tarball.version_of("bananasplit_2.7.tar.gz"), None);
         for p in [Package::Tarball, Package::Deb, Package::WindowsExe] {
@@ -2258,10 +2258,10 @@ mod tests {
     fn checksum_files_are_read_like_sha256sum() {
         let a = "1".repeat(64);
         let b = "2".repeat(64);
-        let text = format!("{a}  bananasplit-2.7.4-windows-x64.exe\n{b} *bananasplit_2.7.4_amd64.deb\r\n");
-        assert_eq!(sum_for(&text, "bananasplit-2.7.4-windows-x64.exe"), parse_hex32(&a));
-        assert_eq!(sum_for(&text, "bananasplit_2.7.4_amd64.deb"), parse_hex32(&b));
-        assert_eq!(sum_for(&text, "bananasplit-2.7.4-windows-x64.zip"), None);
+        let text = format!("{a}  bananasplit-2.8.0-windows-x64.exe\n{b} *bananasplit_2.8.0_amd64.deb\r\n");
+        assert_eq!(sum_for(&text, "bananasplit-2.8.0-windows-x64.exe"), parse_hex32(&a));
+        assert_eq!(sum_for(&text, "bananasplit_2.8.0_amd64.deb"), parse_hex32(&b));
+        assert_eq!(sum_for(&text, "bananasplit-2.8.0-windows-x64.zip"), None);
         assert_eq!(sum_for(&text, "windows-x64.exe"), None);
     }
 
@@ -2320,7 +2320,7 @@ mod tests {
         assert!(!stale(true, "bananasplit.exe", "bananasplit.update-.exe", 5, &dead));
         assert!(!stale(true, "bananasplit.exe", "README.md", 5, &dead));
         assert!(!stale(true, "bananasplit.exe", "other.exe.old", 5, &dead));
-        assert!(stale(true, "bs-2.7.4.exe", "bs-2.7.4.exe.old", 5, &dead), "named after the program file");
+        assert!(stale(true, "bs-2.8.0.exe", "bs-2.8.0.exe.old", 5, &dead), "named after the program file");
         // Linux
         assert!(stale(false, "bananasplit", ".bananasplit.update-123", 5, &dead));
         assert!(!stale(false, "bananasplit", ".bananasplit.update-5", 5, &dead));

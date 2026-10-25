@@ -13,13 +13,13 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
-## What's new in 2.7.4
+## What's new in 2.8.0
 
 * **BananaSplit can update itself.** **Menu ▸ Check for updates…** opens the Updates window: **Check now** looks for a new version on BananaSplit's GitHub releases, shows what is new in it, and **Install** downloads it, checks it and puts it in the place of the running program. The mixer keeps running on the old version; **Restart now** (or your next start) runs the new one, with your settings. See [Updates](#updates).
 * **Automatic updates are off by default.** Switched off, BananaSplit never contacts anything by itself: it looks for a new version only when you click Check now. Switch **Install updates automatically** on in the Updates window and it checks a minute after it starts and once a day, installs a new version by itself and tells you when a restart finishes the update. It never restarts on its own, so your audio is never cut.
 * `bananasplit --update` does the same from a terminal.
 
-Nothing to change on your side: configs, scenes and recordings load as they are, and 2.7.3 can still read a config saved by 2.7.4 while automatic updates are off.
+Nothing to change on your side: configs, scenes and recordings load as they are, and 2.7.3 can still read a config saved by 2.8.0 while automatic updates are off.
 
 ## What's new in 2.7.3
 
@@ -143,14 +143,14 @@ ASIO and WASAPI are **Windows-only** driver APIs and do not exist on Linux. What
 **Debian, Ubuntu, Mint, Pop!_OS:** install the package, which pulls in what it needs:
 
 ```sh
-sudo apt install ./bananasplit_2.7.4_amd64.deb
+sudo apt install ./bananasplit_2.8.0_amd64.deb
 ```
 
 **Any other distribution (Fedora, Arch, openSUSE, …):** unpack the portable package and run its installer. It copies `bananasplit` to `~/.local/bin` and adds BananaSplit with its icon to your app menu; nothing outside your home folder is touched (`./install.sh --uninstall` removes it again).
 
 ```sh
-tar -xzf bananasplit-2.7.4-linux-x86_64.tar.gz
-cd bananasplit-2.7.4-linux-x86_64 && ./install.sh
+tar -xzf bananasplit-2.8.0-linux-x86_64.tar.gz
+cd bananasplit-2.8.0-linux-x86_64 && ./install.sh
 ```
 
 Then start **BananaSplit** from the app menu. What it needs from the system (PipeWire is the default on current Fedora, Ubuntu, Debian, Arch, and others; the .deb asks for these itself):
@@ -523,7 +523,7 @@ Unit tests also cover the VBAN header against the specification (every sample ra
 
 The no-allocation tests run thousands of cycles with parameters changing underneath: one with the recorder recording (both modes, live link changes, a full buffer), one with every EQ changing and VBAN streams flowing both ways (underruns, a full outgoing buffer, flushes), and one with the player playing, pausing, seeking and changing buses while input gain and pan move. A counting allocator proves the audio path never touches the heap.
 
-New in 2.7.4: the updater. An eleventh end-to-end phase (`tests/e2e/update.py`) runs BananaSplit from a folder of its own against a stand-in for GitHub on this computer (`BANANASPLIT_UPDATE_SOURCE`, which only accepts `http://127.0.0.1:PORT` or `http://localhost:PORT`, and from which a .deb is never installed): with automatic updates off it asks nothing; Check now finds the newest published release (not a draft, a pre-release or an older one) and its notes; a download with one byte changed is refused and nothing is touched; Install replaces the program (only after the new one ran and said its version) and empties the downloads folder; Restart now quits cleanly and starts the new version with the same options, which waits for the old one; automatic updates install by themselves without restarting, and the switch is saved at once; GitHub's rate limit is a message; a folder it cannot write to offers no install; and `bananasplit --update` installs, finds nothing newer, and refuses a tampered file. Unit tests cover the JSON reader, SHA-256 (the standard test vectors), version order, picking the release from GitHub's real answer, links outside the repository, checksum files, downloads through curl (errors, size limits, HTTPS only), unpacking, replacing the program, and what is cleaned up after an update. `tests/gui/ui_check.js` opens the Updates window, checks a new version and switches automatic updates on and off; the Windows launch test installs a new version over the running `bananasplit.exe`, reopens the window from the moved program, and restarts.
+New in 2.8.0: the updater. An eleventh end-to-end phase (`tests/e2e/update.py`) runs BananaSplit from a folder of its own against a stand-in for GitHub on this computer (`BANANASPLIT_UPDATE_SOURCE`, which only accepts `http://127.0.0.1:PORT` or `http://localhost:PORT`, and from which a .deb is never installed): with automatic updates off it asks nothing; Check now finds the newest published release (not a draft, a pre-release or an older one) and its notes; a download with one byte changed is refused and nothing is touched; Install replaces the program (only after the new one ran and said its version) and empties the downloads folder; Restart now quits cleanly and starts the new version with the same options, which waits for the old one; automatic updates install by themselves without restarting, and the switch is saved at once; GitHub's rate limit is a message; a folder it cannot write to offers no install; and `bananasplit --update` installs, finds nothing newer, and refuses a tampered file. Unit tests cover the JSON reader, SHA-256 (the standard test vectors), version order, picking the release from GitHub's real answer, links outside the repository, checksum files, downloads through curl (errors, size limits, HTTPS only), unpacking, replacing the program, and what is cleaned up after an update. `tests/gui/ui_check.js` opens the Updates window, checks a new version and switches automatic updates on and off; the Windows launch test installs a new version over the running `bananasplit.exe`, reopens the window from the moved program, and restarts.
 
 New in 2.7.3: every fix has a check that fails on 2.7.1. Unit tests: the recordings scan with names in other scripts, take order (`-10` after `-2`, the night summer time ends, folders copied without their file times), a channel called "part2" through a 4 GB split, two takes in one second, a take that grew while selected, a VBAN stream switched off while playing, two senders of one stream, senders that restart or do not number packets, the dropout count, the README's example config, comments after values, saving through a symlink, byte order marks, and the owner of the other end of a local connection. The seventh end-to-end phase adds Start with the system after Add to the app menu; `tests/gui/fixes_check.js` takes every event stream the server allows and checks that the page connects once one is free.
 

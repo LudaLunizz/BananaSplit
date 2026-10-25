@@ -345,7 +345,7 @@ async function until(pred, what, ms = 4000) {
   const ini = fs.readFileSync(path.join(home, ".config/bananasplit/bananasplit.ini"), "utf8");
   check(/\[strip5\][^[]*trim_db = 0.5/.test(ini) && /\[strip6\][^[]*name = Guitar/.test(ini), "Save settings writes gain and names");
 
-  // ---- 2.7.4: updates ----
+  // ---- 2.8.0: updates ----
   check(gh.asked === 0, "automatic updates are off by default: GitHub was not asked");
   check(!ini.includes("auto_update"), "and the default is not written to the config");
   await page.locator("#menubtn").click();

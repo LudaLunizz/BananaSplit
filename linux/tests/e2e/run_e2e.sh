@@ -418,7 +418,7 @@ echo "E2E PASS: cables switched on any channel while running; apps moved into st
 python3 "$HERE/fixes.py" "$BIN" "$HERE" || fail "10: the 2.7.1 fixes"
 echo "E2E PASS: the 2.7.1 fixes (defaults followed, cables remade, numbered names, settings saved on server shutdown, ...)"
 
-# ---- phase 11: the updater (2.7.4) ----
+# ---- phase 11: the updater (2.8.0) ----
 # a stand-in for GitHub on this computer: nothing is asked while automatic
 # updates are off (the default); Check now, a tampered download refused,
 # Install, Restart now, automatic updates, GitHub's rate limit, a folder it
