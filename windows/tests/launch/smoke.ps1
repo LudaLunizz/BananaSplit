@@ -277,7 +277,10 @@ Check (Until { @(Get-NetTCPConnection -LocalPort $Port -State Established -Error
 Check (Until { $t = Tray-Window; $t -and [BsSmoke.Win]::TrayIconShown($t) } 15) "the tray icon is in the notification area"
 Check (Until { (Get-Http '/api/state' | ConvertFrom-Json).app.tray -eq $true } 10) "the page knows there is a tray icon"
 Check ($null -ne (Mixer-Window)) "the mixer listens for the end of the Windows session"
-Check ((Get-Http '/api/state' | ConvertFrom-Json).app.autostart -eq $false) "a Run entry of an older copy does not count as 'Start with Windows'"
+$auto0 = (Get-Http '/api/state' | ConvertFrom-Json).app.autostart
+$regq = (& reg.exe query 'HKCU\Software\Microsoft\Windows\CurrentVersion\Run' /v BananaSplit 2>&1 | Out-String).Trim()
+Annotate 'notice' 'Run entry at start' "app.autostart=$auto0; reg: $regq"
+Check ($auto0 -eq $false) "a Run entry of an older copy does not count as 'Start with Windows'"
 try { [void](Post-Cmd 'op=autostart&v=1') } catch { }
 $entry = (Get-ItemProperty -Path $run -Name BananaSplit -ErrorAction SilentlyContinue).BananaSplit
 Check ($entry -like "*$Exe*" -and (Until { (Get-Http '/api/state' | ConvertFrom-Json).app.autostart -eq $true } 10)) "ticking it points the entry at this program ($entry)"
@@ -286,8 +289,10 @@ Check ($null -eq (Get-ItemProperty -Path $run -Name BananaSplit -ErrorAction Sil
 
 # ---- other users of this PC can't drive the mixer ----
 $other = 'bs-other'
-$pw = 'Bs!' + [guid]::NewGuid().ToString('N').Substring(0, 16) + 'a1'
-& net.exe user $other $pw /add 2>&1 | Out-Null
+# 14 characters at most: net user asks before accepting a longer one.
+$pw = 'Bs!' + [guid]::NewGuid().ToString('N').Substring(0, 9) + 'a1'
+$made = (& net.exe user $other $pw /add /y 2>&1 | Out-String)
+if ($LASTEXITCODE -ne 0) { Annotate 'warning' 'net user' $made }
 $out = 'C:\Users\Public\bs-other.txt'
 Remove-Item $out -ErrorAction SilentlyContinue
 $cmd = "try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 '$url/api/state').StatusCode } catch { if (`$_.Exception.Response) { [int]`$_.Exception.Response.StatusCode } else { 'error: ' + `$_.Exception.Message } } | Out-File -Encoding ascii '$out'"
