@@ -71,14 +71,32 @@ function Windows-Titled([string]$title) {
     @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq $title })
 }
 Add-Type -Namespace BsSmoke -Name Win -MemberDefinition @'
-[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+[DllImport("user32.dll", SetLastError = true)] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 '@
 function App-Window { Windows-Titled 'BananaSplit' | Select-Object -First 1 }
 # What the window's close button (or Alt+F4) sends.
 function Close-Window {
     $w = App-Window
-    if ($w) { [void][BsSmoke.Win]::PostMessage($w.MainWindowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) }
+    if (-not $w) { return 'no window to close' }
+    $ok = [BsSmoke.Win]::PostMessage($w.MainWindowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+    if ($ok) { 'WM_CLOSE posted' } else { "PostMessage failed (error $([Runtime.InteropServices.Marshal]::GetLastWin32Error()))" }
+}
+# For the annotations when a window check fails.
+function Window-State {
+    $w = App-Window
+    $fg = [BsSmoke.Win]::GetForegroundWindow()
+    [uint32]$fgPid = 0
+    [void][BsSmoke.Win]::GetWindowThreadProcessId($fg, [ref]$fgPid)
+    $fgName = (Get-Process -Id $fgPid -ErrorAction SilentlyContinue).ProcessName
+    $mine = if ($w) {
+        $h = $w.MainWindowHandle
+        "window pid $($w.Id) hwnd $h minimized $([BsSmoke.Win]::IsIconic($h)) visible $([BsSmoke.Win]::IsWindowVisible($h))"
+    } else { 'no window titled BananaSplit' }
+    "$mine; foreground: $fgName [$fgPid] hwnd $fg"
 }
 function Window-Minimized {
     $w = App-Window
@@ -130,13 +148,18 @@ Start-Sleep -Seconds 2
 Check ((Windows-Titled 'BananaSplit').Count -eq 1) "it brought up the open window instead of opening another"
 
 # ---- the close button keeps BananaSplit running ----
-Close-Window
-Check (Until { Window-Minimized } 10) "closing the window minimizes it"
+$before = Window-State
+$posted = Close-Window
+$minimized = Until { Window-Minimized } 10
+Check $minimized "closing the window minimizes it"
+if (-not $minimized) { Annotate 'warning' 'Window state' "before: $before`n$posted`nafter: $(Window-State)" }
 Start-Sleep -Seconds 1
 Check (-not $p.HasExited -and (Mixers).Count -ge 2) "and the mixer and its window keep running"
 $p3 = Start-Process -FilePath $Exe -PassThru -RedirectStandardError "$work\third.err" -RedirectStandardOutput "$work\third.out"
 Check ($p3.WaitForExit(15000) -and $p3.ExitCode -eq 0) "starting BananaSplit again"
-Check (Until { (Windows-Titled 'BananaSplit').Count -eq 1 -and -not (Window-Minimized) } 10) "brings the window back"
+$back = Until { (Windows-Titled 'BananaSplit').Count -eq 1 -and -not (Window-Minimized) } 10
+Check $back "brings the window back"
+if (-not $back) { Annotate 'warning' 'Window state' (Window-State) }
 Screenshot 'restored'
 
 # ---- quitting saves and closes everything ----
@@ -156,8 +179,11 @@ $said = $null
 try { $said = Post-Cmd 'op=closetray&v=0' } catch { }
 Check ($said -eq 'ok') "the menu's 'Closing the window keeps it running' is switched off"
 Start-Sleep -Seconds 2
-Close-Window
-Check ($p4.WaitForExit(15000)) "closing the window quits BananaSplit"
+$before = Window-State
+$posted = Close-Window
+$quit = $p4.WaitForExit(15000)
+Check $quit "closing the window quits BananaSplit"
+if (-not $quit) { Annotate 'warning' 'Window state' "before: $before`n$posted`nafter: $(Window-State)" }
 Check (Until { (Mixers).Count -eq 0 } 15) "no BananaSplit process is left"
 Check ((Get-Content -Raw $ini -ErrorAction SilentlyContinue) -match 'close_to_tray = false') "the setting was saved"
 if ($p4.HasExited) { Check ($p4.ExitCode -eq 0) "the mixer exit code is 0 (was $($p4.ExitCode))" }

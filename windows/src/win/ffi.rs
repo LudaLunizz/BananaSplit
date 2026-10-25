@@ -354,6 +354,7 @@ pub const ASFW_ANY: u32 = u32::MAX;
 unsafe extern "system" {
     pub fn MessageBoxW(hwnd: HWND, text: *const u16, caption: *const u16, kind: u32) -> i32;
     pub fn AllowSetForegroundWindow(pid: u32) -> BOOL;
+    pub fn SetForegroundWindow(hwnd: HWND) -> BOOL;
 }
 
 #[cfg_attr(windows, link(name = "shell32"))]

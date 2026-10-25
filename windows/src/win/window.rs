@@ -15,7 +15,7 @@
 //! the taskbar and starting BananaSplit again bring it back). With "Closing
 //! the window keeps it running" off in the menu, closing it quits BananaSplit.
 
-use crate::win::ffi::{GetFileType, GetStdHandle, FILE_TYPE_PIPE, STD_INPUT_HANDLE};
+use crate::win::ffi::{GetFileType, GetStdHandle, SetForegroundWindow, FILE_TYPE_PIPE, HWND, STD_INPUT_HANDLE};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -23,8 +23,8 @@ use std::time::{Duration, Instant};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
-use tao::platform::windows::WindowBuilderExtWindows;
-use tao::window::{Icon, Window, WindowBuilder};
+use tao::platform::windows::{WindowBuilderExtWindows, WindowExtWindows};
+use tao::window::{Icon, UserAttentionType, Window, WindowBuilder};
 use wry::{WebContext, WebViewBuilder};
 
 /// The window's default size (logical pixels), within the screen.
@@ -107,6 +107,18 @@ fn icon(argb: &[u8], side: u32) -> Option<Icon> {
 fn webview_data() -> Option<PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty())?;
     Some(PathBuf::from(base).join("bananasplit").join("WebView2"))
+}
+
+/// Bring the window to the front when Windows lets this process (the start
+/// that asked for it passes its right on); otherwise flash its taskbar
+/// button. Not `Window::set_focus`: when Windows says no, that fakes an Alt
+/// key press, which lands in whatever the user is typing in (and can leave
+/// a window in menu mode).
+fn bring_to_front(window: &Window) {
+    // SAFETY: our own, live window handle.
+    if unsafe { SetForegroundWindow(window.hwnd() as HWND) } == 0 {
+        window.request_user_attention(Some(UserAttentionType::Informational));
+    }
 }
 
 /// Tell the mixer the window's size, if it changed and is a normal one.
@@ -205,7 +217,7 @@ fn run(opts: Opts) -> Result<(), String> {
                     "show" => {
                         window.set_visible(true);
                         window.set_minimized(false);
-                        window.set_focus();
+                        bring_to_front(&window);
                     }
                     "hide" => {
                         report_size(&window, &mut told);
