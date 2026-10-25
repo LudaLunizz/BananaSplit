@@ -251,6 +251,8 @@ Annotate 'notice' "--list-devices (exit $LASTEXITCODE)" $l
 
 # ---- "Start with Windows" left by an older copy elsewhere ----
 $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+# (A fresh profile may not have the Run key yet.)
+if (-not (Test-Path $run)) { New-Item -Path $run | Out-Null }
 $savedRun = (Get-ItemProperty -Path $run -Name BananaSplit -ErrorAction SilentlyContinue).BananaSplit
 New-ItemProperty -Path $run -Name BananaSplit -Value '"C:\Old\bananasplit-2.7.0\bananasplit.exe" --gui --no-open' -PropertyType String -Force | Out-Null
 
