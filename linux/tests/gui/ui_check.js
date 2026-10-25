@@ -48,6 +48,16 @@ async function post(params) {
   const r = await fetch(URL + "api/cmd", { method: "POST", headers: { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params).toString() });
   return { status: r.status, text: await r.text() };
 }
+// What the page shows: it draws from its own event stream, which can be a
+// frame behind the state `until` just read, so wait for the page too.
+async function untilPage(get, what, ms = 3000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try { if (await get()) { check(true, what); return; } } catch (e) { /* not yet */ }
+    await sleep(50);
+  }
+  check(false, what);
+}
 async function until(pred, what, ms = 4000) {
   const t0 = Date.now();
   let s;
@@ -100,7 +110,7 @@ async function until(pred, what, ms = 4000) {
   await until((s) => !s.ch[1].mute, "MUTE again unmutes it");
   await strip(2).locator(".btn.solo").click();
   await until((s) => s.ch[2].solo && s.anySolo, "SOLO solos strip 3");
-  check(await strip(0).evaluate((e) => e.classList.contains("dim")), "other strips dim while one is soloed");
+  await untilPage(() => strip(0).evaluate((e) => e.classList.contains("dim")), "other strips dim while one is soloed");
   await strip(2).locator(".btn.solo").click();
   await until((s) => !s.anySolo, "SOLO again releases it");
   await strip(0).locator(".rt", { hasText: "B2" }).click();
@@ -241,7 +251,7 @@ async function until(pred, what, ms = 4000) {
   fs.renameSync(path.join(rec, "tone.part"), path.join(rec, "2026-01-01_10-00-00_mix.wav"));
   await page.locator("#recbtn").click();
   await until((s) => s.rec.on, "REC starts recording");
-  check(await page.locator("#recbtn").evaluate((b) => b.classList.contains("on")), "REC button lit");
+  await untilPage(() => page.locator("#recbtn").evaluate((b) => b.classList.contains("on")), "REC button lit");
   await sleep(1200);
   await page.locator("#stopbtn").click();
   let s = await until((s) => !s.rec.on, "STOP ends the recording");
@@ -284,7 +294,7 @@ async function until(pred, what, ms = 4000) {
   await page.locator("#menubtn").click();
   await page.locator("[data-theme-v=light]").click();
   await until((s) => s.app.theme === "light", "theme Light");
-  check(await page.evaluate(() => document.documentElement.dataset.theme) === "light", "page is light");
+  await untilPage(async () => (await page.evaluate(() => document.documentElement.dataset.theme)) === "light", "page is light");
   await page.locator("[data-theme-v=dark]").click();
   await until((s) => s.app.theme === "dark", "theme Dark");
   await page.locator("#zoomin").click();
@@ -382,8 +392,7 @@ async function until(pred, what, ms = 4000) {
   // ---- 2.7: a bus feeds another bus ----
   await strip(9).locator(".rt", { hasText: "A1" }).click();
   await until((s) => (s.ch[9].routes & 1) !== 0, "B1's TO A1 key sends B1 into A1");
-  await sleep(150);
-  check(await strip(6).locator(".rt", { hasText: "B1" }).evaluate((e) => e.classList.contains("loop")), "A1's B1 key is blocked (it would be a loop)");
+  await untilPage(() => strip(6).locator(".rt", { hasText: "B1" }).evaluate((e) => e.classList.contains("loop")), "A1's B1 key is blocked (it would be a loop)");
   await strip(6).locator(".rt", { hasText: "B1" }).click();
   await sleep(400);
   check(((await state()).ch[6].routes & 8) === 0, "clicking it does not make the loop");
