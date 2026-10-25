@@ -1195,7 +1195,13 @@ pub fn replace(new: &Path, targets: &[PathBuf], version: &str) -> Result<(), Str
                 use std::os::unix::fs::PermissionsExt;
                 std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("{}: {e}", stage.display()))?;
             }
-            std::fs::File::open(&stage).and_then(|f| f.sync_all()).map_err(|e| format!("{}: {e}", stage.display()))?;
+            // to disk before it takes the old one's place (Windows flushes
+            // only a handle opened for writing)
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&stage)
+                .and_then(|f| f.sync_all())
+                .map_err(|e| format!("{}: {e}", stage.display()))?;
             if k == 0 {
                 check_program(&stage, version)?;
             }
