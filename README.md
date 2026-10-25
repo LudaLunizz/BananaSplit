@@ -41,6 +41,8 @@ Builds are published on the [Releases](https://github.com/LudaLunizz/BananaSplit
 
 Every release ships a `SHA256SUMS.txt`.
 
+Earlier versions, from vmix 1 to BananaSplit 2.7.0, are kept as they were published, one folder per version, in the [`history`](https://github.com/LudaLunizz/BananaSplit/tree/history) branch.
+
 ## Install
 
 ### Linux
