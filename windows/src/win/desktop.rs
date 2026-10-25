@@ -34,7 +34,7 @@ fn hkcu() -> *mut std::ffi::c_void {
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const RUN_VALUE: &str = "BananaSplit";
 const REG_SZ: u32 = 1;
-const RRF_RT_ANY: u32 = 0xffff;
+const RRF_RT_REG_SZ: u32 = 0x0000_0002;
 const ERROR_FILE_NOT_FOUND: i32 = 2;
 /// For the console programs started here (PowerShell): no console window,
 /// also when BananaSplit runs in the background without one.
@@ -45,6 +45,7 @@ const MB_OK: u32 = 0x00000000;
 const MB_YESNO: u32 = 0x00000004;
 const MB_ICONERROR: u32 = 0x00000010;
 const MB_ICONWARNING: u32 = 0x00000030;
+const MB_ICONINFORMATION: u32 = 0x00000040;
 const MB_SETFOREGROUND: u32 = 0x0001_0000;
 const IDYES: i32 = 6;
 
@@ -98,11 +99,48 @@ pub fn set_autostart(enable: bool) -> Result<String, String> {
     if enable { Ok("BananaSplit will start with Windows, in the tray.".into()) } else { Ok("BananaSplit will not start with Windows.".into()) }
 }
 
-pub fn autostart_enabled() -> bool {
+/// The `Run` entry's command line, if there is one.
+fn run_value() -> Option<String> {
     let (sub, name) = (wide(RUN_KEY), wide(RUN_VALUE));
     let mut len = 0u32;
-    // SAFETY: NUL-terminated UTF-16 strings; no data buffer, only its size is asked for.
-    unsafe { RegGetValueW(hkcu(), sub.as_ptr(), name.as_ptr(), RRF_RT_ANY, std::ptr::null_mut(), std::ptr::null_mut(), &mut len) == 0 }
+    // SAFETY: NUL-terminated UTF-16 strings; first only the size is asked
+    // for, then the data is read into a buffer of that size.
+    unsafe {
+        if RegGetValueW(hkcu(), sub.as_ptr(), name.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), std::ptr::null_mut(), &mut len) != 0 {
+            return None;
+        }
+        let mut buf = vec![0u16; (len as usize).div_ceil(2).max(1)];
+        let mut size = (buf.len() * 2) as u32;
+        if RegGetValueW(hkcu(), sub.as_ptr(), name.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut size) != 0 {
+            return None;
+        }
+        let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        Some(String::from_utf16_lossy(&buf[..n]))
+    }
+}
+
+/// Does this `Run` command line start `exe`? (The program it names, quoted
+/// or not, compared the way Windows compares paths: without regard to case
+/// or to `/` versus `\`.)
+pub fn run_targets(command: &str, exe: &Path) -> bool {
+    let c = command.trim_start();
+    let program = match c.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(""),
+        // Unquoted: up to ".exe" (a path with spaces is not quoted by everyone).
+        None => match c.to_ascii_lowercase().find(".exe") {
+            Some(i) => &c[..i + 4],
+            None => c.split_whitespace().next().unwrap_or(""),
+        },
+    };
+    let norm = |p: &str| p.trim().replace('/', "\\").to_lowercase();
+    !program.is_empty() && norm(program) == norm(&exe.to_string_lossy())
+}
+
+/// "Start with Windows" is on: the `Run` entry starts this very program.
+/// One left behind by a copy elsewhere (an older version, before it was
+/// moved) does not count, so ticking the box points it here.
+pub fn autostart_enabled() -> bool {
+    run_value().is_some_and(|v| run_targets(&v, &exe_path()))
 }
 
 pub fn install() -> Result<String, String> {
@@ -141,6 +179,23 @@ pub fn open_url(url: &str) -> bool {
     r as usize > 32
 }
 
+/// The first start, without VB-Audio cables: say what they are for, and
+/// offer the download page (they are optional).
+pub fn cable_prompt() {
+    let text = format!(
+        "Welcome to BananaSplit.\n\nFor virtual inputs and outputs (one per channel, for apps like \
+         Discord or OBS), BananaSplit uses the free VB-Audio virtual cables (CABLE, CABLE-A … CABLE-D). \
+         None is installed yet. Everything else works without them.\n\n\
+         Open the VB-Audio download page?"
+    );
+    let (cap, t) = (wide("BananaSplit"), wide(&text));
+    // SAFETY: NUL-terminated UTF-16 strings.
+    let answer = unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_YESNO | MB_ICONINFORMATION | MB_SETFOREGROUND) };
+    if answer == IDYES {
+        open_url(crate::win::cables::VBCABLE_PAGE);
+    }
+}
+
 /// The desktop window could not start (usually: no WebView2 Runtime). The
 /// mixer runs anyway, so its page opens in the browser, and the user can
 /// get WebView2 from Microsoft.
@@ -163,4 +218,21 @@ pub fn error_dialog(text: &str) {
     let cap = wide("BananaSplit");
     let t = to_wide(text);
     unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR | MB_SETFOREGROUND); }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_entry_must_start_this_program() {
+        let exe = Path::new(r"C:\Users\me\Apps\BananaSplit 2.7.1\bananasplit.exe");
+        assert!(run_targets(r#""C:\Users\me\Apps\BananaSplit 2.7.1\bananasplit.exe" --gui --no-open"#, exe));
+        assert!(run_targets(r#""c:\users\ME\apps\bananasplit 2.7.1\BANANASPLIT.EXE" --gui"#, exe), "case");
+        assert!(run_targets(r"C:/Users/me/Apps/BananaSplit 2.7.1/bananasplit.exe --gui --no-open", exe), "unquoted, slashes");
+        // an older copy, or the same one before it was moved
+        assert!(!run_targets(r#""C:\Users\me\Downloads\bananasplit-2.7.0\bananasplit.exe" --gui --no-open"#, exe));
+        assert!(!run_targets(r#""C:\Users\me\Apps\BananaSplit 2.7.1\bananasplit.exe.bak""#, exe));
+        assert!(!run_targets("", exe));
+    }
 }
