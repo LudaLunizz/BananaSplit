@@ -125,7 +125,7 @@ pub fn helper_exe() -> Result<PathBuf, String> {
 }
 
 /// A program in a system folder was installed by a package.
-fn is_system_path(p: &Path) -> bool {
+pub(crate) fn is_system_path(p: &Path) -> bool {
     ["/usr/", "/opt/", "/snap/", "/nix/", "/app/"].iter().any(|d| p.starts_with(d))
 }
 
@@ -219,7 +219,7 @@ pub fn autostart_enabled() -> bool {
 
 /// The copy in `~/.local/bin` that BananaSplit's own app-menu entry starts
 /// (`--install`, or Add to the app menu).
-fn installed_program() -> Option<PathBuf> {
+pub(crate) fn installed_program() -> Option<PathBuf> {
     let menu = menu_entry_path()?;
     if !ours(&menu, MENU_MARK) {
         return None;
@@ -361,6 +361,28 @@ pub fn uninstall() -> Result<String, String> {
         return Ok("nothing to remove (BananaSplit was not installed with --install)".into());
     }
     Ok(format!("removed {}; your settings and recordings are kept", removed.join(", ")))
+}
+
+/// Open a web page (a release's page) in the default browser.
+pub fn open_page(url: &str) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://127.0.0.1:") {
+        return Err("not a web page".into());
+    }
+    crate::sys::cloexec_all();
+    use std::os::unix::process::CommandExt;
+    let child = std::process::Command::new("xdg-open")
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map_err(|e| format!("cannot run xdg-open: {e}"))?;
+    std::thread::spawn(move || {
+        let mut c = child;
+        let _ = c.wait();
+    });
+    Ok(())
 }
 
 /// Open a folder in the file manager.

@@ -11,6 +11,7 @@ mod lowlat;
 mod shell;
 mod sys;
 mod tui;
+mod update;
 
 use backend::{Backend, Wiring};
 use cables::{CableSet, Cables};
@@ -42,6 +43,7 @@ USAGE:
     bananasplit [--config FILE] --cleanup
     bananasplit --low-latency [off]
     bananasplit --install | --uninstall
+    bananasplit --update
     bananasplit --quit [--gui-port PORT]
     bananasplit --print-default-config
 
@@ -66,6 +68,8 @@ OPTIONS:
                              (< 10 ms round trip) and apply them now; `off` undoes it
         --install            Copy BananaSplit to ~/.local/bin and add it to the app
                              menu (with its icon); --uninstall removes that again
+        --update             Look for a new version on GitHub and install it (the
+                             GUI has this in Menu > Updates, and can do it by itself)
         --quit               Quit the BananaSplit GUI that is running
         --print-default-config
     -h, --help
@@ -80,6 +84,7 @@ enum Mode {
     LowLatency(bool),
     Install,
     Uninstall,
+    Update,
     QuitRunning,
 }
 
@@ -109,7 +114,7 @@ fn parse_args() -> Result<Option<Args>, String> {
     let mut it = std::env::args().skip(1).peekable();
     let set_mode = |a: &mut Args, m: Mode| {
         if a.mode != Mode::Run {
-            return Err("--list-ports, --cleanup, --low-latency, --install, --uninstall and --quit are separate commands; give only one".to_string());
+            return Err("--list-ports, --cleanup, --low-latency, --install, --uninstall, --update and --quit are separate commands; give only one".to_string());
         }
         a.mode = m;
         Ok(())
@@ -126,6 +131,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--cleanup" => set_mode(&mut a, Mode::Cleanup)?,
             "--install" => set_mode(&mut a, Mode::Install)?,
             "--uninstall" => set_mode(&mut a, Mode::Uninstall)?,
+            "--update" => set_mode(&mut a, Mode::Update)?,
             "--quit" => set_mode(&mut a, Mode::QuitRunning)?,
             "--low-latency" => {
                 let on = match it.peek().map(String::as_str) {
@@ -171,7 +177,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         return Err("--hidden starts in the tray, --no-open without a window or tray: give only one".into());
     }
     if a.mode != Mode::Run && (a.gui || a.headless || a.no_cables) {
-        return Err("--list-ports, --cleanup, --low-latency, --install, --uninstall and --quit do not run the mixer; drop --gui/--headless/--no-cables".into());
+        return Err("--list-ports, --cleanup, --low-latency, --install, --uninstall, --update and --quit do not run the mixer; drop --gui/--headless/--no-cables".into());
     }
     Ok(Some(a))
 }
@@ -184,6 +190,10 @@ const SERVER_STOPPED: &str = "the JACK/PipeWire server shut down";
 /// Set once the mixer runs (the UI loop started): an error after that is
 /// not a failed start.
 static MIXING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// BananaSplit set `PIPEWIRE_LATENCY` itself (from the config): a restarted
+/// one gets it from the config again, not from this process.
+static SET_LATENCY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn main() -> ExitCode {
     // Helper processes BananaSplit starts itself: the cable watchdog
@@ -198,6 +208,8 @@ fn main() -> ExitCode {
         }
         _ => {}
     }
+    // Restarted after an update: the BananaSplit it replaces lets go first.
+    update::wait_for_previous();
     let args = match parse_args() {
         Ok(Some(a)) => a,
         Ok(None) => return ExitCode::SUCCESS,
@@ -208,6 +220,18 @@ fn main() -> ExitCode {
     };
     let gui = args.gui;
     match run(args) {
+        Ok(()) if update::RESTART.load(SeqCst) => {
+            // Everything is saved and let go: start the new version.
+            let own: &[&str] = if SET_LATENCY.load(SeqCst) { &["PIPEWIRE_LATENCY"] } else { &[] };
+            if let Err(e) = update::spawn_restarted(own) {
+                eprintln!("bananasplit: could not restart: {e}");
+                if gui && !sys::stdin_is_tty() {
+                    show_error(&format!("BananaSplit was updated, but could not start again: {e}\n\nStart it from the app menu."));
+                }
+                return ExitCode::FAILURE;
+            }
+            ExitCode::SUCCESS
+        }
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("bananasplit: {e}");
@@ -290,6 +314,7 @@ fn run(args: Args) -> Result<(), String> {
             println!("bananasplit: {}", desktop::uninstall()?);
             return Ok(());
         }
+        Mode::Update => return update::cli(false),
         Mode::QuitRunning => {
             let client = Config::load_or_default(&args.config).unwrap_or_default().client_name;
             let Some(port) = gui::find_running(&client, args.gui_port) else {
@@ -338,6 +363,7 @@ fn run(args: Args) -> Result<(), String> {
     if cfg.buffer_size > 0 && std::env::var_os("PIPEWIRE_LATENCY").is_none() {
         // SAFETY: still single-threaded at this point.
         unsafe { std::env::set_var("PIPEWIRE_LATENCY", format!("{}/48000", cfg.buffer_size)) };
+        SET_LATENCY.store(true, SeqCst);
     }
 
     // Started with the session (--hidden): the audio server may still be
@@ -1119,6 +1145,10 @@ fn run_gui(
     hub.autostart.store(desktop::autostart_enabled(), SeqCst);
     hub.installed.store(desktop::menu_installed(), SeqCst);
     hub.set_client(&backend.client_name);
+    // Checks only when asked, unless automatic updates are on.
+    update::clean_leftovers();
+    let updater = update::Updater::start();
+    hub.set_updater(updater.clone());
     let port = gui::start(hub.clone(), opts.port, opts.explicit)?;
     let url = gui::url(port);
     gui::note_port(&backend.client_name, port);
@@ -1222,6 +1252,23 @@ fn run_gui(
                     window.send(&format!("close-to-tray {}", u8::from(on)));
                 }
                 gui::Request::Scene(name) => cfg.gui.scene = name,
+                gui::Request::AutoUpdate(on) => {
+                    cfg.gui.auto_update = on;
+                    // kept at once (a setting about what happens while nobody looks)
+                    capture_all(cfg, shared, rec, vban);
+                    cfg.recorder.play_to = player.routes();
+                    status = match cfg.save(path) {
+                        Ok(()) if on => "updates are installed automatically (BananaSplit checks once a day)".into(),
+                        Ok(()) => "automatic updates are off: BananaSplit checks only when you ask".into(),
+                        Err(e) => format!("save failed: {e}"),
+                    };
+                }
+                gui::Request::Restart => {
+                    if updater.ready() {
+                        update::RESTART.store(true, SeqCst);
+                        quit = true;
+                    }
+                }
                 gui::Request::Dev(op, reply) => {
                     let list = op == gui::DevOp::List;
                     let info = pulse.snapshot().1;
@@ -1330,6 +1377,11 @@ fn run_gui(
             disk = sys::disk_space(&folder);
             hub.autostart.store(desktop::autostart_enabled(), SeqCst);
             hub.installed.store(desktop::menu_installed(), SeqCst);
+            updater.tick(cfg.gui.auto_update);
+        }
+        if let Some(m) = updater.take_event() {
+            eprintln!("bananasplit: {m}");
+            status = m;
         }
         if scenes_at.elapsed() > Duration::from_secs(5) {
             scenes_at = Instant::now();
@@ -1360,6 +1412,8 @@ fn run_gui(
         let play = player.status();
         let (takes_rev, list) = takes.snapshot();
         let scene_list = hub.scene_list();
+        let mut update_json = String::new();
+        updater.json(&mut update_json, cfg.gui.auto_update);
         let extra = gui::Extra {
             player: &play,
             play_to: player.routes(),
@@ -1372,6 +1426,7 @@ fn run_gui(
             installed: hub.installed.load(SeqCst),
             window: window.kind(),
             tray: window.tray(),
+            update: &update_json,
         };
         hub.publish(gui::state_json(
             shared,
@@ -1401,6 +1456,7 @@ fn run_gui(
     window.close();
     takes.shutdown();
     pulse.shutdown();
+    updater.shutdown();
     gui::forget_port(&backend.client_name, port);
     // Remember the mixer state for next time (like the terminal UI), also
     // when the audio server went away.

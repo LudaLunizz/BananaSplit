@@ -15,6 +15,8 @@
 mod gui;
 #[path = "tui.rs"]
 mod tui;
+#[path = "update.rs"]
+mod update;
 #[path = "win/mod.rs"]
 mod win;
 #[cfg(windows)]
@@ -55,6 +57,7 @@ USAGE:
     bananasplit --window URL
     bananasplit --list-devices
     bananasplit --print-default-config
+    bananasplit --update
     bananasplit --quit
 
 OPTIONS:
@@ -65,6 +68,8 @@ OPTIONS:
     --list-devices       List Windows audio endpoints
     --print-default-config
                          Print the default configuration and exit
+    --update             Look for a new version on GitHub and install it (the
+                         window has this in Menu > Updates, and can do it by itself)
     --quit               Ask a running BananaSplit to quit
     -h, --help           Show this help
     -V, --version        Show the version
@@ -80,6 +85,7 @@ struct Args {
     list: bool,
     quit: bool,
     print_default: bool,
+    update: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -93,6 +99,7 @@ fn parse_args() -> Result<Args, String> {
         list: false,
         quit: false,
         print_default: false,
+        update: false,
     };
     while let Some(s) = args.next() {
         match s.as_str() {
@@ -113,6 +120,7 @@ fn parse_args() -> Result<Args, String> {
             "--list-devices" => a.list = true,
             "--quit" => a.quit = true,
             "--print-default-config" => a.print_default = true,
+            "--update" => a.update = true,
             other => return Err(format!("unknown option {other:?}\n\n{HELP}")),
         }
     }
@@ -305,6 +313,9 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     hub.autostart.store(desktop::autostart_enabled(), SeqCst);
     hub.installed.store(desktop::menu_installed(), SeqCst);
     hub.set_client(&cfg.client_name);
+    // Checks only when asked, unless automatic updates are on.
+    let updater = update::Updater::start();
+    hub.set_updater(updater.clone());
 
     let port = gui::start(hub.clone(), opts.port, opts.explicit_port)?;
     gui::note_port(&cfg.client_name, port);
@@ -396,6 +407,24 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                     hub.set_look(cfg.gui.theme, cfg.gui.zoom);
                 }
                 Request::Scene(name) => cfg.gui.scene = name,
+                Request::AutoUpdate(on) => {
+                    cfg.gui.auto_update = on;
+                    // kept at once (a setting about what happens while nobody looks)
+                    capture_all(cfg, &ctx.shared, &rec, &ctx.vban);
+                    cfg.recorder.play_to = ctx.player.routes();
+                    status = match cfg.save(&ctx.path) {
+                        Ok(()) if on => "updates are installed automatically (BananaSplit checks once a day)".to_string(),
+                        Ok(()) => "automatic updates are off: BananaSplit checks only when you ask".to_string(),
+                        Err(e) => format!("save failed: {e}"),
+                    };
+                    last_save = Instant::now();
+                }
+                Request::Restart => {
+                    if updater.ready() {
+                        update::RESTART.store(true, SeqCst);
+                        quit = true;
+                    }
+                }
                 Request::Dev(op, reply) => {
                     let is_list = op == gui::DevOp::List;
                     let r = win::chanmenu::handle(op, cfg);
@@ -459,6 +488,11 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             disk = sys::disk_space(&folder);
             hub.autostart.store(desktop::autostart_enabled(), SeqCst);
             hub.installed.store(desktop::menu_installed(), SeqCst);
+            updater.tick(cfg.gui.auto_update);
+        }
+        if let Some(m) = updater.take_event() {
+            eprintln!("bananasplit: {m}");
+            status = m;
         }
 
         view.update_meters(&ctx.shared);
@@ -466,6 +500,8 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
         let lat = ctx.session.io_latency();
         let (trev, tlist) = takes.snapshot();
         let scene_list = hub.scene_list();
+        let mut update_json = String::new();
+        updater.json(&mut update_json, cfg.gui.auto_update);
         let rec_status = rec.status();
         let rec_settings = rec.settings();
         let vst = ctx.vban.status();
@@ -496,6 +532,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             installed: hub.installed.load(SeqCst),
             window: if window.proc.is_some() { "app" } else { "none" },
             tray: window.tray(),
+            update: &update_json,
         };
         hub.publish(gui::state_json(
             &ctx.shared,
@@ -544,6 +581,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     window.send("hide");
     hub.close();
     takes.shutdown();
+    updater.shutdown();
     gui::forget_port(&cfg.client_name, port);
     ctx.rec.shutdown();
     ctx.player.shutdown();
@@ -570,6 +608,8 @@ fn main() -> ExitCode {
             return app_window::main(&argv[2..]);
         }
     }
+    // Restarted after an update: the BananaSplit it replaces lets go first.
+    update::wait_for_previous();
     let args = match parse_args() {
         Ok(a) => a,
         Err(s) => {
@@ -583,8 +623,20 @@ fn main() -> ExitCode {
         }
     };
     // The command-line uses print to the terminal they were run from.
-    if args.print_default || args.list || args.quit || args.headless {
+    if args.print_default || args.list || args.quit || args.headless || args.update {
         win::console::attach_parent();
+    }
+    if args.update {
+        // A running app would start its window from the new file.
+        let client = Config::load_or_default(&args.path).map(|c| c.client_name).unwrap_or_else(|_| Config::default().client_name);
+        let running = gui::find_running(&client, args.explicit_port.then_some(args.port)).is_some();
+        return match update::cli(running) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("bananasplit: {e}");
+                ExitCode::FAILURE
+            }
+        };
     }
     if args.print_default {
         print!("{}", Config::default().to_ini());
@@ -652,6 +704,8 @@ fn main() -> ExitCode {
         }
     }
 
+    // What an update left next to the program (the old one, now unused).
+    update::clean_leftovers();
     let shared = Shared::new();
     cfg.apply(&shared);
     let rate = 48_000u32;
@@ -702,6 +756,14 @@ fn main() -> ExitCode {
         )
     };
     match result {
+        Ok(()) if update::RESTART.load(SeqCst) => {
+            // The audio devices and the settings let go first.
+            drop(ctx);
+            match update::spawn_restarted(&[]) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => fail(&format!("BananaSplit was updated, but could not start again: {e}\n\nStart it from the Start Menu."), false),
+            }
+        }
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => fail(&e, args.headless),
     }

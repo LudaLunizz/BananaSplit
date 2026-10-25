@@ -23,6 +23,7 @@
 - **VBAN network audio**, compatible with Voicemeeter.
 - **Multitrack recorder and player**, plus saved **scenes**.
 - **Desktop app** with its own window and tray icon. Also runs in a terminal or headless as a service.
+- **Updates itself** from the GitHub releases, checking each download's SHA-256 first: on request (Menu ▸ Check for updates…), or automatically once you switch that on (off by default).
 
 | Platform | Audio backend | Window |
 | --- | --- | --- |
@@ -155,6 +156,8 @@ All of these run in CI on every push and pull request.
    ```
 
 The [release workflow](.github/workflows/release.yml) builds the Linux packages and the Windows executable, writes `SHA256SUMS.txt` and publishes a GitHub release.
+
+The in-app updater offers a release once it is published and **not** marked pre-release (the workflow creates new releases as pre-releases: untick that when the release is ready for everyone). It finds the files by their names (`bananasplit-<version>-linux-x86_64.tar.gz`, `bananasplit_<version>_amd64.deb`, `bananasplit-<version>-windows-x64.exe`) and refuses a file without a checksum, so keep those names and `SHA256SUMS.txt`.
 
 ## Contributing
 

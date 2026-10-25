@@ -9,6 +9,7 @@
 //! * `GET  /api/wave?key=K&n=N`  a recording's waveform overview (JSON)
 //! * `GET  /api/ping`    `bananasplit-gui` (lets a second `bananasplit --gui` find this one)
 //! * `GET  /api/devices` what each channel can be connected to (its menu, JSON)
+//! * `GET  /api/update`  the updater's release page and notes (JSON)
 //! * `POST /api/cmd`     one control change, form-encoded (`op=gain&ch=0&v=-3.5`)
 //!
 //! All mixer parameters (EQ, input gain and pan included) are atomics in
@@ -71,6 +72,10 @@ pub enum Request {
     Zoom(f32),
     /// The current scene ("" = none).
     Scene(String),
+    /// "Install updates automatically" on or off.
+    AutoUpdate(bool),
+    /// Quit and start the version the updater installed.
+    Restart,
     /// What a channel is connected to (JACK, the cables, the apps), answered
     /// by the main loop.
     Dev(DevOp, Reply),
@@ -144,6 +149,8 @@ pub struct Hub {
     client: Mutex<String>,
     /// Bus sends are checked for loops and set under this lock.
     routing: Mutex<()>,
+    /// The updater (the GUI has one; tests may not).
+    updater: Mutex<Option<Arc<crate::update::Updater>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -181,7 +188,16 @@ impl Hub {
             streams: AtomicUsize::new(0),
             client: Mutex::new(String::new()),
             routing: Mutex::new(()),
+            updater: Mutex::new(None),
         })
+    }
+
+    pub fn set_updater(&self, u: Arc<crate::update::Updater>) {
+        *lock(&self.updater) = Some(u);
+    }
+
+    fn updater(&self) -> Result<Arc<crate::update::Updater>, String> {
+        lock(&self.updater).clone().ok_or_else(|| "no updater here".to_string())
     }
 
     /// Ask the main loop (JACK, the cables, the config) and wait for its answer.
@@ -412,7 +428,7 @@ impl Takes {
 // State as JSON
 // ---------------------------------------------------------------------------
 
-fn jstr(o: &mut String, s: &str) {
+pub(crate) fn jstr(o: &mut String, s: &str) {
     o.push('"');
     for c in s.chars() {
         match c {
@@ -500,6 +516,8 @@ pub struct Extra<'a> {
     /// "app" (our own window), "browser" or "none".
     pub window: &'a str,
     pub tray: bool,
+    /// The updater's state (a JSON object, `Updater::json`).
+    pub update: &'a str,
 }
 
 fn jopt(o: &mut String, s: Option<&str>) {
@@ -751,6 +769,8 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
         x.window,
         x.tray
     );
+    o.push_str(",\"update\":");
+    o.push_str(if x.update.is_empty() { "null" } else { x.update });
     o.push('}');
     o
 }
@@ -1231,6 +1251,29 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
             hub.installed.store(crate::desktop::menu_installed(), SeqCst);
             Ok(msg)
         }
+        "autoupdate" => {
+            hub.request(Request::AutoUpdate(f.flag()?));
+            Ok("ok".into())
+        }
+        "update" => {
+            let u = hub.updater()?;
+            match f.req("a")? {
+                "check" => u.check(),
+                "install" => u.install(),
+                "restart" => {
+                    if !u.ready() {
+                        return Err("no update is installed yet".into());
+                    }
+                    hub.request(Request::Restart);
+                    Ok("restarting BananaSplit".into())
+                }
+                "page" => {
+                    crate::desktop::open_page(&u.page())?;
+                    Ok("opening the release page in your browser".into())
+                }
+                a => Err(format!("unknown update action {a:?}")),
+            }
+        }
         "show" => {
             let token: String = f.get("token").unwrap_or("").chars().filter(|c| c.is_ascii_graphic()).take(256).collect();
             hub.request(Request::Show(token));
@@ -1454,6 +1497,10 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
             let who = format!("X-BananaSplit-Client: {}\r\n", url_encode(&lock(&hub.client)));
             respond(&mut s, 200, text, b"bananasplit-gui", &who)
         }
+        ("GET", "/api/update") => match hub.updater() {
+            Ok(u) => respond(&mut s, 200, "application/json", u.details_json().as_bytes(), ""),
+            Err(e) => respond(&mut s, 404, text, e.as_bytes(), ""),
+        },
         ("GET", "/api/takes") => respond(&mut s, 200, "application/json", hub.takes.list_json().as_bytes(), ""),
         ("GET", "/api/devices") => match hub.ask(DevOp::List) {
             Ok(j) => respond(&mut s, 200, "application/json", j.as_bytes(), ""),
@@ -2003,6 +2050,7 @@ mod tests {
             installed: true,
             window: "app",
             tray: true,
+            update: r#"{"auto":false,"phase":"idle"}"#,
         }
     }
 
@@ -2229,7 +2277,7 @@ mod tests {
         assert!(json.contains(r#""out":[{"on":false,"name":"Stream1","to":"192.168.1.20","port":6980,"src":9,"format":"int16","channels":2,"state":"off","text":"off""#), "{json}");
         assert!(json.contains(r#""seen":[{"name":"Stream1","from":"10.0.0.2","sr":44100,"ch":2,"format":"24-bit"}]},"player":"#), "{json}");
         assert!(json.contains(r#","player":{"state":"stopped","take":null,"pos":0.00,"dur":0.00,"underruns":0,"error":null},"playTo":1,"takes":{"rev":3,"count":2,"newest":"2026-10-21_14-03-05"},"disk":{"total":64000000000,"free":52000000000},"#), "{json}");
-        assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","closeToTray":true,"zoom":1,"autostart":false,"installed":true,"window":"app","tray":true}}}}"#)), "{json}");
+        assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","closeToTray":true,"zoom":1,"autostart":false,"installed":true,"window":"app","tray":true}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
         // balanced brackets outside strings
         let (mut depth, mut in_str, mut esc) = (0i32, false, false);
         for c in json.chars() {
@@ -2473,7 +2521,8 @@ mod tests {
         // every command the page sends exists
         for op in ["gain", "trim", "pan", "mute", "mono", "solo", "route", "link", "rec", "recset", "name", "eq", "band",
                    "eqreset", "vban", "vbanport", "vbanin", "vbanout", "play", "pause", "stop", "seek", "take", "playto",
-                   "openfolder", "scene", "theme", "closetray", "zoom", "autostart", "install", "save", "reconnect", "quit"] {
+                   "openfolder", "scene", "theme", "closetray", "zoom", "autostart", "install", "save", "reconnect", "quit",
+                   "autoupdate", "update"] {
             let sent = [format!("op: \"{op}\""), format!("data-op=\"{op}\""), format!("(ch, \"{op}\""), format!("(\"{op}\", k")];
             assert!(sent.iter().any(|p| PAGE.contains(p.as_str())), "page never sends {op}");
         }

@@ -96,7 +96,7 @@ Architecture: amd64
 Maintainer: BananaSplit developers <noreply@bananasplit.invalid>
 Installed-Size: $SIZE
 Depends: libc6 (>= 2.34), pipewire-jack | pipewire-audio-client-libraries | libjack-jackd2-0 | libjack0
-Recommends: libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37, pulseaudio-utils, xdg-utils
+Recommends: libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37, pulseaudio-utils, xdg-utils, curl | wget
 Description: virtual audio mixer for PipeWire and JACK, like Voicemeeter Banana
  BananaSplit mixes and routes audio between applications and devices: six
  input strips with input gain, pan, a 6-band EQ, mute, solo and mono; five
