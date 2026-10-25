@@ -131,6 +131,16 @@ fn error_main() -> ExitCode {
     ExitCode::FAILURE
 }
 
+/// An error that stops BananaSplit: printed, and when it runs in the
+/// background without a console (the autostart entry), shown in a dialog.
+fn fail(e: &str, hidden: bool) -> ExitCode {
+    eprintln!("error: {e}");
+    if hidden {
+        desktop::error_dialog(&format!("BananaSplit stopped.\n\n{e}"));
+    }
+    error_main()
+}
+
 struct Ctx {
     path: PathBuf,
     shared: Arc<Shared>,
@@ -283,10 +293,6 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     let mut window = Window { proc: None, url: url.clone() };
     // Opened after the first frame is published (it takes a moment).
     let mut open_window = !opts.no_open;
-    if opts.no_open {
-        // In the background (the autostart entry): no console window either.
-        sys::leave_own_console();
-    }
 
     let mut status = String::new();
     let mut view = tui::View::default();
@@ -482,6 +488,9 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
         }
     };
 
+    // Out of sight at once, rather than showing a disconnected page while
+    // everything stops and the settings are saved.
+    window.send("hide");
     hub.close();
     takes.shutdown();
     gui::forget_port(&cfg.client_name, port);
@@ -556,15 +565,16 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Started in the background (the autostart entry) with a console window
+    // of its own: let go of it first thing, so it is gone at once.
+    let hidden = args.no_open && !args.headless && sys::leave_own_console();
+
     if let Ok(Some(note)) = Config::migrate_legacy(&args.path, &Config::legacy_path()) {
         eprintln!("bananasplit: {note}");
     }
     let mut cfg = match Config::load_or_create(&args.path) {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return error_main();
-        }
+        Err(e) => return fail(&e, hidden),
     };
 
     // A second launch (the Start Menu shortcut while autostart already runs
@@ -602,14 +612,10 @@ fn main() -> ExitCode {
 
     let mut notes = Vec::new();
     win::first_run(&mut cfg, &args.path, args.headless, &mut notes);
-    let mut session = match Session::open(&cfg, shared.clone(), rec_tap.clone(), vban_tap.clone(), &mut notes) {
+    let session = match Session::open(&cfg, shared.clone(), rec_tap.clone(), vban_tap.clone(), play_tap.clone(), &mut notes) {
         Ok(s) => s,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return error_main();
-        }
+        Err(e) => return fail(&e, hidden),
     };
-    session.attach_player(play_tap.clone());
 
     let mut ctx = Ctx {
         path: args.path.clone(),
@@ -619,7 +625,9 @@ fn main() -> ExitCode {
         player,
         session,
     };
-    let (_, errs) = ctx.session.connect(&cfg, true);
+    // The graph Session::open built (opening every device again would only
+    // take time); its connection errors.
+    let (_, errs) = ctx.session.connect(&cfg, false);
     for e in &errs {
         eprintln!("bananasplit: {e}");
     }
@@ -636,9 +644,6 @@ fn main() -> ExitCode {
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("error: {e}");
-            error_main()
-        }
+        Err(e) => fail(&e, hidden),
     }
 }

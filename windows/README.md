@@ -22,7 +22,7 @@ Closing the window minimizes it and leaves the mixer running; turn off **Closing
 | --- | --- |
 | `--gui` | Run with the desktop window (default) |
 | `--headless` | Run the audio engine without any UI |
-| `--no-open`, `--hidden` | Start in the background, without a window (started from a shortcut, also without a console window) |
+| `--no-open`, `--hidden` | Start in the background, without a window (started from a shortcut or at login, it closes its console window right away) |
 | `--gui-port PORT` | Use a specific local port (default `8790`) |
 | `--config FILE` | Use a custom config file |
 | `--list-devices` | List WASAPI recording and playback devices |

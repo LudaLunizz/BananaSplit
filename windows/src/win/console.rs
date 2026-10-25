@@ -196,10 +196,10 @@ pub fn pause_on_error() {
 /// Started hidden (`--no-open`: the autostart entry) with a console window
 /// of its own: close that window, so BananaSplit really runs in the
 /// background. What it prints from then on goes nowhere. Started from a
-/// terminal, nothing changes.
-pub fn leave_own_console() {
+/// terminal, nothing changes. True if it let go of a console.
+pub fn leave_own_console() -> bool {
     if !owns_console() {
-        return;
+        return false;
     }
     for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
         let mut mode = 0u32;
@@ -213,7 +213,7 @@ pub fn leave_own_console() {
         }
     }
     // SAFETY: as above.
-    unsafe { FreeConsole() };
+    unsafe { FreeConsole() != 0 }
 }
 
 #[cfg(test)]

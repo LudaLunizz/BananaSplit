@@ -117,6 +117,7 @@ impl Session {
         shared: Arc<Shared>,
         rec_tap: Arc<RecTap>,
         vban_tap: Arc<VbanTap>,
+        play_tap: Arc<PlayTap>,
         notes: &mut Vec<String>,
     ) -> Result<Session, String> {
         let com = ffi::ComInit::mta();
@@ -124,8 +125,8 @@ impl Session {
         let signature = en.signature();
         let stats = Arc::new(Stats::default());
         shared.sample_rate.store(RATE, SeqCst);
-        // Start audio right away; the UI's first connect() reuses this graph.
-        let graph = match Graph::build(&en, cfg, &shared, &stats, rec_tap.clone(), vban_tap.clone(), None) {
+        // Start audio right away; the first connect() reuses this graph.
+        let graph = match Graph::build(&en, cfg, &shared, &stats, rec_tap.clone(), vban_tap.clone(), Some(play_tap.clone())) {
             Ok(g) => Some(g),
             Err(e) => {
                 notes.push(e);
@@ -138,7 +139,7 @@ impl Session {
             graph,
             rec_tap,
             vban_tap,
-            play_tap: None,
+            play_tap: Some(play_tap),
             en,
             signature,
             last_scan: Instant::now(),
@@ -146,10 +147,6 @@ impl Session {
             built_at: Instant::now(),
             _com: com,
         })
-    }
-
-    pub fn attach_player(&mut self, tap: Arc<PlayTap>) {
-        self.play_tap = Some(tap);
     }
 
     pub fn label(&self) -> String {

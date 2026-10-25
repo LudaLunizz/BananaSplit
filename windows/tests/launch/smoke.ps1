@@ -88,14 +88,18 @@ namespace BsSmoke {
         delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
         [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr lParam);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
-        // Visible top-level windows with this title (minimized ones too).
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hWnd, StringBuilder name, int max);
+        // Visible top-level windows with this title (minimized ones too), not
+        // dialog boxes (an error message is titled BananaSplit too).
         public static IntPtr[] Titled(string title) {
             var found = new List<IntPtr>();
             EnumWindows((h, l) => {
                 if (IsWindowVisible(h)) {
                     var sb = new StringBuilder(256);
                     GetWindowText(h, sb, sb.Capacity);
-                    if (sb.ToString() == title) found.Add(h);
+                    var cls = new StringBuilder(256);
+                    GetClassName(h, cls, cls.Capacity);
+                    if (sb.ToString() == title && cls.ToString() != "#32770") found.Add(h);
                 }
                 return true;
             }, IntPtr.Zero);
@@ -213,8 +217,10 @@ Check (Until { Use-NotedPort; (Get-Http '/api/ping') -eq 'bananasplit-gui' }) "s
 Check (Until { (App-Windows).Count -ge 1 } 30) "and opens its window"
 $said = $null
 try { $said = Post-Cmd 'op=closetray&v=0' } catch { }
-Check ($said -eq 'ok') "the menu's 'Closing the window keeps it running' is switched off"
-Start-Sleep -Seconds 2
+# The mixer passes it on to the window in the frame that publishes it (once
+# the window has started).
+Check ($said -eq 'ok' -and (Until { (Get-Http '/api/state' | ConvertFrom-Json).app.closeToTray -eq $false } 20)) "the menu's 'Closing the window keeps it running' is switched off"
+Start-Sleep -Seconds 1
 $before = Window-State
 $posted = Close-Window
 $quit = $p4.WaitForExit(15000)

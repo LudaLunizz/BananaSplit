@@ -206,7 +206,10 @@ fn run(opts: Opts) -> Result<(), String> {
     let mut close_to_tray = opts.close_to_tray;
     let mut quitting = false;
     let mut resized_at: Option<Instant> = None;
-    let mut told: Option<(u32, u32)> = None;
+    // The size it opened with (fitted to this screen) is not the user's
+    // choice: only report sizes the user makes.
+    let opened = window.inner_size().to_logical::<f64>(window.scale_factor());
+    let mut told = Some((opened.width.round() as u32, opened.height.round() as u32));
     event_loop.run(move |event, _, control_flow| {
         let _keep = (&webview, &context);
         match event {
