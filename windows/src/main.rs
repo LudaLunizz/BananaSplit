@@ -218,7 +218,7 @@ struct GuiOpts {
     port: u16,
     explicit_port: bool,
     no_open: bool,
-    /// The first start on this computer, without VB-Audio cables: the page
+    /// The first start on this computer, without virtual cables: the page
     /// opens its "Virtual cables" window.
     cable_welcome: bool,
 }
