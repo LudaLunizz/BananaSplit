@@ -16,7 +16,7 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
 ## What's new in 2.8.0
 
 * **BananaSplit can update itself.** **Menu ▸ Check for updates…** opens the Updates window: **Check now** looks for a new version on BananaSplit's GitHub releases, shows what is new in it, and **Install** downloads it, checks it and puts it in the place of the running program. The mixer keeps running on the old version; **Restart now** (or your next start) runs the new one, with your settings. See [Updates](#updates).
-* **Automatic updates are off by default.** Switched off, BananaSplit never contacts anything by itself: it looks for a new version only when you click Check now. Switch **Install updates automatically** on in the Updates window and it checks a minute after it starts and once a day, installs a new version by itself and tells you when a restart finishes the update. It never restarts on its own, so your audio is never cut.
+* **Automatic updates are off by default.** Switched off, BananaSplit never contacts anything by itself: it looks for a new version only when you click Check now. Switch **Install updates automatically** on in the Updates window and it checks a minute after it starts and once a day, installs a new version by itself once it has been out for two days (Install in the Updates window takes it at once) and tells you when a restart finishes the update. It never restarts on its own, so your audio is never cut.
 * `bananasplit --update` does the same from a terminal.
 
 Nothing to change on your side: configs, scenes and recordings load as they are, and 2.7.3 can still read a config saved by 2.8.0 while automatic updates are off.
@@ -256,7 +256,7 @@ Every strip and every bus has a menu: the button under its name. It lists what t
   * **The .deb:** BananaSplit runs `pkexec apt-get install` with the downloaded package, so your desktop asks for your password.
   * **Anything else** (another package manager, an AppImage, a folder BananaSplit cannot write to): the window says so, and **Release page** opens the release in your browser so you can install it yourself.
 * **Restart now** saves everything, removes the cables, quits, and starts the new version with the same options. It stays offered until you restart, also when a later check fails. While you are recording it asks for a second click, because the restart ends the take.
-* **Install updates automatically** is **off** by default (`auto_update` in `[gui]`, written only when it is on). Off, BananaSplit asks nothing of anybody: it checks only when you click Check now. On, it checks a minute after it starts and then once a day (an hour later if a check fails), installs a new version by itself, and says in the status line and with a dot on the Menu button that a restart finishes the update. It never restarts on its own. With the .deb it downloads and checks the package by itself and waits for you to click Install (and enter your password).
+* **Install updates automatically** is **off** by default (`auto_update` in `[gui]`, written only when it is on). Off, BananaSplit asks nothing of anybody: it checks only when you click Check now. On, it checks a minute after it starts and then once a day (an hour later if a check fails), installs a new version by itself once it has been published for two days (so a broken release can be withdrawn before it reaches you; Install takes it at once), and says in the status line and with a dot on the Menu button that a restart finishes the update. It never restarts on its own. With the .deb it downloads and checks the package by itself and waits for you to click Install (and enter your password).
 * `bananasplit --update` checks and installs from a terminal (a running BananaSplit uses the new version after a restart). With the .deb, it installs in a terminal (it asks for your password there) and otherwise prints the `sudo apt install` command for the package it checked.
 * Downloads use `curl` (or `wget` when there is no curl; only curl is told to stay on HTTPS through GitHub's redirects, so prefer it); the .deb recommends curl. Only the terminal UI and `--headless` never check by themselves: the setting is the app's.
 
@@ -336,7 +336,8 @@ zoom = 1
 window = 1780x1000
 # the scene loaded last (the SCENE menu shows it)
 scene = Live Room
-# install new versions by itself, checking once a day (default false:
+# install new versions by itself, checking once a day; a release is installed
+# once it has been out for two days (default false:
 # BananaSplit checks only when you click Check now)
 auto_update = false
 

@@ -138,8 +138,12 @@ class Fake:
         def rel(tag, files, draft=False, pre=False):
             assets = [{"name": n, "state": "uploaded", "size": len(data), "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
                        "browser_download_url": f"{base}/{REPO}/releases/download/{tag}/{n}"} for n, data in files]
-            return {"tag_name": tag, "name": "BananaSplit " + tag, "draft": draft, "prerelease": pre,
-                    "html_url": f"{base}/{REPO}/releases/tag/{tag}", "body": f"What changed in {tag}.\r\n- the updater", "assets": assets}
+            r = {"tag_name": tag, "name": "BananaSplit " + tag, "draft": draft, "prerelease": pre,
+                 "html_url": f"{base}/{REPO}/releases/tag/{tag}", "body": f"What changed in {tag}.\r\n- the updater", "assets": assets}
+            if self.mode == "fresh":
+                # published a minute ago
+                r["published_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60))
+            return r
         if self.mode == "old":
             return [rel("v2.0.0", [("bananasplit-2.0.0-linux-x86_64.tar.gz", b"old")])]
         sums = f"{hashlib.sha256(TGZ).hexdigest()}  {TGZ_NAME}\n".encode()
@@ -380,6 +384,26 @@ try:
     check(st == 400, "only 0 or 1")
 finally:
     m.stop()
+
+# ---- a release published just now: automatic updates leave it for two days --------
+fake.log.clear()
+fake.mode = "fresh"
+m = Mixer(gui="auto_update = true\n", delay="1")
+try:
+    u = m.until(lambda u: u["phase"] == "available", "automatic updates find a release published a minute ago", secs=25)
+    check("two days" in u["message"], f"and say it installs itself after two days: {u['message']}")
+    time.sleep(2.0)
+    u = m.update()
+    check(u["phase"] == "available" and u["installed"] is None, f"it is not installed by itself: {u}")
+    check(open(m.app, "rb").read() != NEW_PROGRAM, "the program was not replaced")
+    check(not any("/blob/" in p for p, _, _ in fake.log), f"nothing was downloaded: {fake.log}")
+    check(u["canInstall"] is True, "Install still does it now")
+    m.post(op="update", a="install")
+    u = m.until(lambda u: u["phase"] == "ready", "Install installs it at once", secs=25)
+    check(open(m.app, "rb").read() == NEW_PROGRAM, "the program was replaced")
+finally:
+    m.stop()
+fake.mode = "good"
 
 # ---- GitHub's rate limit --------------------------------------------------------
 fake.mode = "limited"

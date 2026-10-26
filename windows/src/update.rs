@@ -5,7 +5,8 @@
 //!   anything on its own: it looks for a new version only when the user
 //!   clicks "Check now" (Menu ▸ Updates) or runs `bananasplit --update`.
 //! * **On:** the GUI checks a minute after it starts and then once a day,
-//!   downloads and installs a new version by itself, and says that a
+//!   downloads and installs a new version by itself once it has been
+//!   published for two days (Check now offers it at once), and says that a
 //!   restart finishes the update. It never restarts on its own: that would
 //!   cut the audio. Where installing needs an administrator (the .deb), it
 //!   downloads and checks the package, then waits for a click (and the
@@ -20,7 +21,8 @@
 //!
 //! What is checked before anything is replaced:
 //! * the file comes from this repository's release downloads, over HTTPS
-//!   (curl with `--proto =https`), and has the size GitHub lists;
+//!   (curl with `--proto =https`; wget's redirects are read and one to
+//!   plain HTTP is refused), and has the size GitHub lists;
 //! * its SHA-256 matches GitHub's digest of the upload and the release's
 //!   `SHA256SUMS.txt` (each one that exists; a release with neither is
 //!   refused);
@@ -71,6 +73,13 @@ pub const WAIT_ENV: &str = "BANANASPLIT_WAIT_PID";
 const FIRST_CHECK: Duration = Duration::from_secs(60);
 const RECHECK: Duration = Duration::from_secs(24 * 3600);
 const RETRY: Duration = Duration::from_secs(3600);
+/// Automatic updates leave a release alone this long after it is published:
+/// a broken release can be withdrawn before it reaches everyone.
+pub const SETTLE: Duration = Duration::from_secs(48 * 3600);
+/// The downloads folders of the GUI and of `bananasplit --update`: one each,
+/// so neither cleans away what the other is downloading.
+const GUI_CACHE: &str = "update";
+const CLI_CACHE: &str = "update-cli";
 const MAX_LIST: u64 = 4 << 20;
 const MAX_SUMS: u64 = 64 << 10;
 const MAX_ASSET: u64 = 512 << 20;
@@ -601,12 +610,13 @@ pub struct Offer {
     pub asset: Asset,
     /// Its `SHA256SUMS.txt`, if it has one.
     pub sums: Option<Asset>,
+    /// When it was published (seconds since 1970), if GitHub says.
+    pub published: Option<u64>,
 }
 
 fn clean_url(u: &str, prefix: &str) -> bool {
-    let rest = &u[prefix.len().min(u.len())..];
-    u.starts_with(prefix)
-        && u.len() < 2048
+    let Some(rest) = u.strip_prefix(prefix) else { return false };
+    u.len() < 2048
         && !u.chars().any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '\\')
         // no way out of the prefix: no dot segments, also not percent-encoded
         && !rest.split('/').any(|seg| seg == "." || seg == "..")
@@ -662,9 +672,44 @@ pub fn pick(list: &Json, pkg: Package, src: &Source) -> Result<Option<Offer>, St
         let page = r.get("html_url").and_then(Json::str).filter(|u| clean_url(u, &src.pages)).unwrap_or(RELEASES_PAGE).to_string();
         let notes = r.get("body").and_then(Json::str).map(|b| cut(b.replace("\r\n", "\n").trim(), MAX_NOTES)).unwrap_or_default();
         let tag = r.get("tag_name").and_then(Json::str).map(|t| cut(t, 64)).unwrap_or_default();
-        best = Some(Offer { version, tag, page, notes, asset, sums });
+        let published = r.get("published_at").and_then(Json::str).and_then(parse_utc);
+        best = Some(Offer { version, tag, page, notes, asset, sums, published });
     }
     Ok(best)
+}
+
+/// Seconds since 1970 of a time as GitHub writes it (`2026-10-25T16:20:25Z`).
+pub fn parse_utc(s: &str) -> Option<u64> {
+    let b = s.as_bytes();
+    if b.len() != 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' || b[19] != b'Z' {
+        return None;
+    }
+    let num = |r: std::ops::Range<usize>| -> Option<u64> {
+        let t = &s[r];
+        if t.bytes().all(|c| c.is_ascii_digit()) { t.parse().ok() } else { None }
+    };
+    let (y, mo, d, h, mi, se) = (num(0..4)?, num(5..7)?, num(8..10)?, num(11..13)?, num(14..16)?, num(17..19)?);
+    if y < 1970 || !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
+        return None;
+    }
+    // days since 1970-01-01 (the proleptic Gregorian calendar)
+    let (y, m) = if mo <= 2 { (y - 1, mo + 9) } else { (y, mo - 3) };
+    let era = y / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * m + 2) / 5 + d - 1;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
+    Some(days * 86_400 + h * 3600 + mi * 60 + se)
+}
+
+fn now_utc() -> Option<u64> {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+}
+
+/// How long automatic updates still leave `offer` alone ([`SETTLE`]); `None`
+/// when it has been out long enough (or GitHub gives no date).
+pub fn settling(offer: &Offer, now: Option<u64>) -> Option<Duration> {
+    let wait = (offer.published? + SETTLE.as_secs()).saturating_sub(now?);
+    (wait > 0).then(|| Duration::from_secs(wait))
 }
 
 /// The SHA-256 a `SHA256SUMS.txt` (sha256sum's format) gives for `name`.
@@ -825,6 +870,14 @@ fn curl_error(code: i32, stderr: &str) -> String {
     }
 }
 
+/// Did a redirect in wget's `-S` output go to a plain `http:` address?
+fn redirected_to_http(headers: &str) -> bool {
+    headers.lines().any(|l| {
+        let l = l.trim().to_ascii_lowercase();
+        l.strip_prefix("location:").is_some_and(|v| v.trim_start().starts_with("http:"))
+    })
+}
+
 /// Download `url` to `dest` (through `dest.part`, renamed when complete).
 /// `max`: the most it may be. `json`: GitHub's API (its headers).
 pub fn fetch(src: &Source, url: &str, dest: &Path, max: u64, json: bool, stop: &AtomicBool, progress: &mut dyn FnMut(u64)) -> Result<(), String> {
@@ -855,7 +908,9 @@ pub fn fetch(src: &Source, url: &str, dest: &Path, max: u64, json: bool, stop: &
         }
         Tool::Wget(p) => {
             let mut c = command(p);
-            c.args(["--no-config", "-q", "--max-redirect=8", "--timeout=20", "--tries=3"]);
+            // -S: the server's headers on stderr, to check every redirect
+            // (wget has no --proto-redir; its --https-only is for recursion)
+            c.args(["--no-config", "-q", "-S", "--max-redirect=8", "--timeout=20", "--tries=3"]);
             c.arg(format!("--user-agent={agent}"));
             if json {
                 c.args(["--header=Accept: application/vnd.github+json", "--header=X-GitHub-Api-Version: 2022-11-28"]);
@@ -892,10 +947,15 @@ pub fn fetch(src: &Source, url: &str, dest: &Path, max: u64, json: bool, stop: &
             }
         }
         (Tool::Curl(_), Some(c)) => return fail(curl_error(c, &err)),
-        (Tool::Wget(_), Some(0)) => {}
+        (Tool::Wget(_), Some(0)) => {
+            if src.https && redirected_to_http(&err) {
+                return fail("a redirect left HTTPS, so the download is not used".into());
+            }
+        }
         (Tool::Wget(_), Some(8)) => return fail("the server answered with an error".into()),
         (Tool::Wget(_), Some(c)) => {
-            let d = first_line(&err);
+            // wget's own message, not the server's headers (-S, indented)
+            let d = err.lines().filter(|l| !l.starts_with("  ")).map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
             return fail(if d.is_empty() { format!("wget failed (exit {c})") } else { format!("wget failed (exit {c}): {}", cut(d, 200)) });
         }
         (_, None) => return fail("the download was stopped".into()),
@@ -912,8 +972,9 @@ pub fn fetch(src: &Source, url: &str, dest: &Path, max: u64, json: bool, stop: &
 // This installation
 // ---------------------------------------------------------------------------
 
-/// Where downloads are kept until they are installed.
-pub fn cache_dir() -> Option<PathBuf> {
+/// Where downloads are kept until they are installed (`sub`: the GUI's or
+/// the command line's own folder).
+pub fn cache_dir(sub: &str) -> Option<PathBuf> {
     #[cfg(unix)]
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
@@ -921,11 +982,11 @@ pub fn cache_dir() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("HOME").filter(|h| !h.is_empty()).map(|h| PathBuf::from(h).join(".cache")));
     #[cfg(windows)]
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).filter(|p| p.is_absolute());
-    base.map(|b| b.join("bananasplit").join("update"))
+    base.map(|b| b.join("bananasplit").join(sub))
 }
 
-fn make_cache() -> Result<PathBuf, String> {
-    let d = cache_dir().ok_or("no folder for downloads (no home folder)")?;
+fn make_cache(sub: &str) -> Result<PathBuf, String> {
+    let d = cache_dir(sub).ok_or("no folder for downloads (no home folder)")?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -1054,8 +1115,8 @@ pub fn method() -> Method {
 // ---------------------------------------------------------------------------
 
 /// The newest release for this computer, if any.
-pub fn find(src: &Source, pkg: Package, stop: &AtomicBool) -> Result<Option<Offer>, String> {
-    let dir = make_cache()?;
+pub fn find(src: &Source, cache: &str, pkg: Package, stop: &AtomicBool) -> Result<Option<Offer>, String> {
+    let dir = make_cache(cache)?;
     let file = dir.join("releases.json");
     fetch(src, &src.api, &file, MAX_LIST, true, stop, &mut |_| {})?;
     let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()));
@@ -1088,8 +1149,8 @@ pub fn verify(file: &Path, offer: &Offer, sums: Option<&str>) -> Result<[u8; 32]
 }
 
 /// Download the release file and check it. Returns its path and SHA-256.
-pub fn download(src: &Source, offer: &Offer, stop: &AtomicBool, progress: &mut dyn FnMut(u64)) -> Result<(PathBuf, [u8; 32]), String> {
-    let dir = make_cache()?;
+pub fn download(src: &Source, cache: &str, offer: &Offer, stop: &AtomicBool, progress: &mut dyn FnMut(u64)) -> Result<(PathBuf, [u8; 32]), String> {
+    let dir = make_cache(cache)?;
     clean_cache(&dir);
     let sums = match &offer.sums {
         Some(s) => {
@@ -1217,31 +1278,22 @@ fn staging_name(target: &Path) -> PathBuf {
     }
 }
 
-/// Set while program files are being renamed: quitting waits for it, so
-/// the program is never left without its file (Windows renames twice).
-static RENAMING: AtomicBool = AtomicBool::new(false);
-
-struct Renaming;
-impl Renaming {
-    fn start() -> Renaming {
-        RENAMING.store(true, SeqCst);
-        Renaming
-    }
-}
-impl Drop for Renaming {
-    fn drop(&mut self) {
-        RENAMING.store(false, SeqCst);
-    }
-}
+/// Held while program files are renamed. Quitting sets the updater's
+/// `stop` and then takes this lock: renaming that has begun ends first, and
+/// renaming that has not begun sees `stop` and changes nothing. So the
+/// program is never left without its file (Windows renames twice), however
+/// long the check of the new program took.
+static RENAMING: Mutex<()> = Mutex::new(());
 
 /// Put `new` (a checked BananaSplit `version`) in the place of each target.
 /// The first target is the running program; nothing is changed unless the
 /// new program runs here. A later target (the app menu's copy) that cannot
 /// be replaced is a warning: the running program is new by then.
-pub fn replace(new: &Path, targets: &[PathBuf], version: &str) -> Result<Vec<String>, String> {
+/// `stop`: BananaSplit is quitting (nothing more is renamed).
+pub fn replace(new: &Path, targets: &[PathBuf], version: &str, stop: &AtomicBool) -> Result<Vec<String>, String> {
     let mut warnings = Vec::new();
     for (k, target) in targets.iter().enumerate() {
-        let result = replace_one(new, target, version, k == 0);
+        let result = replace_one(new, target, version, k == 0, stop);
         match result {
             Ok(()) => {}
             Err(e) if k == 0 => return Err(e),
@@ -1251,7 +1303,7 @@ pub fn replace(new: &Path, targets: &[PathBuf], version: &str) -> Result<Vec<Str
     Ok(warnings)
 }
 
-fn replace_one(new: &Path, target: &Path, version: &str, first: bool) -> Result<(), String> {
+fn replace_one(new: &Path, target: &Path, version: &str, first: bool, stop: &AtomicBool) -> Result<(), String> {
     {
         let k = usize::from(!first);
         let stage = staging_name(target);
@@ -1279,7 +1331,11 @@ fn replace_one(new: &Path, target: &Path, version: &str, first: bool) -> Result<
             let _ = std::fs::remove_file(&stage);
             return Err(e);
         }
-        let _renaming = Renaming::start();
+        let _renaming = lock(&RENAMING);
+        if stop.load(SeqCst) {
+            let _ = std::fs::remove_file(&stage);
+            return Err("BananaSplit is quitting: nothing was changed".into());
+        }
         #[cfg(unix)]
         if let Err(e) = retry(|| std::fs::rename(&stage, target)) {
             let _ = std::fs::remove_file(&stage);
@@ -1407,7 +1463,7 @@ pub fn install(method: &Method, offer: &Offer, file: &Path, stop: &AtomicBool, i
             let program = unpack(file, &offer.version)?;
             #[cfg(windows)]
             let program = file.to_path_buf();
-            let r = replace(&program, targets, &offer.version);
+            let r = replace(&program, targets, &offer.version, stop);
             #[cfg(unix)]
             if let Some(d) = program.parent().and_then(Path::parent) {
                 let _ = std::fs::remove_dir_all(d); // the unpacked folder
@@ -1639,11 +1695,9 @@ impl Updater {
         // Not for long: a password dialog may be open (its apt-get goes on).
         let g = self.cv.wait_timeout_while(g, Duration::from_secs(3), |i| !i.done);
         drop(g);
-        // But never in the middle of renaming the program's files.
-        let t0 = Instant::now();
-        while RENAMING.load(SeqCst) && t0.elapsed() < Duration::from_secs(30) {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        // But never in the middle of renaming the program's files: `stop` is
+        // set, so once renaming that has begun is over, none begins.
+        drop(lock(&RENAMING));
     }
 
     fn work(&self) {
@@ -1689,7 +1743,7 @@ impl Updater {
             s.message = "checking for updates…".into();
             s.method = method.clone();
         });
-        let found = find(&self.src, pkg, &self.stop);
+        let found = find(&self.src, GUI_CACHE, pkg, &self.stop);
         let mut install = false;
         {
             let mut g = lock(&self.inner);
@@ -1725,9 +1779,15 @@ impl Updater {
                     };
                     s.phase = if keep { Phase::Prepared } else { Phase::Available };
                     let gave_up = inner.auto_fails.0 == o.version && inner.auto_fails.1 >= 2;
+                    let young = settling(&o, now_utc());
                     if auto && !gave_up {
                         if matches!(method, Method::Manual(_)) || keep {
                             inner.event = Some(format!("BananaSplit {} is available: Menu ▸ Updates", o.version));
+                        } else if let Some(wait) = young {
+                            // installed by itself once it has been out for SETTLE
+                            s.message.push_str(" It installs itself once it has been out for two days; Install does it now.");
+                            inner.event = Some(format!("BananaSplit {} is available: Menu ▸ Updates", o.version));
+                            inner.next_auto = Some(Instant::now() + (wait + Duration::from_secs(60)).min(RECHECK));
                         } else {
                             install = true;
                         }
@@ -1795,7 +1855,7 @@ impl Updater {
                     s.prepared_hash = None;
                 });
                 let mut progress = |n: u64| lock(&self.inner).st.got = n.min(offer.asset.size);
-                match download(&self.src, &offer, &self.stop, &mut progress) {
+                match download(&self.src, GUI_CACHE, &offer, &self.stop, &mut progress) {
                     Ok(f) => f,
                     Err(e) => return fail(e),
                 }
@@ -2013,7 +2073,7 @@ pub fn cli(running: bool) -> Result<(), String> {
     let never = AtomicBool::new(false);
     let method = method();
     println!("bananasplit: this is BananaSplit {VERSION}; checking {} …", if src.https { "GitHub" } else { src.api.as_str() });
-    let Some(offer) = find(&src, method.package(), &never)?.filter(|o| newer(&o.version, VERSION)) else {
+    let Some(offer) = find(&src, CLI_CACHE, method.package(), &never)?.filter(|o| newer(&o.version, VERSION)) else {
         println!("bananasplit: BananaSplit {VERSION} is the newest version");
         return Ok(());
     };
@@ -2028,7 +2088,7 @@ pub fn cli(running: bool) -> Result<(), String> {
         return Err("a package is installed only from GitHub, not from a test server".into());
     }
     println!("bananasplit: downloading {} ({:.1} MB) …", offer.asset.name, offer.asset.size as f64 / 1e6);
-    let (file, _) = download(&src, &offer, &never, &mut |_| {})?;
+    let (file, _) = download(&src, CLI_CACHE, &offer, &never, &mut |_| {})?;
     println!("bananasplit: the download matches the release's checksums");
     #[cfg(unix)]
     if method == Method::Deb && !crate::sys::stdin_is_tty() {
@@ -2244,6 +2304,71 @@ mod tests {
             assert!(!clean_url(&format!("{p}{bad}"), p), "{bad}");
         }
         assert!(!clean_url("https://github.com/LudaLunizz/BananaSplit/", p));
+        // a character of several bytes where the prefix ends: refused, not a panic
+        let multi = format!("{}é/x.deb", &p[..p.len() - 1]);
+        assert!(!clean_url(&multi, p));
+        assert!(!clean_url("é", p));
+        let mut j = format!(r#"[{{"tag_name":"v9","draft":false,"prerelease":false,"html_url":"{multi}","body":"","assets":[]}}]"#);
+        assert_eq!(pick(&Json::parse(&j).unwrap(), Package::Deb, &Source::github()).unwrap(), None);
+        j = j.replace(r#""assets":[]"#, &format!(r#""assets":[{{"name":"x.deb","size":5,"browser_download_url":"{multi}"}}]"#));
+        assert_eq!(pick(&Json::parse(&j).unwrap(), Package::Deb, &Source::github()).unwrap(), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_gui_and_the_command_line_download_to_folders_of_their_own() {
+        let (g, c) = (cache_dir(GUI_CACHE).unwrap(), cache_dir(CLI_CACHE).unwrap());
+        assert_ne!(g, c);
+        assert_eq!(g.parent(), c.parent());
+        // cleaning one leaves the other's download alone
+        let d = temp("caches");
+        let (gd, cd) = (d.join(GUI_CACHE), d.join(CLI_CACHE));
+        std::fs::create_dir_all(&gd).unwrap();
+        std::fs::create_dir_all(&cd).unwrap();
+        std::fs::write(gd.join("bananasplit_9.9.9_amd64.deb"), b"prepared").unwrap();
+        std::fs::write(cd.join("bananasplit-9.9.9-linux-x86_64.tar.gz.part"), b"half").unwrap();
+        clean_cache(&cd);
+        assert!(gd.join("bananasplit_9.9.9_amd64.deb").is_file());
+        assert_eq!(std::fs::read_dir(&cd).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_wget_redirect_to_plain_http_is_seen() {
+        let hop = |loc: &str| format!("  HTTP/1.1 302 Found\n  Server: GitHub.com\n  {loc}\n  HTTP/1.1 200 OK\n  Content-Length: 2\n");
+        assert!(redirected_to_http(&hop("Location: http://objects.githubusercontent.com/x")));
+        assert!(redirected_to_http(&hop("location:HTTP://evil.example/x")));
+        assert!(!redirected_to_http(&hop("Location: https://objects.githubusercontent.com/x")));
+        assert!(!redirected_to_http(&hop("location: /relative/x")), "same scheme");
+        assert!(!redirected_to_http(&hop("location: //host/x")), "same scheme");
+        assert!(!redirected_to_http("  HTTP/1.1 200 OK\n  X-Note: Location: http://x\n"), "only the Location header");
+        assert!(!redirected_to_http(""));
+    }
+
+    #[test]
+    fn githubs_times_are_read() {
+        assert_eq!(parse_utc("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_utc("2026-10-25T16:20:25Z"), Some(1_792_945_225));
+        assert_eq!(parse_utc("2000-02-29T12:00:00Z"), Some(951_825_600), "a leap day");
+        assert_eq!(parse_utc("2024-12-31T23:59:59Z"), Some(1_735_689_599));
+        for bad in ["", "2026-10-25", "2026-10-25T16:20:25", "2026-10-25 16:20:25Z", "2026-13-01T00:00:00Z", "1969-12-31T23:59:59Z",
+                    "2026-10-25T24:00:00Z", "2026-1a-25T16:20:25Z", "+026-10-25T16:20:25Z", "2026-10-25T16:20:25+01:00"] {
+            assert_eq!(parse_utc(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn automatic_updates_leave_a_new_release_alone_for_two_days() {
+        let j = Json::parse(include_str!("../tests/update/github-releases.json")).unwrap();
+        let mut o = pick(&j, Package::Tarball, &Source::github()).unwrap().unwrap();
+        let at = o.published.expect("GitHub's list has published_at");
+        assert_eq!(settling(&o, Some(at)), Some(SETTLE), "just published");
+        assert_eq!(settling(&o, Some(at + 3600)), Some(SETTLE - Duration::from_secs(3600)));
+        assert_eq!(settling(&o, Some(at + SETTLE.as_secs())), None, "out for two days");
+        assert_eq!(settling(&o, Some(at + 10 * SETTLE.as_secs())), None);
+        assert_eq!(settling(&o, None), None, "no clock: as before");
+        o.published = None;
+        assert_eq!(settling(&o, Some(at)), None, "no date from GitHub: as before");
     }
 
     #[test]
@@ -2281,6 +2406,7 @@ mod tests {
             notes: String::new(),
             asset: Asset { name: "bananasplit_9.9.9_amd64.deb".into(), size, url: String::new(), digest },
             sums: None,
+            published: None,
         }
     }
 
@@ -2431,17 +2557,17 @@ mod tests {
         let new = d.join("new");
         script(&new, "#!/bin/sh\necho 'BananaSplit 9.9.9'\n");
         // the wrong version: nothing changes, nothing is left behind
-        let e = replace(&new, &[t1.clone(), t2.clone()], "9.9.8").unwrap_err();
+        let e = replace(&new, &[t1.clone(), t2.clone()], "9.9.8", &AtomicBool::new(false)).unwrap_err();
         assert!(e.contains("says it is BananaSplit 9.9.9, not 9.9.8"), "{e}");
         assert_eq!(std::fs::read(&t1).unwrap(), b"old one");
         assert_eq!(std::fs::read_dir(&a).unwrap().count(), 1, "the staged file is removed");
         // one that does not run
         let broken = d.join("broken");
         script(&broken, "#!/bin/sh\nexit 3\n");
-        assert!(replace(&broken, std::slice::from_ref(&t1), "9.9.9").unwrap_err().contains("does not run on this computer"));
+        assert!(replace(&broken, std::slice::from_ref(&t1), "9.9.9", &AtomicBool::new(false)).unwrap_err().contains("does not run on this computer"));
         assert_eq!(std::fs::read(&t1).unwrap(), b"old one");
         // the right one: both copies, executable
-        replace(&new, &[t1.clone(), t2.clone()], "9.9.9").unwrap();
+        replace(&new, &[t1.clone(), t2.clone()], "9.9.9", &AtomicBool::new(false)).unwrap();
         for t in [&t1, &t2] {
             assert_eq!(std::fs::read(t).unwrap(), std::fs::read(&new).unwrap());
             assert_eq!(std::fs::metadata(t).unwrap().permissions().mode() & 0o777, 0o755);
@@ -2467,12 +2593,18 @@ mod tests {
         script(&new, "#!/bin/sh\necho 'BananaSplit 9.9.9'\n");
         // a second "copy" whose folder is gone: it cannot be written
         let gone = d.join("gone").join("bananasplit");
-        let w = replace(&new, &[t1.clone(), gone.clone()], "9.9.9").unwrap();
+        let w = replace(&new, &[t1.clone(), gone.clone()], "9.9.9", &AtomicBool::new(false)).unwrap();
         assert_eq!(std::fs::read(&t1).unwrap(), std::fs::read(&new).unwrap(), "the running program is new");
         assert_eq!(w.len(), 1, "{w:?}");
         assert!(w[0].contains("was not updated"), "{w:?}");
         // the first one failing is an error
-        assert!(replace(&new, &[gone, t2.clone()], "9.9.9").is_err());
+        assert!(replace(&new, &[gone, t2.clone()], "9.9.9", &AtomicBool::new(false)).is_err());
+        assert_eq!(std::fs::read(&t2).unwrap(), b"old");
+        // quitting: nothing is renamed any more, and nothing is left behind
+        let e = replace(&new, std::slice::from_ref(&t2), "9.9.9", &AtomicBool::new(true)).unwrap_err();
+        assert!(e.contains("quitting"), "{e}");
+        assert_eq!(std::fs::read(&t2).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(&b).unwrap().count(), 1, "the staged file is removed");
         assert_eq!(std::fs::read(&t2).unwrap(), b"old");
         let _ = std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o755));
         let _ = std::fs::remove_dir_all(&d);
