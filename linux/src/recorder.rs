@@ -24,8 +24,9 @@
 //! the ring is ever full (disk stalled for seconds) the block is dropped and
 //! its length is carried in the next header's `gap`; the writer fills the
 //! gap with silence, so a take never loses sync with the timeline or between
-//! tracks. Files larger than 4 GiB are not valid WAV, so long takes continue
-//! in `_part2.wav`, `_part3.wav`, ... at the same frame for every track.
+//! tracks. Long takes continue in `_part2.wav`, `_part3.wav`, ... at the same
+//! frame for every track: every hour by default (`split`, in minutes; 0 =
+//! never), and always before 4 GiB, as larger files are not valid WAV.
 //!
 //! Every file's header carries the sample rate the audio server really ran
 //! at while it was recorded (the rate in each block, which the engine takes
@@ -53,6 +54,10 @@ pub const DEFAULT_RING_WORDS: usize = 1 << 22;
 /// Largest `data` chunk per file. RIFF sizes are 32-bit; stay clear of 4 GiB.
 pub const MAX_WAV_DATA_BYTES: u64 = 0xFFF0_0000;
 pub const DEFAULT_FOLDER: &str = "~/Music/BananaSplit";
+/// A take continues in a new file after this many minutes.
+pub const DEFAULT_SPLIT_MINUTES: u32 = 60;
+/// Longest `split` accepted (one day).
+pub const MAX_SPLIT_MINUTES: u32 = 24 * 60;
 
 const HDR: usize = 5;
 /// Words before the samples of every block in the ring (see the module docs).
@@ -160,11 +165,26 @@ pub struct Settings {
     pub folder: String,
     pub format: Format,
     pub mode: Mode,
+    /// Minutes per file; a longer take continues in `_part2.wav`, ...
+    /// (0 = only before 4 GiB).
+    pub split_minutes: u32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { folder: DEFAULT_FOLDER.into(), format: Format::Wav24, mode: Mode::Mix }
+        Settings { folder: DEFAULT_FOLDER.into(), format: Format::Wav24, mode: Mode::Mix, split_minutes: DEFAULT_SPLIT_MINUTES }
+    }
+}
+
+/// Parse `split` (minutes per file, `0` or `off` = no time limit).
+pub fn parse_split(v: &str) -> Result<u32, String> {
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("off") {
+        return Ok(0);
+    }
+    match v.parse::<u32>() {
+        Ok(m) if m <= MAX_SPLIT_MINUTES => Ok(m),
+        _ => Err(format!("recorder split must be 0-{MAX_SPLIT_MINUTES} minutes or off, not {v:?}")),
     }
 }
 
@@ -658,6 +678,8 @@ pub struct Take {
     part: u32,
     part_frames: u64,
     max_part_frames: u64,
+    /// A new part starts after this many seconds (0 = only before 4 GiB).
+    split_secs: u64,
     frames: u64,
     /// Frames written at the current sample rate (since the take started,
     /// or since the server changed its rate).
@@ -721,6 +743,7 @@ impl Take {
             part: 0,
             part_frames: 0,
             max_part_frames: (max_data_bytes.min(MAX_WAV_DATA_BYTES) / align).max(1),
+            split_secs: 0,
             frames: 0,
             rate_frames: 0,
             prior_secs: 0.0,
@@ -755,6 +778,17 @@ impl Take {
         self.sample_rate
     }
 
+    /// Continue in a new part every `secs` seconds (0 = only before 4 GiB).
+    pub fn set_split_secs(&mut self, secs: u64) {
+        self.split_secs = secs;
+        let align = 2 * self.format.bytes_per_sample() as u64;
+        let mut max = (self.max_data_bytes.min(MAX_WAV_DATA_BYTES) / align).max(1);
+        if secs > 0 {
+            max = max.min(secs.saturating_mul(self.sample_rate.max(1) as u64));
+        }
+        self.max_part_frames = max;
+    }
+
     /// The server now runs at `rate`. Before anything was written, the files
     /// simply take the new rate; after, the take continues in new files
     /// (`<stamp>-2_<label>.wav`, ...), so each file plays at its own speed.
@@ -764,6 +798,7 @@ impl Take {
         }
         if self.frames == 0 {
             self.sample_rate = rate;
+            self.set_split_secs(self.split_secs);
             for t in &mut self.tracks {
                 t.sample_rate = rate;
                 t.refresh()?;
@@ -777,6 +812,7 @@ impl Take {
             .map_err(io::Error::other)?;
         next.session = self.session;
         next.word = self.word;
+        next.set_split_secs(self.split_secs);
         next.frames = self.frames;
         next.prior_secs = before;
         next.clipped = self.clipped;
@@ -901,8 +937,8 @@ pub struct Status {
     /// Mode of the current (or last) take.
     pub mode: Mode,
     /// Files of the current (or last) take, in the order they were made:
-    /// one per track, and again when the take continues in new files (at
-    /// 4 GB, or when the server changes its sample rate).
+    /// one per track, and again when the take continues in new files (every
+    /// `split` minutes, at 4 GB, or when the server changes its sample rate).
     pub files: Vec<PathBuf>,
     /// Tracks of the current (or last) take (files at a time).
     pub tracks: usize,
@@ -1016,6 +1052,9 @@ impl Recorder {
     /// Change settings; they apply to the next take.
     pub fn set_settings(&self, s: Settings) -> Result<(), String> {
         validate_folder(&s.folder)?;
+        if s.split_minutes > MAX_SPLIT_MINUTES {
+            return Err(format!("recorder split must be 0-{MAX_SPLIT_MINUTES} minutes"));
+        }
         lock(&self.inner).settings = s;
         Ok(())
     }
@@ -1057,6 +1096,7 @@ impl Recorder {
             stamp.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
         let rate = self.sample_rate();
         let mut take = Take::create(&expand_home(&s.folder), &stamp, &labels, s.format, rate, self.max_data_bytes)?;
+        take.set_split_secs(u64::from(s.split_minutes) * 60);
         inner.session = inner.session.wrapping_add(1);
         let session = inner.session;
         let multi = s.mode == Mode::Multi;
@@ -1776,7 +1816,7 @@ mod tests {
         let rec = Recorder::new(
             tap.clone(),
             48000,
-            Settings { folder: dir.display().to_string(), format: Format::Wav32f, mode: Mode::Multi },
+            Settings { folder: dir.display().to_string(), format: Format::Wav32f, mode: Mode::Multi, split_minutes: 0 },
         );
         let files = rec.start(sh.rec_links.load(Relaxed), &names, "T").unwrap();
         assert_eq!(files.len(), 2);
@@ -1832,13 +1872,42 @@ mod tests {
     }
 
     #[test]
+    fn take_continues_in_a_new_file_every_split() {
+        let dir = tmpdir("hourly");
+        let labels = vec!["1-Mic".to_string(), "2-Discord".to_string()];
+        let mut t = Take::create(&dir, "H", &labels, Format::Wav16, 1000, MAX_WAV_DATA_BYTES).unwrap();
+        t.set_split_secs(2); // 2000 frames per part at 1 kHz
+        t.emit(1500, |_, _| (0.25, -0.25)).unwrap();
+        t.emit(3000, |tr, _| (0.5 * tr as f32, 0.0)).unwrap();
+        // The server changes its rate: still 2 s per part (4000 frames at 2 kHz).
+        t.change_rate(2000).unwrap();
+        t.emit(5000, |_, _| (0.0, 0.0)).unwrap();
+        assert_eq!(t.frames(), 9500);
+        let files = t.files().to_vec();
+        t.finish().unwrap();
+        let names: Vec<String> = files.iter().map(|p| p.file_name().unwrap().to_string_lossy().into()).collect();
+        assert_eq!(
+            names,
+            [
+                "H_1-Mic.wav", "H_2-Discord.wav", "H_1-Mic_part2.wav", "H_2-Discord_part2.wav",
+                "H_1-Mic_part3.wav", "H_2-Discord_part3.wav", "H-2_1-Mic.wav", "H-2_2-Discord.wav",
+                "H-2_1-Mic_part2.wav", "H-2_2-Discord_part2.wav",
+            ]
+        );
+        let len = |i: usize| read_wav(&files[i]).4.len() / 2;
+        assert_eq!([len(0), len(1), len(2), len(3), len(4), len(5)], [2000, 2000, 2000, 2000, 500, 500]);
+        assert_eq!([len(6), len(7), len(8), len(9)], [4000, 4000, 1000, 1000]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn writer_error_stops_the_take_and_reports_it() {
         let dir = tmpdir("err");
         let tap = RecTap::new();
         let rec = Recorder::with_max_data_bytes(
             tap.clone(),
             48000,
-            Settings { folder: dir.display().to_string(), format: Format::Wav16, mode: Mode::Mix },
+            Settings { folder: dir.display().to_string(), format: Format::Wav16, mode: Mode::Mix, split_minutes: 0 },
             4 * 50, // 50 frames per part
         );
         let names: Vec<String> = (0..NUM_SOURCES).map(|i| i.to_string()).collect();

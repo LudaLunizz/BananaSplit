@@ -1506,9 +1506,14 @@ document.querySelectorAll("[data-theme-v]").forEach((b) => b.addEventListener("c
 }));
 // A name too long for its strip gets a smaller font (down to 9px) before it
 // is cut with an ellipsis. (Measured unrounded: scrollWidth rounds.)
+// Measuring lays the page out again, several times per name: a name is only
+// fitted again when its text or its strip's width changed (or `force`).
 const NAME_PX = 12.5, NAME_MIN_PX = 9;
-function fitName(u) {
+function fitName(u, force) {
   const e = u.name;
+  const key = e.textContent + "|" + e.offsetWidth;
+  if (!force && u.nameFit === key) return;
+  u.nameFit = key;
   e.style.fontSize = "";
   const room = e.getBoundingClientRect().width;
   const full = () => {
@@ -1546,7 +1551,7 @@ function layout() {
   document.body.style.width = scroll ? Math.ceil(w * z) + "px" : "";
   document.body.style.height = scroll ? Math.ceil(h * z) + "px" : "";
   setText($("zoomval"), Math.round(userZoom * 100) + "%");
-  ui.forEach(fitName);
+  ui.forEach((u) => fitName(u));
   drawWave();
   if (eqCh >= 0) drawEq();
   if (menuCh >= 0) placeChanMenu();
@@ -1560,7 +1565,13 @@ function setZoom(z) {
 $("zoomin").addEventListener("click", (e) => { e.stopPropagation(); setZoom(userZoom + 0.1); });
 $("zoomout").addEventListener("click", (e) => { e.stopPropagation(); setZoom(userZoom - 0.1); });
 $("zoomval").addEventListener("click", (e) => { e.stopPropagation(); setZoom(1); });
-window.addEventListener("resize", layout);
+// A window being resized sends many resize events per frame: lay out once a frame.
+let layoutQueued = false;
+window.addEventListener("resize", () => {
+  if (layoutQueued) return;
+  layoutQueued = true;
+  requestAnimationFrame(() => { layoutQueued = false; layout(); });
+});
 
 $("m-autostart").addEventListener("click", () => {
   const on = $("m-autostart").getAttribute("aria-checked") !== "true";
@@ -2433,7 +2444,7 @@ $("busesB").append(...[9, 10].map(buildStrip));
 select(0);
 applyTheme(document.documentElement.dataset.theme || "auto");
 layout();
-if (document.fonts) document.fonts.ready.then(() => ui.forEach(fitName));
+if (document.fonts) document.fonts.ready.then(() => ui.forEach((u) => fitName(u, true)));
 lastMsg = performance.now();
 connect();
 </script>

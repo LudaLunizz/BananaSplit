@@ -218,8 +218,9 @@ struct GuiOpts {
     port: u16,
     explicit_port: bool,
     no_open: bool,
-    /// The first start on this computer, without VB-Audio cables: offer them.
-    cable_prompt: bool,
+    /// The first start on this computer, without VB-Audio cables: the page
+    /// opens its "Virtual cables" window.
+    cable_welcome: bool,
 }
 
 /// The mixer's desktop window: a `bananasplit --window` process of its own
@@ -312,6 +313,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     hub.set_look(cfg.gui.theme, cfg.gui.zoom);
     hub.autostart.store(desktop::autostart_enabled(), SeqCst);
     hub.installed.store(desktop::menu_installed(), SeqCst);
+    hub.cable_welcome.store(opts.cable_welcome, SeqCst);
     hub.set_client(&cfg.client_name);
     // Checks only when asked, unless automatic updates are on.
     let updater = update::Updater::start();
@@ -327,10 +329,6 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     eprintln!("bananasplit: GUI at {url}  (quit with the power button, or Ctrl-C)");
     for n in &notes {
         eprintln!("bananasplit: {n}");
-    }
-    if opts.cable_prompt {
-        // Not on this thread: the mixer starts meanwhile.
-        std::thread::spawn(desktop::cable_prompt);
     }
     let mut window = Window { proc: None, url: url.clone(), recording: false };
     // Started after the first frame is published (it takes a moment). In the
@@ -751,7 +749,7 @@ fn main() -> ExitCode {
                 port: args.port,
                 explicit_port: args.explicit_port,
                 no_open: args.no_open,
-                cable_prompt: first_start && no_cables && !args.no_open,
+                cable_welcome: first_start && no_cables && !args.no_open,
             },
         )
     };
