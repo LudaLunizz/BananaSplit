@@ -13,10 +13,20 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.1
+
+Fixes to the updater from a review of 2.8.0. Nothing to change on your side.
+
+* **Automatic updates wait two days.** With **Install updates automatically** on, a new release is installed by itself once it has been out for two days, so a broken release can be withdrawn before it reaches you. **Check now** and **Install** still take it at once.
+* **Quitting during an update on Windows** could leave BananaSplit without its `bananasplit.exe` when checking the new version took long (a virus scanner). Quitting now waits for the update to finish or stops it before it changes anything.
+* **`bananasplit --update` and the app download to folders of their own**, so running `--update` while the app is downloading no longer deletes the app's download.
+* **Downloads through wget refuse a redirect to plain HTTP**, as downloads through curl already did.
+* **A release link with an unusual character** no longer stops the check with an internal error.
+
 ## What's new in 2.8.0
 
 * **BananaSplit can update itself.** **Menu ▸ Check for updates…** opens the Updates window: **Check now** looks for a new version on BananaSplit's GitHub releases, shows what is new in it, and **Install** downloads it, checks it and puts it in the place of the running program. The mixer keeps running on the old version; **Restart now** (or your next start) runs the new one, with your settings. See [Updates](#updates).
-* **Automatic updates are off by default.** Switched off, BananaSplit never contacts anything by itself: it looks for a new version only when you click Check now. Switch **Install updates automatically** on in the Updates window and it checks a minute after it starts and once a day, installs a new version by itself once it has been out for two days (Install in the Updates window takes it at once) and tells you when a restart finishes the update. It never restarts on its own, so your audio is never cut.
+* **Automatic updates are off by default.** Switched off, BananaSplit never contacts anything by itself: it looks for a new version only when you click Check now. Switch **Install updates automatically** on in the Updates window and it checks a minute after it starts and once a day, installs a new version by itself and tells you when a restart finishes the update. It never restarts on its own, so your audio is never cut.
 * `bananasplit --update` does the same from a terminal.
 
 Nothing to change on your side: configs, scenes and recordings load as they are, and 2.7.3 can still read a config saved by 2.8.0 while automatic updates are off.
@@ -251,7 +261,7 @@ Every strip and every bus has a menu: the button under its name. It lists what t
 **Menu ▸ Check for updates…** opens the Updates window. It shows this version, what the last check found and, for a new version, its release notes.
 
 * **Check now** asks GitHub for BananaSplit's releases and picks the newest one that is published and not marked pre-release, with the file for your installation: the portable package (`bananasplit-<version>-linux-x86_64.tar.gz`) or, if BananaSplit came from its .deb, the new .deb.
-* **Install** downloads it to `~/.cache/bananasplit/update/` and checks it before anything is changed: it must come from BananaSplit's own release downloads over HTTPS, have the size GitHub lists, and match both GitHub's SHA-256 of the file and the release's `SHA256SUMS.txt` (a release without a checksum is refused). The new program must also run on this computer and say it is that version.
+* **Install** downloads it to `~/.cache/bananasplit/update/` (`bananasplit --update`: `update-cli/`) and checks it before anything is changed: it must come from BananaSplit's own release downloads over HTTPS, have the size GitHub lists, and match both GitHub's SHA-256 of the file and the release's `SHA256SUMS.txt` (a release without a checksum is refused). The new program must also run on this computer and say it is that version.
   * **Portable package, or a copy in a folder of yours:** the new `bananasplit` is written next to the old one and renamed over it (in one step, so there is never half a program). The copy in `~/.local/bin` that your app menu starts is updated too. The mixer that runs keeps using the old program until it ends.
   * **The .deb:** BananaSplit runs `pkexec apt-get install` with the downloaded package, so your desktop asks for your password.
   * **Anything else** (another package manager, an AppImage, a folder BananaSplit cannot write to): the window says so, and **Release page** opens the release in your browser so you can install it yourself.

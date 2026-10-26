@@ -58,7 +58,7 @@ Extract the release zip, put `bananasplit.exe` in a folder of your own (your Des
 | Recordings | `~/Music/BananaSplit/` by default, configurable in the app or config |
 | Port file | `%LOCALAPPDATA%\bananasplit\<client>.port` |
 | Window (WebView2) data | `%LOCALAPPDATA%\bananasplit\WebView2\` |
-| Downloaded updates (until installed) | `%LOCALAPPDATA%\bananasplit\update\` |
+| Downloaded updates (until installed) | `%LOCALAPPDATA%\bananasplit\update\` (`--update`: `update-cli\`) |
 
 ## System integration
 
