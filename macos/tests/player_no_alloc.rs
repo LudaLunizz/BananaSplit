@@ -1,0 +1,104 @@
+//! Same guarantee as `realtime_no_alloc.rs` for what 2.6 added to the audio
+//! path: the input gain and pan of every strip and bus moving all the time,
+//! and the player feeding the buses (starting, pausing, running dry,
+//! flushing for a seek, ending, and changing buses). A counting global
+//! allocator asserts that the audio path never touches the heap.
+//!
+//! (Separate test binary. Only the test's own thread is counted: the test
+//! harness's main thread may allocate while it waits.)
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+use bananasplit::engine::{Engine, NUM_BUSES, NUM_STRIPS, Shared};
+use bananasplit::player::PlayTap;
+
+struct Counting;
+static EVENTS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static ARMED: Cell<bool> = const { Cell::new(false) };
+}
+fn armed() -> bool {
+    ARMED.try_with(Cell::get).unwrap_or(false)
+}
+
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+        if armed() {
+            EVENTS.fetch_add(1, SeqCst);
+        }
+        unsafe { System.alloc(l) }
+    }
+    unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+        if armed() {
+            EVENTS.fetch_add(1, SeqCst);
+        }
+        unsafe { System.dealloc(p, l) }
+    }
+    unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
+        if armed() {
+            EVENTS.fetch_add(1, SeqCst);
+        }
+        unsafe { System.realloc(p, l, n) }
+    }
+}
+
+#[global_allocator]
+static A: Counting = Counting;
+
+#[test]
+fn gain_pan_and_player_never_allocate() {
+    let sh = Shared::new();
+    let tap = PlayTap::new();
+    let mut eng = Engine::new(sh.clone());
+    eng.set_sample_rate(48_000);
+    eng.attach_player(tap.clone());
+    for s in 0..NUM_STRIPS {
+        sh.strips[s].routes.store(0b11111, SeqCst);
+    }
+    let input = vec![0.25f32; 4096];
+    let take: Vec<f32> = (0..2 * 3000).map(|i| ((i % 89) as f32 / 89.0) - 0.5).collect();
+    let mut outs_store = vec![vec![0.0f32; 4096]; NUM_BUSES * 2];
+    let mut heard = 0usize;
+
+    ARMED.set(true);
+    for cycle in 0..6000usize {
+        let n = [64usize, 128, 256, 4096, 1, 512][cycle % 6];
+        let s = cycle % NUM_STRIPS;
+        let b = cycle % NUM_BUSES;
+        sh.strips[s].trim_db.store(((cycle % 49) as f32) - 24.0);
+        sh.strips[s].pan.store(((cycle % 21) as f32 - 10.0) / 10.0);
+        sh.buses[b].trim_db.store(-(((cycle * 7) % 25) as f32));
+        sh.buses[b].pan.store(if cycle % 9 == 0 { f32::NAN } else { ((cycle % 5) as f32 - 2.0) / 2.0 });
+        sh.strips[s].mute.store(cycle % 11 == 0, SeqCst);
+        // the player: the "disk" sometimes keeps up and sometimes does not
+        if cycle % 3 != 0 {
+            tap.test_push(&take[..2 * [300, 1000, 3000][cycle % 3]]);
+        }
+        tap.routes.store((cycle / 7 % 32) as u8, SeqCst);
+        tap.test_run(cycle % 400 < 330, cycle % 1000 > 900);
+        if cycle % 250 == 125 {
+            tap.test_flush();
+        }
+        for st in 0..NUM_STRIPS {
+            eng.load_input(st, 0, &input[..n]);
+            eng.clear_input(st, 1, n);
+        }
+        let mut it = outs_store.iter_mut();
+        let mut outs: [[&mut [f32]; 2]; NUM_BUSES] = std::array::from_fn(|_| {
+            let l = &mut it.next().unwrap()[..n];
+            let r = &mut it.next().unwrap()[..n];
+            [l, r]
+        });
+        eng.process(&mut outs);
+        assert!(outs.iter().all(|b| b[0].iter().chain(b[1].iter()).all(|v| v.is_finite())));
+        // strips only feed the left side, so the right side is the player
+        if outs.iter().any(|b| b[1].iter().any(|&v| v != 0.0)) {
+            heard += 1;
+        }
+    }
+    ARMED.set(false);
+    assert_eq!(EVENTS.load(SeqCst), 0, "heap was touched in the real-time path");
+    assert!(heard > 1000, "the player reached the buses in {heard} cycles");
+    assert!(tap.test_played() > 0 || tap.underruns() > 0, "the player was consumed");
+}
