@@ -13,6 +13,14 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.2
+
+* **Long recordings are split every hour.** A take now continues in `_part2.wav`, `_part3.wav` … every 60 minutes, at the same sample for every track, so a long session is a set of files you can open and send one at a time. Change it with `split =` under `[recorder]` (minutes, up to a day; `0` or `off` splits only before 4 GB, as before).
+* **Resizing the window is smooth again.** On Linux, BananaSplit switched WebKitGTK's GPU renderer off everywhere, which made the window lag while it was resized; it now does that only with NVIDIA's own driver, where the window would otherwise stay empty. Channel names are no longer measured again on every resize step.
+* **Windows: a setup window for virtual cables.** **Menu ▸ Virtual cables…** explains what the optional VB-Audio cables are for, how to install them, that they leave Voicemeeter alone, and that Windows may make a new cable its default device. It shows which cables are installed, whether Voicemeeter is, and the Windows defaults, and opens by itself on the first start without cables (instead of a message box that could hide behind the window). See the [Windows manual](../windows/README.md#virtual-cables).
+
+Nothing to change on your side. Configs saved by 2.8.2 have a `split =` line, which 2.8.1 and older refuse; delete that line to go back.
+
 ## What's new in 2.8.1
 
 Fixes to the updater from a review of 2.8.0. Nothing to change on your side.
@@ -282,7 +290,7 @@ The recorder can take any combination of the 11 channels, numbered the same way 
 * **One mix file** (`mode = mix`): all linked channels are added into one stereo file. Links can change while recording; each change is ramped like a routing change, so it doesn't click. A strip linked together with a bus it feeds counts twice.
 * **A file per source** (`mode = multi`): one stereo file per linked channel, for example `…_1-Mic.wav`, `…_A1-Speakers.wav`. They are taken from the same audio cycle, so they start on the same sample and always have the same length; drop them into a DAW and they line up. The set of tracks is fixed when recording starts.
 * **Formats:** 16-bit, 24-bit (default) or 32-bit float WAV. 16- and 24-bit files clip anything above full scale, and the GUI and terminal UI warn you when that happens; 32-bit float keeps it.
-* **Files** go to `~/Music/BananaSplit/` by default, named `YYYY-MM-DD_HH-MM-SS_<label>.wav` in local time. An existing file is never overwritten. The WAV header is rewritten every 2 seconds, so a recording is still playable if BananaSplit is killed. Takes over 4 GB continue in `_part2.wav`, `_part3.wav` …, split at the same sample for every track.
+* **Files** go to `~/Music/BananaSplit/` by default, named `YYYY-MM-DD_HH-MM-SS_<label>.wav` in local time. An existing file is never overwritten. The WAV header is rewritten every 2 seconds, so a recording is still playable if BananaSplit is killed. Takes continue in `_part2.wav`, `_part3.wav` … every hour (`split =` in `[recorder]`, in minutes; `0` = off) and always before 4 GB, split at the same sample for every track.
 * **Sample rate:** files have the rate the audio server runs at (the top bar shows it), so they play at their real speed. If the server changes its rate during a take, the take continues in new files at the new rate, `YYYY-MM-DD_HH-MM-SS-2_<label>.wav`, starting on the same sample for every track, and the recorder panel says so.
 * **Real-time safe:** the audio callback copies each cycle into a preallocated lock-free ring buffer (no allocation, locks or syscalls; see `tests/recorder_no_alloc.rs`), and a separate thread writes the files. If the disk stalls for longer than the buffer holds (about 4 s with all 11 channels, much longer for fewer), the missing part is filled with silence so the tracks stay in sync, and the UI reports how many frames were lost.
 * The recorder is available in the terminal UI and the GUI. `--headless` runs without it, exactly as before.
@@ -408,6 +416,8 @@ mode = mix
 links = 1,A1
 # the buses recordings play on (any of A1..B2, or none)
 play_to = A1
+# minutes per file: a longer take goes on in _part2.wav, ... (0 = off)
+split = 60
 
 [vban]
 # default false: nothing listens
