@@ -283,7 +283,7 @@ Check ([BsSmoke.Win]::Dialogs([uint32]$p.Id).Count -eq 0) "and shows no message 
 try { [void](Post-Cmd 'op=cables&a=seen') } catch { }
 Check (Until { (Get-Http '/api/cables' | ConvertFrom-Json).welcome -eq $false } 10) "once closed, the window does not open by itself again"
 $st0 = Get-Http '/api/state' | ConvertFrom-Json
-Check ($st0.status -match 'VB-Audio') "the start-up notes are in the page's status line ('$($st0.status)')"
+Check ($st0.status -match 'No virtual cables are installed') "the start-up notes are in the page's status line ('$($st0.status)')"
 Check (Until { @(Get-NetTCPConnection -LocalPort $Port -State Established -ErrorAction SilentlyContinue).Count -ge 1 } 30) "the window's page connects to the mixer"
 Check (Until { $t = Tray-Window; $t -and [BsSmoke.Win]::TrayIconShown($t) } 15) "the tray icon is in the notification area"
 Check (Until { (Get-Http '/api/state' | ConvertFrom-Json).app.tray -eq $true } 10) "the page knows there is a tray icon"
