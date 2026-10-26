@@ -23,7 +23,7 @@
 - **VBAN network audio**, compatible with Voicemeeter.
 - **Multitrack recorder and player**, plus saved **scenes**.
 - **Desktop app** with its own window and tray icon. Also runs in a terminal or headless as a service.
-- **Updates itself** from the GitHub releases, checking each download's SHA-256 first: on request (Menu ▸ Check for updates…), or automatically once you switch that on (off by default).
+- **Updates itself** from the GitHub releases, installing only releases signed with BananaSplit's release key: on request (Menu ▸ Check for updates…), or automatically once you switch that on (off by default).
 
 | Platform | Audio backend | Window |
 | --- | --- | --- |
@@ -157,7 +157,9 @@ All of these run in CI on every push and pull request.
 
 The [release workflow](.github/workflows/release.yml) builds the Linux packages and the Windows executable, writes `SHA256SUMS.txt` and publishes a GitHub release.
 
-The in-app updater offers a release once it is published and **not** marked pre-release (the workflow creates new releases as pre-releases: untick that when the release is ready for everyone). It finds the files by their names (`bananasplit-<version>-linux-x86_64.tar.gz`, `bananasplit_<version>_amd64.deb`, `bananasplit-<version>-windows-x64.exe`) and refuses a file without a checksum, so keep those names and `SHA256SUMS.txt`.
+The in-app updater offers a release once it is published and **not** marked pre-release (the workflow creates new releases as pre-releases: untick that when the release is ready for everyone). It finds the files by their names (`bananasplit-<version>-linux-x86_64.tar.gz`, `bananasplit_<version>_amd64.deb`, `bananasplit-<version>-windows-x64.exe`) and installs a release only when its `SHA256SUMS.txt` is signed with the release key, so keep those names and `SHA256SUMS.txt`.
+
+**Signing a release.** The release key is kept off GitHub on purpose (not even as a secret), so the workflow cannot sign: after it has published the pre-release, run `linux/packaging/sign-release.sh --release vX.Y.Z` on the computer that has the key. It downloads the release's `SHA256SUMS.txt`, signs it, checks that the key is the one in `src/update.rs`, and uploads `SHA256SUMS.txt.sig`. Then untick pre-release. A release without that file is offered but never installed. Keep a backup of the key: without it, no installed BananaSplit can update itself to a new release.
 
 ## Contributing
 
