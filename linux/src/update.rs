@@ -23,9 +23,12 @@
 //! * the file comes from this repository's release downloads, over HTTPS
 //!   (curl with `--proto =https`; wget's redirects are read and one to
 //!   plain HTTP is refused), and has the size GitHub lists;
-//! * its SHA-256 matches GitHub's digest of the upload and the release's
-//!   `SHA256SUMS.txt` (each one that exists; a release with neither is
-//!   refused);
+//! * the release's `SHA256SUMS.txt` is signed (`SHA256SUMS.txt.sig`,
+//!   Ed25519) with BananaSplit's release key, which is never on GitHub: a
+//!   release without that signature is refused, so someone who can publish
+//!   releases there still cannot make one this updater installs;
+//! * its SHA-256 matches that `SHA256SUMS.txt`, and GitHub's digest of the
+//!   upload when GitHub gives one;
 //! * the new program runs here and says it is that version
 //!   (`--version`), before it takes the old one's place.
 //!
@@ -35,8 +38,9 @@
 //!   to it and renamed over it, which is atomic; the running mixer keeps
 //!   the old one until it ends. BananaSplit's own app-menu copy is updated
 //!   too.
-//! * Linux, the .deb: `pkexec apt-get install` of the downloaded package
-//!   (the desktop asks for the password).
+//! * Linux, the .deb: `apt-get install --no-remove` of the downloaded
+//!   package through `pkexec` (the desktop asks for the password), after it
+//!   is copied to a folder only root writes and checked again there.
 //! * Windows: the running `bananasplit.exe` is renamed to
 //!   `bananasplit.exe.old` (Windows allows that, not overwriting it), the
 //!   new one takes its name, and the next start removes the old one.
@@ -82,6 +86,7 @@ const GUI_CACHE: &str = "update";
 const CLI_CACHE: &str = "update-cli";
 const MAX_LIST: u64 = 4 << 20;
 const MAX_SUMS: u64 = 64 << 10;
+const MAX_SIG: u64 = 1 << 10;
 const MAX_ASSET: u64 = 512 << 20;
 const MAX_NOTES: usize = 4000;
 
@@ -98,6 +103,8 @@ pub struct Source {
     /// A release's page starts with this.
     pub pages: String,
     pub https: bool,
+    /// The public key `SHA256SUMS.txt` must be signed with.
+    pub key: [u8; 32],
 }
 
 impl Source {
@@ -107,12 +114,13 @@ impl Source {
             download: format!("https://github.com/{REPO}/releases/download/"),
             pages: format!("https://github.com/{REPO}/releases/"),
             https: true,
+            key: release_key(),
         }
     }
 
     /// GitHub, unless a test points [`SOURCE_ENV`] at a server on this
     /// computer (`http://127.0.0.1:PORT` or `http://localhost:PORT`, nothing
-    /// else is accepted).
+    /// else is accepted), with its own key ([`KEY_ENV`]) if one is given.
     pub fn from_env() -> Source {
         std::env::var(SOURCE_ENV).ok().and_then(|b| Source::local(&b)).unwrap_or_else(Source::github)
     }
@@ -127,6 +135,7 @@ impl Source {
             download: format!("{base}/{REPO}/releases/download/"),
             pages: format!("{base}/{REPO}/releases/"),
             https: false,
+            key: std::env::var(KEY_ENV).ok().and_then(|k| parse_hex32(k.trim())).unwrap_or_else(release_key),
         })
     }
 
@@ -529,6 +538,373 @@ pub fn parse_hex32(s: &str) -> Option<[u8; 32]> {
 }
 
 // ---------------------------------------------------------------------------
+// SHA-512 (FIPS 180-4), for Ed25519
+// ---------------------------------------------------------------------------
+
+const K512: [u64; 80] = [
+    0x428a2f98d728ae22, 0x7137449123ef65cd, 0xb5c0fbcfec4d3b2f, 0xe9b5dba58189dbbc, 0x3956c25bf348b538, 0x59f111f1b605d019, 0x923f82a4af194f9b,
+    0xab1c5ed5da6d8118, 0xd807aa98a3030242, 0x12835b0145706fbe, 0x243185be4ee4b28c, 0x550c7dc3d5ffb4e2, 0x72be5d74f27b896f, 0x80deb1fe3b1696b1,
+    0x9bdc06a725c71235, 0xc19bf174cf692694, 0xe49b69c19ef14ad2, 0xefbe4786384f25e3, 0x0fc19dc68b8cd5b5, 0x240ca1cc77ac9c65, 0x2de92c6f592b0275,
+    0x4a7484aa6ea6e483, 0x5cb0a9dcbd41fbd4, 0x76f988da831153b5, 0x983e5152ee66dfab, 0xa831c66d2db43210, 0xb00327c898fb213f, 0xbf597fc7beef0ee4,
+    0xc6e00bf33da88fc2, 0xd5a79147930aa725, 0x06ca6351e003826f, 0x142929670a0e6e70, 0x27b70a8546d22ffc, 0x2e1b21385c26c926, 0x4d2c6dfc5ac42aed,
+    0x53380d139d95b3df, 0x650a73548baf63de, 0x766a0abb3c77b2a8, 0x81c2c92e47edaee6, 0x92722c851482353b, 0xa2bfe8a14cf10364, 0xa81a664bbc423001,
+    0xc24b8b70d0f89791, 0xc76c51a30654be30, 0xd192e819d6ef5218, 0xd69906245565a910, 0xf40e35855771202a, 0x106aa07032bbd1b8, 0x19a4c116b8d2d0c8,
+    0x1e376c085141ab53, 0x2748774cdf8eeb99, 0x34b0bcb5e19b48a8, 0x391c0cb3c5c95a63, 0x4ed8aa4ae3418acb, 0x5b9cca4f7763e373, 0x682e6ff3d6b2b8a3,
+    0x748f82ee5defb2fc, 0x78a5636f43172f60, 0x84c87814a1f0ab72, 0x8cc702081a6439ec, 0x90befffa23631e28, 0xa4506cebde82bde9, 0xbef9a3f7b2c67915,
+    0xc67178f2e372532b, 0xca273eceea26619c, 0xd186b8c721c0c207, 0xeada7dd6cde0eb1e, 0xf57d4f7fee6ed178, 0x06f067aa72176fba, 0x0a637dc5a2c898a6,
+    0x113f9804bef90dae, 0x1b710b35131c471b, 0x28db77f523047d84, 0x32caab7b40c72493, 0x3c9ebe0a15c9bebc, 0x431d67c49c100d4c, 0x4cc5d4becb3e42b6,
+    0x597f299cfc657e2a, 0x5fcb6fab3ad6faec, 0x6c44198c4a475817,
+];
+
+/// SHA-512 of the pieces, one after the other (all in memory: a checksum
+/// file and its signature are small).
+pub fn sha512(pieces: &[&[u8]]) -> [u8; 64] {
+    let mut h: [u64; 8] = [
+        0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1, 0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b,
+        0x5be0cd19137e2179,
+    ];
+    let mut data: Vec<u8> = pieces.concat();
+    let bits = (data.len() as u128).wrapping_mul(8);
+    data.push(0x80);
+    while data.len() % 128 != 112 {
+        data.push(0);
+    }
+    data.extend_from_slice(&bits.to_be_bytes());
+    for b in data.chunks_exact(128) {
+        let mut w = [0u64; 80];
+        for (t, c) in b.chunks_exact(8).enumerate() {
+            w[t] = u64::from_be_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]);
+        }
+        for t in 16..80 {
+            let s0 = w[t - 15].rotate_right(1) ^ w[t - 15].rotate_right(8) ^ (w[t - 15] >> 7);
+            let s1 = w[t - 2].rotate_right(19) ^ w[t - 2].rotate_right(61) ^ (w[t - 2] >> 6);
+            w[t] = w[t - 16].wrapping_add(s0).wrapping_add(w[t - 7]).wrapping_add(s1);
+        }
+        let [mut a, mut b2, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
+        for t in 0..80 {
+            let s1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
+            let ch = (e & f) ^ (!e & g);
+            let t1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(K512[t]).wrapping_add(w[t]);
+            let s0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
+            let maj = (a & b2) ^ (a & c) ^ (b2 & c);
+            let t2 = s0.wrapping_add(maj);
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(t1);
+            d = c;
+            c = b2;
+            b2 = a;
+            a = t1.wrapping_add(t2);
+        }
+        for (x, v) in h.iter_mut().zip([a, b2, c, d, e, f, g, hh]) {
+            *x = x.wrapping_add(v);
+        }
+    }
+    let mut out = [0u8; 64];
+    for (o, x) in out.chunks_exact_mut(8).zip(h) {
+        o.copy_from_slice(&x.to_be_bytes());
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Ed25519 signatures (RFC 8032), verifying only
+// ---------------------------------------------------------------------------
+//
+// A release's SHA256SUMS.txt is signed with a key that is never on GitHub:
+// whoever can publish a release there still cannot make one this updater
+// installs. Verifying needs no secret and no constant time.
+
+/// The public key of the releases (`packaging/sign-release.sh` signs with
+/// its private half).
+pub const SIGNING_KEY: &str = "eb6afcb3176c1f908744169710381148c6dde645a669a6f3f04c61e383056e8a";
+/// Tests only, with [`SOURCE_ENV`]: the public key of the test releases.
+pub const KEY_ENV: &str = "BANANASPLIT_UPDATE_KEY";
+
+fn release_key() -> [u8; 32] {
+    parse_hex32(SIGNING_KEY).expect("SIGNING_KEY is 64 hexadecimal digits")
+}
+
+/// A number modulo 2^255 - 19, in five 51-bit limbs.
+#[derive(Clone, Copy, Debug)]
+struct Fe([u64; 5]);
+
+const MASK51: u64 = (1 << 51) - 1;
+
+impl Fe {
+    const ZERO: Fe = Fe([0; 5]);
+    const ONE: Fe = Fe([1, 0, 0, 0, 0]);
+
+    /// The low 255 bits (the top bit is the caller's).
+    fn from_bytes(b: &[u8; 32]) -> Fe {
+        let load = |i: usize| u64::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3], b[i + 4], b[i + 5], b[i + 6], b[i + 7]]);
+        Fe([load(0) & MASK51, (load(6) >> 3) & MASK51, (load(12) >> 6) & MASK51, (load(19) >> 1) & MASK51, (load(24) >> 12) & MASK51])
+    }
+
+    /// Limbs back under 2^51 + 2^13.
+    fn reduce(mut l: [u64; 5]) -> Fe {
+        let c = [l[0] >> 51, l[1] >> 51, l[2] >> 51, l[3] >> 51, l[4] >> 51];
+        for x in &mut l {
+            *x &= MASK51;
+        }
+        l[0] += c[4] * 19;
+        l[1] += c[0];
+        l[2] += c[1];
+        l[3] += c[2];
+        l[4] += c[3];
+        Fe(l)
+    }
+
+    fn to_bytes(self) -> [u8; 32] {
+        let mut l = Fe::reduce(self.0).0;
+        // subtract p once if the number is p or more
+        let mut q = (l[0] + 19) >> 51;
+        for x in &l[1..] {
+            q = (x + q) >> 51;
+        }
+        l[0] += 19 * q;
+        for i in 0..4 {
+            l[i + 1] += l[i] >> 51;
+            l[i] &= MASK51;
+        }
+        l[4] &= MASK51;
+        let mut out = [0u8; 32];
+        let (mut acc, mut bits, mut k) = (0u128, 0, 0);
+        for x in l {
+            acc |= u128::from(x) << bits;
+            bits += 51;
+            while bits >= 8 {
+                out[k] = acc as u8;
+                acc >>= 8;
+                bits -= 8;
+                k += 1;
+            }
+        }
+        out[31] = acc as u8;
+        out
+    }
+
+    fn add(self, b: Fe) -> Fe {
+        let (a, b) = (self.0, b.0);
+        Fe::reduce([a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3], a[4] + b[4]])
+    }
+
+    fn sub(self, b: Fe) -> Fe {
+        // + 16p, so that no limb goes below zero
+        let (a, b) = (self.0, b.0);
+        Fe::reduce([
+            (a[0] + 36028797018963664) - b[0],
+            (a[1] + 36028797018963952) - b[1],
+            (a[2] + 36028797018963952) - b[2],
+            (a[3] + 36028797018963952) - b[3],
+            (a[4] + 36028797018963952) - b[4],
+        ])
+    }
+
+    fn neg(self) -> Fe {
+        Fe::ZERO.sub(self)
+    }
+
+    fn mul(self, b: Fe) -> Fe {
+        let m = |x: u64, y: u64| u128::from(x) * u128::from(y);
+        let [a0, a1, a2, a3, a4] = self.0;
+        let [b0, b1, b2, b3, b4] = b.0;
+        let (b1_19, b2_19, b3_19, b4_19) = (b1 * 19, b2 * 19, b3 * 19, b4 * 19);
+        let mut c = [
+            m(a0, b0) + m(a1, b4_19) + m(a2, b3_19) + m(a3, b2_19) + m(a4, b1_19),
+            m(a0, b1) + m(a1, b0) + m(a2, b4_19) + m(a3, b3_19) + m(a4, b2_19),
+            m(a0, b2) + m(a1, b1) + m(a2, b0) + m(a3, b4_19) + m(a4, b3_19),
+            m(a0, b3) + m(a1, b2) + m(a2, b1) + m(a3, b0) + m(a4, b4_19),
+            m(a0, b4) + m(a1, b3) + m(a2, b2) + m(a3, b1) + m(a4, b0),
+        ];
+        let mask = u128::from(MASK51);
+        for i in 0..4 {
+            c[i + 1] += c[i] >> 51;
+            c[i] &= mask;
+        }
+        c[0] += (c[4] >> 51) * 19;
+        c[4] &= mask;
+        c[1] += c[0] >> 51;
+        c[0] &= mask;
+        Fe([c[0] as u64, c[1] as u64, c[2] as u64, c[3] as u64, c[4] as u64])
+    }
+
+    fn square(self) -> Fe {
+        self.mul(self)
+    }
+
+    /// `self` to the power `e` (little-endian).
+    fn pow(self, e: &[u8; 32]) -> Fe {
+        let mut r = Fe::ONE;
+        for i in (0..256).rev() {
+            r = r.square();
+            if (e[i / 8] >> (i % 8)) & 1 == 1 {
+                r = r.mul(self);
+            }
+        }
+        r
+    }
+
+    /// p - 2, (p - 5) / 8 and (p - 1) / 4, little-endian.
+    fn exponent(low: u8, high: u8) -> [u8; 32] {
+        let mut e = [0xff; 32];
+        e[0] = low;
+        e[31] = high;
+        e
+    }
+
+    fn invert(self) -> Fe {
+        self.pow(&Fe::exponent(0xeb, 0x7f))
+    }
+
+    fn eq(self, b: Fe) -> bool {
+        self.to_bytes() == b.to_bytes()
+    }
+
+    fn is_odd(self) -> bool {
+        self.to_bytes()[0] & 1 == 1
+    }
+
+    fn small(n: u64) -> Fe {
+        Fe([n, 0, 0, 0, 0])
+    }
+}
+
+/// A point of the curve, in extended coordinates (X:Y:Z:T), x = X/Z,
+/// y = Y/Z, xy = T/Z.
+#[derive(Clone, Copy, Debug)]
+struct Point {
+    x: Fe,
+    y: Fe,
+    z: Fe,
+    t: Fe,
+}
+
+/// The curve's d = -121665/121666.
+fn curve_d() -> Fe {
+    Fe::small(121665).neg().mul(Fe::small(121666).invert())
+}
+
+impl Point {
+    const IDENTITY: Point = Point { x: Fe::ZERO, y: Fe::ONE, z: Fe::ONE, t: Fe::ZERO };
+
+    /// RFC 8032 5.1.3. `None` for anything that is not a point.
+    fn decode(b: &[u8; 32], d: Fe) -> Option<Point> {
+        let sign = b[31] >> 7;
+        let mut yb = *b;
+        yb[31] &= 0x7f;
+        let y = Fe::from_bytes(&yb);
+        if y.to_bytes() != yb {
+            return None; // y is p or more
+        }
+        let yy = y.square();
+        let u = yy.sub(Fe::ONE);
+        let v = d.mul(yy).add(Fe::ONE);
+        let v3 = v.square().mul(v);
+        let v7 = v3.square().mul(v);
+        let mut x = u.mul(v3).mul(u.mul(v7).pow(&Fe::exponent(0xfd, 0x0f)));
+        let vxx = v.mul(x.square());
+        if !vxx.eq(u) {
+            if !vxx.eq(u.neg()) {
+                return None;
+            }
+            x = x.mul(Fe::small(2).pow(&Fe::exponent(0xfb, 0x1f))); // the square root of -1
+        }
+        if x.eq(Fe::ZERO) && sign == 1 {
+            return None;
+        }
+        if u8::from(x.is_odd()) != sign {
+            x = x.neg();
+        }
+        Some(Point { x, y, z: Fe::ONE, t: x.mul(y) })
+    }
+
+    fn encode(self) -> [u8; 32] {
+        let zi = self.z.invert();
+        let mut b = self.y.mul(zi).to_bytes();
+        b[31] |= u8::from(self.x.mul(zi).is_odd()) << 7;
+        b
+    }
+
+    /// RFC 8032 5.1.4 (also right for doubling).
+    fn add(self, q: Point, d2: Fe) -> Point {
+        let a = self.y.sub(self.x).mul(q.y.sub(q.x));
+        let b = self.y.add(self.x).mul(q.y.add(q.x));
+        let c = self.t.mul(d2).mul(q.t);
+        let d = self.z.add(self.z).mul(q.z);
+        let (e, f, g, h) = (b.sub(a), d.sub(c), d.add(c), b.add(a));
+        Point { x: e.mul(f), y: g.mul(h), z: f.mul(g), t: e.mul(h) }
+    }
+
+    fn neg(self) -> Point {
+        Point { x: self.x.neg(), t: self.t.neg(), ..self }
+    }
+
+    /// `k` (little-endian, any length) times this point.
+    fn times(self, k: &[u8], d2: Fe) -> Point {
+        let mut r = Point::IDENTITY;
+        for i in (0..k.len() * 8).rev() {
+            r = r.add(r, d2);
+            if (k[i / 8] >> (i % 8)) & 1 == 1 {
+                r = r.add(self, d2);
+            }
+        }
+        r
+    }
+}
+
+/// The order of the base point, L = 2^252 + 27742317777372353535851937790883648493, little-endian.
+const ORDER: [u8; 32] = [
+    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0x10,
+];
+
+/// Is `sig` `key`'s Ed25519 signature of `msg`? (RFC 8032 5.1.7, the
+/// cofactorless check.)
+pub fn ed25519_verify(key: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
+    let d = curve_d();
+    let d2 = d.add(d);
+    let Some(a) = Point::decode(key, d) else { return false };
+    let (r, s) = (&sig[..32], &sig[32..]);
+    // S < L, compared from the top byte down
+    if s.iter().rev().cmp(ORDER.iter().rev()) != std::cmp::Ordering::Less {
+        return false;
+    }
+    let mut base = [0x66u8; 32];
+    base[0] = 0x58;
+    let Some(b) = Point::decode(&base, d) else { return false };
+    // k = SHA-512(R || A || M), used whole: [k]A is [k mod L]A for A in the
+    // prime-order group, and the key is ours.
+    let k = sha512(&[r, key, msg]);
+    // [S]B - [k]A must be R
+    b.times(s, d2).add(a.neg().times(&k, d2), d2).encode() == *r
+}
+
+/// 128 hexadecimal digits (a signature file, written by sign-release.sh).
+pub fn parse_sig(text: &str) -> Option<[u8; 64]> {
+    let t = text.trim();
+    if t.len() != 128 {
+        return None;
+    }
+    let (a, b) = (parse_hex32(&t[..64])?, parse_hex32(&t[64..])?);
+    let mut out = [0u8; 64];
+    out[..32].copy_from_slice(&a);
+    out[32..].copy_from_slice(&b);
+    Some(out)
+}
+
+/// Is `sums` (a release's SHA256SUMS.txt) signed by `key`?
+pub fn check_signature(sums: &str, sig: &str, key: &[u8; 32]) -> Result<(), String> {
+    let s = parse_sig(sig).ok_or("the release's SHA256SUMS.txt.sig is not a signature")?;
+    if ed25519_verify(key, sums.as_bytes(), &s) {
+        Ok(())
+    } else {
+        Err("the release's SHA256SUMS.txt is not signed with BananaSplit's release key (not an official release); nothing was changed".into())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Versions and release files
 // ---------------------------------------------------------------------------
 
@@ -612,6 +988,8 @@ pub struct Offer {
     pub sums: Option<Asset>,
     /// When it was published (seconds since 1970), if GitHub says.
     pub published: Option<u64>,
+    /// Its `SHA256SUMS.txt.sig`, if it has one.
+    pub sig: Option<Asset>,
 }
 
 fn clean_url(u: &str, prefix: &str) -> bool {
@@ -669,11 +1047,12 @@ pub fn pick(list: &Json, pkg: Package, src: &Source) -> Result<Option<Offer>, St
             continue;
         }
         let sums = assets.iter().filter_map(|a| asset_of(a, src, MAX_SUMS)).find(|a| a.name == "SHA256SUMS.txt");
+        let sig = assets.iter().filter_map(|a| asset_of(a, src, MAX_SIG)).find(|a| a.name == "SHA256SUMS.txt.sig");
         let page = r.get("html_url").and_then(Json::str).filter(|u| clean_url(u, &src.pages)).unwrap_or(RELEASES_PAGE).to_string();
         let notes = r.get("body").and_then(Json::str).map(|b| cut(b.replace("\r\n", "\n").trim(), MAX_NOTES)).unwrap_or_default();
         let tag = r.get("tag_name").and_then(Json::str).map(|t| cut(t, 64)).unwrap_or_default();
         let published = r.get("published_at").and_then(Json::str).and_then(parse_utc);
-        best = Some(Offer { version, tag, page, notes, asset, sums, published });
+        best = Some(Offer { version, tag, page, notes, asset, sums, sig, published });
     }
     Ok(best)
 }
@@ -1148,23 +1527,29 @@ pub fn verify(file: &Path, offer: &Offer, sums: Option<&str>) -> Result<[u8; 32]
     Ok(got)
 }
 
+/// A small text file of the release (its checksums, their signature).
+fn fetch_text(src: &Source, dir: &Path, a: &Asset, max: u64, stop: &AtomicBool) -> Result<String, String> {
+    let f = dir.join(&a.name);
+    fetch(src, &a.url, &f, max, false, stop, &mut |_| {}).map_err(|e| format!("downloading {}: {e}", a.name))?;
+    let t = std::fs::read_to_string(&f).map_err(|e| format!("{}: {e}", f.display()));
+    let _ = std::fs::remove_file(&f);
+    t
+}
+
 /// Download the release file and check it. Returns its path and SHA-256.
 pub fn download(src: &Source, cache: &str, offer: &Offer, stop: &AtomicBool, progress: &mut dyn FnMut(u64)) -> Result<(PathBuf, [u8; 32]), String> {
+    let (Some(sums), Some(sig)) = (&offer.sums, &offer.sig) else {
+        return Err("the release is not signed (it has no SHA256SUMS.txt and SHA256SUMS.txt.sig), so it is not installed".into());
+    };
     let dir = make_cache(cache)?;
     clean_cache(&dir);
-    let sums = match &offer.sums {
-        Some(s) => {
-            let f = dir.join("SHA256SUMS.txt");
-            fetch(src, &s.url, &f, MAX_SUMS, false, stop, &mut |_| {}).map_err(|e| format!("downloading SHA256SUMS.txt: {e}"))?;
-            let t = std::fs::read_to_string(&f).map_err(|e| format!("{}: {e}", f.display()));
-            let _ = std::fs::remove_file(&f);
-            Some(t?)
-        }
-        None => None,
-    };
+    let sums = fetch_text(src, &dir, sums, MAX_SUMS, stop)?;
+    let sig = fetch_text(src, &dir, sig, MAX_SIG, stop)?;
+    // before the big download: an unsigned release is not worth fetching
+    check_signature(&sums, &sig, &src.key)?;
     let file = dir.join(&offer.asset.name);
     fetch(src, &offer.asset.url, &file, offer.asset.size, false, stop, progress).map_err(|e| format!("downloading {}: {e}", offer.asset.name))?;
-    match verify(&file, offer, sums.as_deref()) {
+    match verify(&file, offer, Some(&sums)) {
         Ok(hash) => Ok((file, hash)),
         Err(e) => {
             let _ = std::fs::remove_file(&file);
@@ -1179,7 +1564,7 @@ fn clean_cache(dir: &Path) {
     for e in rd.flatten() {
         let p = e.path();
         let name = e.file_name().to_string_lossy().into_owned();
-        let ours = name.starts_with("bananasplit") || name == "SHA256SUMS.txt" || name.starts_with("releases.json") || name == "unpacked";
+        let ours = name.starts_with("bananasplit") || name.starts_with("SHA256SUMS.txt") || name.starts_with("releases.json") || name == "unpacked";
         if !ours {
             continue;
         }
@@ -1267,6 +1652,14 @@ fn retry<T>(mut f: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
     }
 }
 
+/// The permissions of the new program: those of the one it replaces (no
+/// set-id bits), runnable by whoever could read it, always by its owner.
+#[cfg(unix)]
+fn program_mode(old: Option<u32>) -> u32 {
+    let m = old.map_or(0o755, |m| m & 0o777);
+    m | ((m & 0o444) >> 2) | 0o700
+}
+
 /// The new program file next to `target`, before it takes its place.
 fn staging_name(target: &Path) -> PathBuf {
     let dir = target.parent().unwrap_or(Path::new("."));
@@ -1313,7 +1706,8 @@ fn replace_one(new: &Path, target: &Path, version: &str, first: bool, stop: &Ato
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("{}: {e}", stage.display()))?;
+                let was = std::fs::metadata(target).map(|m| m.permissions().mode()).ok();
+                std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(program_mode(was))).map_err(|e| format!("{}: {e}", stage.display()))?;
             }
             // to disk before it takes the old one's place (Windows flushes
             // only a handle opened for writing)
@@ -1397,38 +1791,52 @@ pub fn clean_leftovers() {
     }
 }
 
+/// What runs as root (`sh -c`, with the .deb, its SHA-256 and apt-get):
+/// the checked .deb is in a folder of the user's, so it is copied to a
+/// folder only root can write and checked again there before apt-get gets
+/// it. `--no-remove`: never remove another package to install this one.
+#[cfg(unix)]
+const ROOT_INSTALL: &str = r#"set -e
+d=$(mktemp -d /tmp/bananasplit-update.XXXXXX)
+trap 'rm -rf "$d"' EXIT
+cp -- "$1" "$d/bananasplit.deb"
+set -- "$(sha256sum < "$d/bananasplit.deb")" "$2" "$3"
+if [ "${1%% *}" != "$2" ]; then echo "the package changed after it was checked" >&2; exit 3; fi
+"$3" install -y --no-remove "$d/bananasplit.deb""#;
+
 /// Linux: install the new .deb. From the app, the desktop asks for the
 /// password; from a terminal (`interactive`), pkexec asks in it.
 #[cfg(unix)]
-fn install_deb(deb: &Path, version: &str, stop: &AtomicBool, interactive: bool) -> Result<(), String> {
+fn install_deb(deb: &Path, hash: &[u8; 32], version: &str, stop: &AtomicBool, interactive: bool) -> Result<(), String> {
     let Some(pkexec) = which("pkexec") else {
         return Err(format!("installing a package needs pkexec, which is not here. Install it in a terminal:  sudo apt install {}", deb.display()));
     };
-    install_deb_with(&pkexec, Path::new(APT_GET), Path::new(DEB_PROGRAM), deb, version, stop, interactive)
+    install_deb_with(&pkexec, Path::new(APT_GET), Path::new(DEB_PROGRAM), deb, hash, version, stop, interactive)
 }
 
 #[cfg(unix)]
-fn install_deb_with(pkexec: &Path, apt: &Path, program: &Path, deb: &Path, version: &str, stop: &AtomicBool, interactive: bool) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+fn install_deb_with(pkexec: &Path, apt: &Path, program: &Path, deb: &Path, hash: &[u8; 32], version: &str, stop: &AtomicBool, interactive: bool) -> Result<(), String> {
+    let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+    let args = |c: &mut Command| {
+        c.arg("/bin/sh").arg("-c").arg(ROOT_INSTALL).arg("bananasplit-update").arg(deb).arg(&hex).arg(apt);
+    };
     let result = if interactive {
         // In the terminal's foreground, with its input and output: pkexec's
         // text agent reads the password there.
         crate::sys::cloexec_all();
-        std::process::Command::new(pkexec)
-            .arg(apt)
-            .arg("install")
-            .arg("-y")
-            .arg(deb)
-            .status()
-            .map(|s| (s.code(), String::new(), String::new()))
-            .map_err(|e| format!("cannot run {}: {e}", pkexec.display()))
+        let mut c = std::process::Command::new(pkexec);
+        args(&mut c);
+        c.status().map(|s| (s.code(), String::new(), String::new())).map_err(|e| format!("cannot run {}: {e}", pkexec.display()))
     } else {
         let mut c = command(pkexec);
-        c.arg(apt).arg("install").arg("-y").arg(deb);
+        args(&mut c);
         // No time limit: the password dialog waits for the user.
         run(c, Duration::from_secs(24 * 3600), stop, &mut || Ok(()))
     };
     match result {
         Ok((Some(0), _, _)) => {}
+        Ok((Some(3), _, _)) => return Err("the package changed after it was checked; nothing was installed".into()),
         Ok((Some(126), _, _)) => return Err("installing was cancelled (no password given)".into()),
         Ok((Some(127), _, err)) => {
             let why = first_line(&err);
@@ -1445,14 +1853,14 @@ fn install_deb_with(pkexec: &Path, apt: &Path, program: &Path, deb: &Path, versi
 
 /// Install a downloaded, checked release file. Returns where it went, and
 /// warnings (a copy that could not be updated).
-pub fn install(method: &Method, offer: &Offer, file: &Path, stop: &AtomicBool, interactive: bool) -> Result<(String, Vec<String>), String> {
-    let _ = (stop, interactive);
+pub fn install(method: &Method, offer: &Offer, file: &Path, hash: &[u8; 32], stop: &AtomicBool, interactive: bool) -> Result<(String, Vec<String>), String> {
+    let _ = (hash, stop, interactive);
     match method {
         Method::Manual(why) => Err(why.clone()),
         Method::Deb => {
             #[cfg(unix)]
             {
-                install_deb(file, &offer.version, stop, interactive)?;
+                install_deb(file, hash, &offer.version, stop, interactive)?;
                 Ok((DEB_PROGRAM.to_string(), Vec::new()))
             }
             #[cfg(windows)]
@@ -1728,6 +2136,11 @@ impl Updater {
                 g.st.phase = Phase::Failed;
                 g.st.message = "the updater ran into an internal error".into();
                 g.st.rev += 1;
+            } else if g.st.phase.busy() {
+                // every way out of a job says how it ended; never "busy" for good
+                g.st.phase = Phase::Failed;
+                g.st.message = "the update stopped before it finished".into();
+                g.st.rev += 1;
             }
             if g.job == Some(job) {
                 g.job = None;
@@ -1815,11 +2228,19 @@ impl Updater {
 
     fn do_install(&self, auto: bool) {
         let st = self.status();
-        let Some(offer) = st.offer.clone() else { return };
+        let Some(offer) = st.offer.clone() else {
+            // (a check in between found nothing newer)
+            return self.set(|s| {
+                s.phase = Phase::Failed;
+                s.message = "there is no new version to install (check for updates first)".into();
+            });
+        };
         let method = st.method.clone();
         if let Method::Manual(why) = &method {
-            self.set(|s| s.message = why.clone());
-            return;
+            return self.set(|s| {
+                s.phase = Phase::Available;
+                s.message = why.clone();
+            });
         }
         let v = offer.version.clone();
         let fail = |e: String| {
@@ -1875,7 +2296,7 @@ impl Updater {
             s.phase = Phase::Installing;
             s.message = if method == Method::Deb { format!("installing BananaSplit {v} (enter your password)…") } else { format!("installing BananaSplit {v}…") };
         });
-        let r = install(&method, &offer, &file, &self.stop, false);
+        let r = install(&method, &offer, &file, &hash, &self.stop, false);
         if r.is_err() && method == Method::Deb {
             // kept (checked) for another try, and for the command the message names
             let mut g = lock(&self.inner);
@@ -2088,13 +2509,13 @@ pub fn cli(running: bool) -> Result<(), String> {
         return Err("a package is installed only from GitHub, not from a test server".into());
     }
     println!("bananasplit: downloading {} ({:.1} MB) …", offer.asset.name, offer.asset.size as f64 / 1e6);
-    let (file, _) = download(&src, CLI_CACHE, &offer, &never, &mut |_| {})?;
-    println!("bananasplit: the download matches the release's checksums");
+    let (file, hash) = download(&src, CLI_CACHE, &offer, &never, &mut |_| {})?;
+    println!("bananasplit: the release is signed with BananaSplit's key, and the download matches its checksums");
     #[cfg(unix)]
     if method == Method::Deb && !crate::sys::stdin_is_tty() {
         return Err(format!("installing the package needs your password; in a terminal run:  sudo apt install {}", file.display()));
     }
-    let r = install(&method, &offer, &file, &never, true);
+    let r = install(&method, &offer, &file, &hash, &never, true);
     if r.is_ok() || method != Method::Deb {
         if let Some(d) = file.parent() {
             clean_cache(d);
@@ -2159,6 +2580,103 @@ mod tests {
         assert_eq!(parse_hex32(&format!("+{}", &hex(&h)[1..])), None);
     }
 
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    }
+
+    #[test]
+    fn sha512_matches_the_standard_vectors() {
+        assert_eq!(
+            hex(&sha512(&[b""])),
+            "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
+        );
+        assert_eq!(
+            hex(&sha512(&[b"a", b"bc"])),
+            "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+        );
+        let long = b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
+        assert_eq!(
+            hex(&sha512(&[long])),
+            "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909"
+        );
+    }
+
+    /// RFC 8032 7.1, tests 1 to 3, and one made with `openssl pkeyutl`.
+    #[test]
+    fn ed25519_signatures_are_verified() {
+        let vectors = [
+            (
+                "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+                "",
+                "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+            ),
+            (
+                "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+                "72",
+                "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00",
+            ),
+            (
+                "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+                "af82",
+                "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a",
+            ),
+            (
+                "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+                "42616e616e6153706c69742072656c656173650a",
+                "8d607a29ea4326a46154a5518336a1380271109f319a0bdf694af1f7b206fd21ebd634d1fd822e9451dc87b9a0042095eda14685df28c54782c264db81b77f08",
+            ),
+        ];
+        for (k, m, s) in vectors {
+            let key = parse_hex32(k).unwrap();
+            let msg = unhex(m);
+            let sig = parse_sig(s).unwrap();
+            assert!(ed25519_verify(&key, &msg, &sig), "{k} {m}");
+            // another message, a changed signature, another key: refused
+            let mut other = msg.clone();
+            other.push(0);
+            assert!(!ed25519_verify(&key, &other, &sig));
+            for at in [0, 31, 32, 63] {
+                let mut bad = sig;
+                bad[at] ^= 1;
+                assert!(!ed25519_verify(&key, &msg, &bad), "byte {at}");
+            }
+            let mut wrong = key;
+            wrong[0] ^= 1;
+            assert!(!ed25519_verify(&wrong, &msg, &sig));
+        }
+        // S + L is the same point, but not a valid signature (malleability)
+        let key = parse_hex32(vectors[1].0).unwrap();
+        let mut sig = parse_sig(vectors[1].2).unwrap();
+        let mut carry = 0u16;
+        for i in 0..32 {
+            let v = u16::from(sig[32 + i]) + u16::from(ORDER[i]) + carry;
+            sig[32 + i] = v as u8;
+            carry = v >> 8;
+        }
+        assert!(!ed25519_verify(&key, &[0x72], &sig), "S must be below L");
+        // not a point: y = p
+        let mut p = [0xffu8; 32];
+        p[0] = 0xed;
+        p[31] = 0x7f;
+        assert!(!ed25519_verify(&p, b"", &parse_sig(vectors[0].2).unwrap()));
+        assert!(parse_hex32(SIGNING_KEY).is_some_and(|k| Point::decode(&k, curve_d()).is_some()), "the release key is a point");
+    }
+
+    #[test]
+    fn only_signed_checksum_files_are_trusted() {
+        let key = parse_hex32(vectors_key()).unwrap();
+        let sums = "BananaSplit release\n";
+        let sig = "8d607a29ea4326a46154a5518336a1380271109f319a0bdf694af1f7b206fd21ebd634d1fd822e9451dc87b9a0042095eda14685df28c54782c264db81b77f08\n";
+        assert!(check_signature(sums, sig, &key).is_ok());
+        assert!(check_signature("BananaSplit release!\n", sig, &key).unwrap_err().contains("not signed"));
+        assert!(check_signature(sums, &sig[..100], &key).unwrap_err().contains("not a signature"));
+        assert!(check_signature(sums, sig, &parse_hex32(SIGNING_KEY).unwrap()).is_err(), "another key");
+    }
+
+    fn vectors_key() -> &'static str {
+        "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025"
+    }
+
     #[test]
     fn versions_compare_as_numbers() {
         assert!(newer("2.8.0", "2.7.3"));
@@ -2218,7 +2736,7 @@ mod tests {
             "[{},{},{},{},{}]",
             release("v2.9.0", true, false, &[("bananasplit-2.9.0-windows-x64.exe", 10, Some(&d))]),
             release("v2.8.1", false, true, &[("bananasplit-2.8.1-windows-x64.exe", 10, Some(&d))]),
-            release("v2.7.10", false, false, &[("bananasplit-2.7.10-windows-x64.exe", 10, Some(&d)), ("SHA256SUMS.txt", 300, None)]),
+            release("v2.7.10", false, false, &[("bananasplit-2.7.10-windows-x64.exe", 10, Some(&d)), ("SHA256SUMS.txt", 300, None), ("SHA256SUMS.txt.sig", 129, None)]),
             release("v2.7.9", false, false, &[("bananasplit-2.7.9-windows-x64.exe", 10, Some(&d))]),
             release("v2.8.0", false, false, &[("bananasplit-2.8.0-linux-x86_64.tar.gz", 10, None)]),
         );
@@ -2229,10 +2747,11 @@ mod tests {
         assert_eq!(o.tag, "v2.7.10");
         assert_eq!(o.asset.digest, parse_hex32(&d));
         assert_eq!(o.sums.as_ref().unwrap().name, "SHA256SUMS.txt");
+        assert_eq!(o.sig.as_ref().unwrap().name, "SHA256SUMS.txt.sig");
         assert_eq!(o.notes, "Fixes.\nMore.");
         assert_eq!(o.page, "https://github.com/LudaLunizz/BananaSplit/releases/tag/v2.7.10");
         let t = pick(&j, Package::Tarball, &src).unwrap().unwrap();
-        assert_eq!((t.version.as_str(), t.asset.digest, t.sums.is_none()), ("2.8.0", None, true));
+        assert_eq!((t.version.as_str(), t.asset.digest, t.sums.is_none(), t.sig.is_none()), ("2.8.0", None, true, true));
         assert_eq!(pick(&j, Package::Deb, &src).unwrap(), None);
         assert!(pick(&Json::parse(r#"{"message":"API rate limit exceeded"}"#).unwrap(), Package::Deb, &src).unwrap_err().contains("rate limit"));
         assert_eq!(pick(&Json::parse("[]").unwrap(), Package::Deb, &src).unwrap(), None);
@@ -2407,6 +2926,7 @@ mod tests {
             asset: Asset { name: "bananasplit_9.9.9_amd64.deb".into(), size, url: String::new(), digest },
             sums: None,
             published: None,
+            sig: None,
         }
     }
 
@@ -2554,6 +3074,9 @@ mod tests {
         let (t1, t2) = (a.join("bananasplit"), b.join("bananasplit"));
         std::fs::write(&t1, b"old one").unwrap();
         std::fs::write(&t2, b"old two").unwrap();
+        for t in [&t1, &t2] {
+            std::fs::set_permissions(t, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
         let new = d.join("new");
         script(&new, "#!/bin/sh\necho 'BananaSplit 9.9.9'\n");
         // the wrong version: nothing changes, nothing is left behind
@@ -2613,29 +3136,64 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_package_goes_through_pkexec_apt_get() {
+        if which("sha256sum").is_none() || which("mktemp").is_none() {
+            return;
+        }
         let d = temp("deb");
         let log = d.join("log");
         let pkexec = d.join("pkexec");
+        let apt = d.join("apt-get");
         let program = d.join("bananasplit");
         let deb = d.join("bananasplit_9.9.9_amd64.deb");
         std::fs::write(&deb, b"deb").unwrap();
+        let hash = sha256(b"deb");
         let never = AtomicBool::new(false);
-        let apt = Path::new("/usr/bin/apt-get");
-        for (code, installs, want) in [(0, true, ""), (126, false, "cancelled"), (127, false, "could not get permission"), (100, false, "apt-get failed (exit 100)")] {
-            script(&pkexec, &format!("#!/bin/sh\necho \"$@\" > {}\necho 'E: something' >&2\nexit {code}\n", log.display()));
+        // pkexec runs the root part as it is; apt-get says what it got
+        script(&pkexec, "#!/bin/sh\nexec \"$@\"\n");
+        for (code, installs, want) in [(0, true, ""), (100, false, "apt-get failed (exit 100)")] {
+            let _ = std::fs::remove_file(&log);
+            script(&apt, &format!("#!/bin/sh\necho \"$@\" > {log}\ncmp -s \"$4\" {deb} && echo same >> {log}\necho 'E: something' >&2\nexit {code}\n",
+                                  log = log.display(), deb = deb.display()));
             script(&program, "#!/bin/sh\necho 'BananaSplit 9.9.9'\n");
-            let r = install_deb_with(&pkexec, apt, &program, &deb, "9.9.9", &never, false);
-            assert_eq!(std::fs::read_to_string(&log).unwrap().trim(), format!("/usr/bin/apt-get install -y {}", deb.display()));
+            let r = install_deb_with(&pkexec, &apt, &program, &deb, &hash, "9.9.9", &never, false);
+            let said = std::fs::read_to_string(&log).unwrap();
+            let mut lines = said.lines();
+            let first = lines.next().unwrap();
+            assert!(first.starts_with("install -y --no-remove /tmp/bananasplit-update.") && first.ends_with("/bananasplit.deb"), "{said}");
+            assert_eq!(lines.next(), Some("same"), "a copy of the checked package");
+            assert!(!Path::new(first.rsplit(' ').next().unwrap()).exists(), "the copy is removed");
             match installs {
                 true => assert!(r.is_ok(), "{r:?}"),
                 false => assert!(r.as_ref().unwrap_err().contains(want), "{code}: {r:?}"),
             }
         }
+        // the package changed after it was checked: apt-get never runs
+        let _ = std::fs::remove_file(&log);
+        let r = install_deb_with(&pkexec, &apt, &program, &deb, &sha256(b"other"), "9.9.9", &never, false);
+        assert!(r.unwrap_err().contains("changed after it was checked"));
+        assert!(!log.exists(), "apt-get did not run");
+        // pkexec's own answers
+        for (code, want) in [(126, "cancelled"), (127, "could not get permission")] {
+            script(&pkexec, &format!("#!/bin/sh\nexit {code}\n"));
+            assert!(install_deb_with(&pkexec, &apt, &program, &deb, &hash, "9.9.9", &never, false).unwrap_err().contains(want), "{code}");
+        }
         // installed, but the program is not the new version: an error
         script(&pkexec, "#!/bin/sh\nexit 0\n");
         script(&program, "#!/bin/sh\necho 'BananaSplit 2.7.3'\n");
-        assert!(install_deb_with(&pkexec, apt, &program, &deb, "9.9.9", &never, false).unwrap_err().contains("not 9.9.9"));
+        assert!(install_deb_with(&pkexec, &apt, &program, &deb, &hash, "9.9.9", &never, false).unwrap_err().contains("not 9.9.9"));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_new_program_keeps_the_old_ones_permissions() {
+        assert_eq!(program_mode(None), 0o755);
+        assert_eq!(program_mode(Some(0o100755)), 0o755);
+        assert_eq!(program_mode(Some(0o644)), 0o755, "readable: runnable");
+        assert_eq!(program_mode(Some(0o700)), 0o700, "private stays private");
+        assert_eq!(program_mode(Some(0o750)), 0o750);
+        assert_eq!(program_mode(Some(0o4755)), 0o755, "no set-id bits");
+        assert_eq!(program_mode(Some(0o600)), 0o700);
     }
 
     #[cfg(unix)]
