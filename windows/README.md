@@ -8,7 +8,7 @@ The mixer core is shared with the [Linux app](../linux/README.md). See that manu
 
 - Windows 10 or 11, x64
 - [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
-- Optional: [VB-Audio CABLE](https://vb-audio.com/Cable/) pairs (CABLE, CABLE-A … CABLE-D) for per-channel virtual cables
+- Optional, for per-channel virtual cables: [Splitter](https://github.com/LudaLunizz/Splitter/releases), BananaSplit's own cables (one for every channel), and/or [VB-Audio CABLE](https://vb-audio.com/Cable/) pairs (CABLE, CABLE-A … CABLE-D)
 
 ## Running
 
@@ -69,13 +69,23 @@ From the app menu:
 
 ## Virtual cables
 
-Per-channel virtual cables require genuine VB-Audio cable pairs. Each installed pair is assigned to at most one channel, strips first, then buses. Without any pairs, cables are unavailable; everything else works without them.
+Per-channel virtual cables come from two drivers. Without either, cables are unavailable; everything else works without them.
 
-**Menu ▸ Virtual cables…** explains them and shows which pairs are installed, whether Voicemeeter is, and the current Windows default devices. On the first start without cables it opens by itself, once. It has buttons for the VB-Audio download page and the Windows sound settings.
+- **Splitter**, BananaSplit's own cables, installed separately: a cable for every channel, named after it, so switching one channel's cable off leaves the others alone.
+  - Strip N: apps play into `Splitter N`, and strip N records `Splitter N Output`. The strip's channel menu shows `Splitter N`.
+  - Bus A1 … B2: the bus plays into `Splitter B1 Input` (say), and apps record `Splitter B1` as their microphone. The bus's channel menu shows `Splitter B1`.
+- **VB-Audio** cable pairs. They cover the channels whose Splitter cable is missing (all of them, without Splitter), strips first, then buses. Each pair is used by at most one channel. Installing Splitter therefore moves channels off VB-Audio's cables: point apps that used "CABLE Input" or "CABLE Output" at the channel's Splitter cable.
 
-- **Installing:** download the VB-CABLE driver pack (CABLE-A … CABLE-D come in two extra packs), run `VBCABLE_Setup_x64.exe` as administrator, **Install Driver**, restart Windows, then start BananaSplit. BananaSplit never installs drivers itself.
-- **With Voicemeeter:** VB-CABLE is a separate driver; installing it leaves Voicemeeter's devices and settings alone. BananaSplit never uses Voicemeeter's devices as its cables. To pass audio between the two without a driver, use VBAN, with BananaSplit on a port other than 6980 (Voicemeeter's) and 127.0.0.1 as the address.
+A channel uses its cable while the cable is switched on in its menu: every strip and B1, B2 to begin with (A1 … A3 are speakers and headsets, so `Splitter A1` … `Splitter A3` stay silent until you switch their cables on). `@default` never follows Windows into a cable of either kind, because BananaSplit would then record itself. If a bus plays into a Splitter cable that a strip records, the status line warns that the strip mustn't go to that bus.
+
+**Menu ▸ Virtual cables…** explains them and shows which cables are installed (and which Splitter cables are missing), whether Voicemeeter is, and the current Windows default devices. On the first start without cables it opens by itself, once. It has buttons for the Splitter and VB-Audio download pages and the Windows sound settings.
+
+- **Installing Splitter:** for now Splitter is a test build, not yet signed by Microsoft, so Windows loads it only in test-signing mode (Secure Boot off; some games' anti-cheat refuses to run in it). Switch test signing on as the README.txt in its zip explains, run `install.cmd`, then start BananaSplit.
+- **Installing VB-Audio's cables:** download the VB-CABLE driver pack (CABLE-A … CABLE-D come in two extra packs), run `VBCABLE_Setup_x64.exe` as administrator, **Install Driver**, restart Windows, then start BananaSplit.
+- BananaSplit never installs drivers itself.
+- **With Voicemeeter:** Splitter and VB-CABLE add devices of their own and leave Voicemeeter's devices and settings alone. BananaSplit never uses Voicemeeter's devices as its cables. To pass audio between the two without a driver, use VBAN, with BananaSplit on a port other than 6980 (Voicemeeter's) and 127.0.0.1 as the address.
 - **Default devices:** BananaSplit never changes them, but Windows may make a newly installed cable the default output or input. Check them in the Virtual cables window or the Windows sound settings after installing.
+- **Quitting** BananaSplit leaves the cables installed; they carry no sound until it starts again.
 
 Windows has no per-app stream routing like PipeWire, so device lists show WASAPI endpoints only.
 

@@ -13,6 +13,13 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.3
+
+* **Windows: BananaSplit's own virtual cables.** BananaSplit for Windows now works with **Splitter**, its own cable driver (installed separately), which gives every channel a cable of its own, as Linux has always had: apps play into `Splitter 1` … `Splitter 6` to reach strips 1 to 6, and record `Splitter A1` … `Splitter B2` to hear buses A1 to B2 (once the bus's cable is on in its menu; B1 and B2 have theirs on to begin with). Switching one channel's cable off no longer moves another channel's. VB-Audio's cables still work, for any channel whose Splitter cable is missing; with Splitter installed, the other channels move to Splitter's cables, so apps you pointed at "CABLE Input" or "CABLE Output" need pointing at the Splitter cable of that channel. **Menu ▸ Virtual cables…** shows both. For now Splitter is a test build: Windows loads it only in test-signing mode. See the [Windows manual](../windows/README.md#virtual-cables).
+* **Windows:** the Quit item and the "BananaSplit has stopped" message no longer say that quitting removes the virtual cables; on Windows they stay installed and fall silent.
+
+Nothing changes on Linux. On Windows without Splitter, nothing changes either.
+
 ## What's new in 2.8.2
 
 * **Long recordings are split every hour.** A take now continues in `_part2.wav`, `_part3.wav` … every 60 minutes, at the same sample for every track, so a long session is a set of files you can open and send one at a time. Change it with `split =` under `[recorder]` (minutes, up to a day; `0` or `off` splits only before 4 GB, as before).
