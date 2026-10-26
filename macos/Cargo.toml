@@ -1,0 +1,37 @@
+[package]
+name = "bananasplit"
+version = "2.8.3"
+edition = "2024"
+description = "6-strip, 5-bus low-latency virtual audio mixer for macOS (Core Audio), with EQ, a recorder and player, scenes and Voicemeeter-compatible VBAN"
+license = "MIT"
+rust-version = "1.85"
+
+# Core Audio, CoreFoundation and the few libc calls use hand-declared FFI
+# (src/mac/ffi.rs, src/mac/sys.rs). The app window uses Tao/Wry and the
+# system's WKWebView, its menu bar icon and menus tray-icon (and its muda).
+[dependencies]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tao = "0.37"
+wry = "0.57"
+# 0.21 is the newest that builds with Rust 1.85; it uses Tao's objc2 0.6.
+tray-icon = { version = "0.21", default-features = false }
+
+[lib]
+name = "bananasplit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bananasplit"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = false
+
+# The VBAN clock-drift and EQ tests simulate minutes of audio; optimized,
+# they finish in about a minute instead of five. Debug assertions stay on.
+[profile.test]
+opt-level = 2
