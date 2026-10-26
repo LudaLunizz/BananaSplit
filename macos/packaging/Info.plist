@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>BananaSplit</string>
+	<key>CFBundleDisplayName</key>
+	<string>BananaSplit</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.ludalunizz.bananasplit</string>
+	<key>CFBundleExecutable</key>
+	<string>bananasplit</string>
+	<key>CFBundleIconFile</key>
+	<string>bananasplit</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.music</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>BananaSplit mixes what your microphones, sound cards and virtual cables bring in.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>BananaSplit sends and receives VBAN network audio (the format of Voicemeeter) to and from other computers on your network.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT License</string>
+</dict>
+</plist>

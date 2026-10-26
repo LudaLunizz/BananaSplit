@@ -10,3 +10,4 @@ linux/tests/e2e/fakebin/* text eol=lf
 *.png  binary
 *.argb binary
 *.ico  binary
+*.icns binary

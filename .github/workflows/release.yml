@@ -120,13 +120,59 @@ jobs:
           path: windows/dist/*
           if-no-files-found: error
 
+  macos:
+    name: macOS app
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Check tag matches crate version
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "$TAG" ] && [ "0.$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match macos/Cargo.toml version $version (v$version or 0.$version)"
+            exit 1
+          fi
+
+      # One app for Apple silicon and Intel, signed ad hoc (Apple silicon
+      # runs nothing unsigned) but not with an Apple Developer ID: people
+      # open it the first time with Open Anyway (macos/README.md).
+      - name: Build the app
+        run: sh packaging/bundle.sh
+
+      - name: Check the app runs and has the version
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)
+          said=$(dist/BananaSplit.app/Contents/MacOS/bananasplit --version)
+          echo "$said"
+          case "$said" in
+            "BananaSplit $version "*) ;;
+            *) echo "::error::the app says \"$said\", not BananaSplit $version"; exit 1 ;;
+          esac
+          test -f "dist/bananasplit-$version-macos.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-macos
+          path: macos/dist/bananasplit-*-macos.zip
+          if-no-files-found: error
+
   # The workflow doesn't publish the release: linux/packaging/sign-release.sh
   # --release <tag>, run on the computer with the release key, takes these
   # files, signs SHA256SUMS.txt and makes the release under the maintainer's
   # own GitHub account.
   files:
     name: Release files
-    needs: [linux, flatpak, windows]
+    needs: [linux, flatpak, windows, macos]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8
