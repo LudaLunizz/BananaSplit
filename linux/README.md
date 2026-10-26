@@ -13,6 +13,20 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.1
+
+Fixes to the updater from a review of 2.8.0. Nothing to change on your side.
+
+* **Automatic updates wait two days.** With **Install updates automatically** on, a new release is installed by itself once it has been out for two days, so a broken release can be withdrawn before it reaches you. **Check now** and **Install** still take it at once.
+* **Quitting during an update on Windows** could leave BananaSplit without its `bananasplit.exe` when checking the new version took long (a virus scanner). Quitting now waits for the update to finish or stops it before it changes anything.
+* **`bananasplit --update` and the app download to folders of their own**, so running `--update` while the app is downloading no longer deletes the app's download.
+* **Downloads through wget refuse a redirect to plain HTTP**, as downloads through curl already did.
+* **A release link with an unusual character** no longer stops the check with an internal error.
+* **Releases are signed.** BananaSplit now installs a release only when its `SHA256SUMS.txt` carries the signature of BananaSplit's release key (`SHA256SUMS.txt.sig`). That key is never on GitHub, so someone who got into the GitHub account could still publish a release but not one BananaSplit installs. Matching checksums alone only showed that a download was not damaged.
+* **The .deb is checked again as root.** After you give your password, the package is copied to a folder only root can write, its SHA-256 is checked once more, and only then is it installed; apt-get also never removes another package to install it.
+* **An updated program keeps its permissions** (for example a copy only you can run stays that way).
+* **The Updates window could stay on "installing"** when a check finished just before Install started. It now always ends with what happened.
+
 ## What's new in 2.8.0
 
 * **BananaSplit can update itself.** **Menu ▸ Check for updates…** opens the Updates window: **Check now** looks for a new version on BananaSplit's GitHub releases, shows what is new in it, and **Install** downloads it, checks it and puts it in the place of the running program. The mixer keeps running on the old version; **Restart now** (or your next start) runs the new one, with your settings. See [Updates](#updates).
@@ -251,12 +265,12 @@ Every strip and every bus has a menu: the button under its name. It lists what t
 **Menu ▸ Check for updates…** opens the Updates window. It shows this version, what the last check found and, for a new version, its release notes.
 
 * **Check now** asks GitHub for BananaSplit's releases and picks the newest one that is published and not marked pre-release, with the file for your installation: the portable package (`bananasplit-<version>-linux-x86_64.tar.gz`) or, if BananaSplit came from its .deb, the new .deb.
-* **Install** downloads it to `~/.cache/bananasplit/update/` and checks it before anything is changed: it must come from BananaSplit's own release downloads over HTTPS, have the size GitHub lists, and match both GitHub's SHA-256 of the file and the release's `SHA256SUMS.txt` (a release without a checksum is refused). The new program must also run on this computer and say it is that version.
+* **Install** downloads it to `~/.cache/bananasplit/update/` (`bananasplit --update`: `update-cli/`) and checks it before anything is changed: it must come from BananaSplit's own release downloads over HTTPS, have the size GitHub lists, and match the release's `SHA256SUMS.txt`, which must be signed with BananaSplit's release key (`SHA256SUMS.txt.sig`; an unsigned release is refused), and GitHub's SHA-256 of the file. The new program must also run on this computer and say it is that version.
   * **Portable package, or a copy in a folder of yours:** the new `bananasplit` is written next to the old one and renamed over it (in one step, so there is never half a program). The copy in `~/.local/bin` that your app menu starts is updated too. The mixer that runs keeps using the old program until it ends.
-  * **The .deb:** BananaSplit runs `pkexec apt-get install` with the downloaded package, so your desktop asks for your password.
+  * **The .deb:** BananaSplit installs the downloaded package with `apt-get` through `pkexec`, so your desktop asks for your password. As root, the package is first copied to a folder only root can write and checked again, and apt-get never removes another package for it.
   * **Anything else** (another package manager, an AppImage, a folder BananaSplit cannot write to): the window says so, and **Release page** opens the release in your browser so you can install it yourself.
 * **Restart now** saves everything, removes the cables, quits, and starts the new version with the same options. It stays offered until you restart, also when a later check fails. While you are recording it asks for a second click, because the restart ends the take.
-* **Install updates automatically** is **off** by default (`auto_update` in `[gui]`, written only when it is on). Off, BananaSplit asks nothing of anybody: it checks only when you click Check now. On, it checks a minute after it starts and then once a day (an hour later if a check fails), installs a new version by itself, and says in the status line and with a dot on the Menu button that a restart finishes the update. It never restarts on its own. With the .deb it downloads and checks the package by itself and waits for you to click Install (and enter your password).
+* **Install updates automatically** is **off** by default (`auto_update` in `[gui]`, written only when it is on). Off, BananaSplit asks nothing of anybody: it checks only when you click Check now. On, it checks a minute after it starts and then once a day (an hour later if a check fails), installs a new version by itself once it has been published for two days (so a broken release can be withdrawn before it reaches you; Install takes it at once), and says in the status line and with a dot on the Menu button that a restart finishes the update. It never restarts on its own. With the .deb it downloads and checks the package by itself and waits for you to click Install (and enter your password).
 * `bananasplit --update` checks and installs from a terminal (a running BananaSplit uses the new version after a restart). With the .deb, it installs in a terminal (it asks for your password there) and otherwise prints the `sudo apt install` command for the package it checked.
 * Downloads use `curl` (or `wget` when there is no curl; only curl is told to stay on HTTPS through GitHub's redirects, so prefer it); the .deb recommends curl. Only the terminal UI and `--headless` never check by themselves: the setting is the app's.
 
@@ -336,7 +350,8 @@ zoom = 1
 window = 1780x1000
 # the scene loaded last (the SCENE menu shows it)
 scene = Live Room
-# install new versions by itself, checking once a day (default false:
+# install new versions by itself, checking once a day; a release is installed
+# once it has been out for two days (default false:
 # BananaSplit checks only when you click Check now)
 auto_update = false
 

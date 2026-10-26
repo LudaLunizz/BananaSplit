@@ -25,9 +25,9 @@ Extract the release zip, put `bananasplit.exe` in a folder of your own (your Des
 **Menu ▸ Check for updates…** opens the Updates window.
 
 - **Check now** looks for the newest BananaSplit release on GitHub that is published and not marked pre-release, and shows its notes.
-- **Install** downloads `bananasplit-<version>-windows-x64.exe` to `%LOCALAPPDATA%\bananasplit\update\` and checks it first: it must come from BananaSplit's release downloads over HTTPS, have the size GitHub lists, and match GitHub's SHA-256 of the file and the release's `SHA256SUMS.txt`; then it must run and say it is that version. Windows doesn't let a running program be overwritten, so the running `bananasplit.exe` is renamed to `bananasplit.exe.old` and the new one takes its name (and so keeps your Start Menu shortcut and "Start with Windows"). The next start removes the `.old` file.
+- **Install** downloads `bananasplit-<version>-windows-x64.exe` to `%LOCALAPPDATA%\bananasplit\update\` and checks it first: it must come from BananaSplit's release downloads over HTTPS, have the size GitHub lists, and match the release's `SHA256SUMS.txt`, which must be signed with BananaSplit's release key (`SHA256SUMS.txt.sig`), and GitHub's SHA-256 of the file; then it must run and say it is that version. Windows doesn't let a running program be overwritten, so the running `bananasplit.exe` is renamed to `bananasplit.exe.old` and the new one takes its name (and so keeps your Start Menu shortcut and "Start with Windows"). The next start removes the `.old` file.
 - **Restart now** saves, quits and starts the new version. While you are recording it asks for a second click.
-- **Install updates automatically** is **off** by default. Off, BananaSplit checks only when you click Check now. On, it checks a minute after it starts and once a day, installs a new version by itself and says when a restart finishes it; it never restarts on its own.
+- **Install updates automatically** is **off** by default. Off, BananaSplit checks only when you click Check now. On, it checks a minute after it starts and once a day, installs a new version by itself once it has been out for two days (Install takes it at once) and says when a restart finishes it; it never restarts on its own.
 - In a folder BananaSplit cannot write to (under Program Files, for example), it says so and **Release page** opens the download in your browser. Keep `bananasplit.exe` in a folder of your own (your Desktop, Documents or `%LOCALAPPDATA%\Programs`) to let it update itself.
 - `bananasplit.exe --update` checks and installs from a terminal. While BananaSplit is running it refuses (the running app would open its window from the new file): use its menu, or quit it first.
 - Downloads use Windows' own `curl.exe` (part of Windows 10 and 11). It uses the `HTTPS_PROXY` variable for a proxy, not the proxy set in Windows' settings.
@@ -58,7 +58,7 @@ Extract the release zip, put `bananasplit.exe` in a folder of your own (your Des
 | Recordings | `~/Music/BananaSplit/` by default, configurable in the app or config |
 | Port file | `%LOCALAPPDATA%\bananasplit\<client>.port` |
 | Window (WebView2) data | `%LOCALAPPDATA%\bananasplit\WebView2\` |
-| Downloaded updates (until installed) | `%LOCALAPPDATA%\bananasplit\update\` |
+| Downloaded updates (until installed) | `%LOCALAPPDATA%\bananasplit\update\` (`--update`: `update-cli\`) |
 
 ## System integration
 

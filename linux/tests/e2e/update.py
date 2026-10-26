@@ -7,7 +7,8 @@ computer (BANANASPLIT_UPDATE_SOURCE) and the mock JACK server:
 * "Check now" finds the newest published release (not a draft, not a
   pre-release, not an older one), and its notes;
 * a download that does not match the release's checksums is refused, and
-  nothing is changed;
+  nothing is changed; so is a release whose SHA256SUMS.txt is not signed
+  with the release key (here a test key, BANANASPLIT_UPDATE_KEY);
 * "Install" puts the new program in the place of the running one (after
   it ran and said its version), and "Restart now" starts it, with the same
   command line, once the old one has saved and let go;
@@ -89,6 +90,26 @@ TAMPERED = bytearray(TGZ)
 TAMPERED[len(TGZ) // 2] ^= 0xFF
 TAMPERED = bytes(TAMPERED)
 
+# ---- the release key (a test one) and the signed checksums
+KEY = os.path.join(WORK, "key.pem")
+subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", KEY], check=True, capture_output=True)
+PUBKEY = subprocess.run(["openssl", "pkey", "-in", KEY, "-pubout", "-outform", "DER"], check=True, capture_output=True).stdout[-32:].hex()
+SUMS = f"{hashlib.sha256(TGZ).hexdigest()}  {TGZ_NAME}\n".encode()
+
+
+def sign(data, key=KEY):
+    with open(os.path.join(WORK, "to-sign"), "wb") as f:
+        f.write(data)
+    sig = subprocess.run(["openssl", "pkeyutl", "-sign", "-rawin", "-inkey", key, "-in", os.path.join(WORK, "to-sign")],
+                         check=True, capture_output=True).stdout
+    return (sig.hex() + "\n").encode()
+
+
+SIG = sign(SUMS)
+OTHER_KEY = os.path.join(WORK, "other.pem")
+subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", OTHER_KEY], check=True, capture_output=True)
+FOREIGN_SIG = sign(SUMS, OTHER_KEY)
+
 
 class Fake:
     """The parts of GitHub the updater uses."""
@@ -126,7 +147,9 @@ class Fake:
                     body = TGZ if fake.mode != "tampered" else TAMPERED
                     return self.send(200, body)
                 if self.path == "/blob/SHA256SUMS.txt":
-                    return self.send(200, f"{hashlib.sha256(TGZ).hexdigest()}  {TGZ_NAME}\n".encode(), "text/plain")
+                    return self.send(200, SUMS, "text/plain")
+                if self.path == "/blob/SHA256SUMS.txt.sig":
+                    return self.send(200, fake.sig(), "text/plain")
                 self.send(404, b"not found", "text/plain")
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
@@ -138,17 +161,24 @@ class Fake:
         def rel(tag, files, draft=False, pre=False):
             assets = [{"name": n, "state": "uploaded", "size": len(data), "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
                        "browser_download_url": f"{base}/{REPO}/releases/download/{tag}/{n}"} for n, data in files]
-            return {"tag_name": tag, "name": "BananaSplit " + tag, "draft": draft, "prerelease": pre,
-                    "html_url": f"{base}/{REPO}/releases/tag/{tag}", "body": f"What changed in {tag}.\r\n- the updater", "assets": assets}
+            r = {"tag_name": tag, "name": "BananaSplit " + tag, "draft": draft, "prerelease": pre,
+                 "html_url": f"{base}/{REPO}/releases/tag/{tag}", "body": f"What changed in {tag}.\r\n- the updater", "assets": assets}
+            if self.mode == "fresh":
+                # published a minute ago
+                r["published_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60))
+            return r
         if self.mode == "old":
             return [rel("v2.0.0", [("bananasplit-2.0.0-linux-x86_64.tar.gz", b"old")])]
-        sums = f"{hashlib.sha256(TGZ).hexdigest()}  {TGZ_NAME}\n".encode()
+        signed = [("SHA256SUMS.txt", SUMS)] + ([] if self.mode == "unsigned" else [("SHA256SUMS.txt.sig", self.sig())])
         return [
             rel("v10.0.0", [("bananasplit-10.0.0-linux-x86_64.tar.gz", b"draft")], draft=True),
             rel("v9.10.0", [("bananasplit-9.10.0-linux-x86_64.tar.gz", b"pre")], pre=True),
-            rel(f"v{NEW}", [(TGZ_NAME, TGZ), ("SHA256SUMS.txt", sums), (f"bananasplit_{NEW}_amd64.deb", b"deb")]),
+            rel(f"v{NEW}", [(TGZ_NAME, TGZ), *signed, (f"bananasplit_{NEW}_amd64.deb", b"deb")]),
             rel("v2.0.0", [("bananasplit-2.0.0-linux-x86_64.tar.gz", b"old")]),
         ]
+
+    def sig(self):
+        return FOREIGN_SIG if self.mode == "foreign" else SIG
 
     def api_calls(self):
         return [p for p, _, _ in self.log if p.startswith("/repos/")]
@@ -177,7 +207,8 @@ class Mixer:
         env = dict(os.environ, HOME=self.home, XDG_CONFIG_HOME=self.home, XDG_CACHE_HOME=os.path.join(self.home, "cache"),
                    XDG_DATA_HOME=os.path.join(self.home, "data"), LD_LIBRARY_PATH=here,
                    MOCKJACK_REPORT=os.path.join(self.home, "report.txt"), MOCKJACK_REALTIME="1", MOCKJACK_CYCLES="100000000",
-                   BANANASPLIT_UPDATE_SOURCE=fake.url, BANANASPLIT_UPDATE_DELAY=delay, UPDATE_MARKER=self.marker)
+                   BANANASPLIT_UPDATE_SOURCE=fake.url, BANANASPLIT_UPDATE_KEY=PUBKEY, BANANASPLIT_UPDATE_DELAY=delay,
+                   UPDATE_MARKER=self.marker)
         for k in ("DISPLAY", "WAYLAND_DISPLAY", "BANANASPLIT_WAIT_PID", "PIPEWIRE_LATENCY"):
             env.pop(k, None)
         self.env = env
@@ -292,13 +323,30 @@ try:
     check(same(m.app, binary), "the program was not touched")
     check(u["canInstall"] is True, "it can be tried again")
 
+    # ---- a release that is not signed with the release key ---------------------
+    for mode, what in [("foreign", "signed with another key"), ("unsigned", "without a signature")]:
+        fake.mode = mode
+        m.post(op="update", a="check")
+        m.until(lambda u: u["phase"] == "available", f"a release {what} is still found")
+        n = len(fake.log)
+        m.post(op="update", a="install")
+        u = m.until(lambda u: u["phase"] == "failed", f"a release {what} is not installed")
+        check("not signed" in u["message"], f"and says why: {u['message']}")
+        check(same(m.app, binary), "the program was not touched")
+        check(not any(p.endswith(TGZ_NAME) for p, _, _ in fake.log[n:]), f"the package itself was not even downloaded: {fake.log[n:]}")
+    # (the signed release again: what the next Install gets)
+    fake.mode = "good"
+    m.post(op="update", a="check")
+    m.until(lambda u: u["phase"] == "available", "the signed release is found again")
+
     # ---- Install ---------------------------------------------------------------
     fake.mode = "good"
     st, msg = m.post(op="update", a="install")
     u = m.until(lambda u: u["phase"] == "ready", "Install downloads, checks and installs it")
     check(u["installed"] == NEW and "Restart BananaSplit" in u["message"], f"and asks for a restart: {u}")
     check(open(m.app, "rb").read() == NEW_PROGRAM, "the new program took the old one's place")
-    check(stat.S_IMODE(os.stat(m.app).st_mode) == 0o755, "and can be run")
+    was = stat.S_IMODE(os.stat(binary).st_mode)
+    check(stat.S_IMODE(os.stat(m.app).st_mode) == was | 0o700, f"and can be run, with the old one's permissions ({oct(was)})")
     check(sorted(os.listdir(os.path.dirname(m.app))) == ["bananasplit"], f"nothing else left next to it: {os.listdir(os.path.dirname(m.app))}")
     left = os.listdir(os.path.join(m.home, "cache", "bananasplit", "update"))
     check(left == [], f"the downloads folder is emptied: {left}")
@@ -381,6 +429,26 @@ try:
 finally:
     m.stop()
 
+# ---- a release published just now: automatic updates leave it for two days --------
+fake.log.clear()
+fake.mode = "fresh"
+m = Mixer(gui="auto_update = true\n", delay="1")
+try:
+    u = m.until(lambda u: u["phase"] == "available", "automatic updates find a release published a minute ago", secs=25)
+    check("two days" in u["message"], f"and say it installs itself after two days: {u['message']}")
+    time.sleep(2.0)
+    u = m.update()
+    check(u["phase"] == "available" and u["installed"] is None, f"it is not installed by itself: {u}")
+    check(open(m.app, "rb").read() != NEW_PROGRAM, "the program was not replaced")
+    check(not any("/blob/" in p for p, _, _ in fake.log), f"nothing was downloaded: {fake.log}")
+    check(u["canInstall"] is True, "Install still does it now")
+    m.post(op="update", a="install")
+    u = m.until(lambda u: u["phase"] == "ready", "Install installs it at once", secs=25)
+    check(open(m.app, "rb").read() == NEW_PROGRAM, "the program was replaced")
+finally:
+    m.stop()
+fake.mode = "good"
+
 # ---- GitHub's rate limit --------------------------------------------------------
 fake.mode = "limited"
 m = Mixer()
@@ -426,6 +494,16 @@ m = Mixer(start=False)
 r = subprocess.run([m.app, "--update"], env=m.env, capture_output=True, text=True, timeout=60)
 check(r.returncode != 0 and "does not match" in r.stderr, f"--update refuses a tampered download: {r.stdout} {r.stderr}")
 check(same(m.app, binary), "and changes nothing")
+fake.mode = "foreign"
+m = Mixer(start=False)
+r = subprocess.run([m.app, "--update"], env=m.env, capture_output=True, text=True, timeout=60)
+check(r.returncode != 0 and "not signed" in r.stderr, f"--update refuses a release not signed with the release key: {r.stdout} {r.stderr}")
+check(same(m.app, binary), "and changes nothing")
+fake.mode = "good"
+env = dict(m.env)
+del env["BANANASPLIT_UPDATE_KEY"]
+r = subprocess.run([m.app, "--update"], env=env, capture_output=True, text=True, timeout=60)
+check(r.returncode != 0 and "not signed" in r.stderr, f"without the test key, BananaSplit's own key is asked for: {r.stdout} {r.stderr}")
 r = subprocess.run([m.app, "--update", "--gui"], env=m.env, capture_output=True, text=True, timeout=20)
 check(r.returncode != 0, "--update is a command of its own")
 
