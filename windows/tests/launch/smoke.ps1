@@ -454,6 +454,39 @@ port_file, exe, log = sys.argv[1], sys.argv[2], sys.argv[3]
 data = open(exe, "rb").read()
 NAME = "bananasplit-9.9.9-windows-x64.exe"
 REPO = "LudaLunizz/BananaSplit"
+# SHA256SUMS.txt is signed (Ed25519, RFC 8032's reference algorithm) with
+# a test key: RFC 8032's first test key, BANANASPLIT_UPDATE_KEY below
+P = 2**255 - 19
+Q = 2**252 + 27742317777372353535851937790883648493
+D = -121665 * pow(121666, P - 2, P) % P
+def add(a, b):
+    A, B = (a[1] - a[0]) * (b[1] - b[0]) % P, (a[1] + a[0]) * (b[1] + b[0]) % P
+    C, E = 2 * a[3] * b[3] * D % P, 2 * a[2] * b[2] % P
+    e, f, g, h = B - A, E - C, E + C, B + A
+    return (e * f, g * h, f * g, e * h)
+def mul(s, pt):
+    r = (0, 1, 1, 0)
+    while s:
+        if s & 1: r = add(r, pt)
+        pt, s = add(pt, pt), s >> 1
+    return r
+def enc(pt):
+    zi = pow(pt[2], P - 2, P)
+    return int.to_bytes(pt[1] * zi % P | ((pt[0] * zi % P) & 1) << 255, 32, "little")
+GY = 4 * pow(5, P - 2, P) % P
+GX = pow((GY * GY - 1) * pow(D * GY * GY + 1, P - 2, P), (P + 3) // 8, P)
+if (GX * GX - (GY * GY - 1) * pow(D * GY * GY + 1, P - 2, P)) % P: GX = GX * pow(2, (P - 1) // 4, P) % P
+if GX & 1: GX = P - GX
+G = (GX, GY, 1, GX * GY % P)
+def sign(secret, msg):
+    h = hashlib.sha512(secret).digest()
+    a = int.from_bytes(h[:32], "little") & ((1 << 254) - 8) | (1 << 254)
+    pub = enc(mul(a, G))
+    r = int.from_bytes(hashlib.sha512(h[32:] + msg).digest(), "little") % Q
+    R = enc(mul(r, G))
+    k = int.from_bytes(hashlib.sha512(R + pub + msg).digest(), "little") % Q
+    return R + int.to_bytes((r + k * a) % Q, 32, "little")
+TEST_SECRET = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, code, body, extra=()):
@@ -468,10 +501,11 @@ class H(http.server.BaseHTTPRequestHandler):
             f.write(self.path + "\n")
         base = "http://127.0.0.1:%d" % self.server.server_address[1]
         sums = ("%s  %s\n" % (hashlib.sha256(data).hexdigest(), NAME)).encode()
+        sig = (sign(TEST_SECRET, sums).hex() + "\n").encode()
         if self.path.startswith("/repos/%s/releases" % REPO):
             dl = base + "/%s/releases/download/v9.9.9/" % REPO
             assets = [{"name": n, "state": "uploaded", "size": len(b), "digest": "sha256:" + hashlib.sha256(b).hexdigest(), "browser_download_url": dl + n}
-                      for n, b in [(NAME, data), ("SHA256SUMS.txt", sums)]]
+                      for n, b in [(NAME, data), ("SHA256SUMS.txt", sums), ("SHA256SUMS.txt.sig", sig)]]
             rel = [{"tag_name": "v9.9.9", "draft": False, "prerelease": False, "html_url": base + "/%s/releases/tag/v9.9.9" % REPO,
                     "body": "Test release", "assets": assets}]
             return self.send(200, json.dumps(rel).encode())
@@ -479,6 +513,8 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.send(200, data)
         if self.path.endswith("/SHA256SUMS.txt"):
             return self.send(200, sums)
+        if self.path.endswith("/SHA256SUMS.txt.sig"):
+            return self.send(200, sig)
         self.send(404, b"")
 s = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
 open(port_file, "w").write(str(s.server_address[1]))
@@ -490,6 +526,8 @@ $srv = Start-Process -FilePath $py -ArgumentList "`"$upd\github.py`"", "`"$upd\p
 Check (Until { Test-Path "$upd\port.txt" } 20) "the stand-in for GitHub runs"
 $env:BANANASPLIT_UPDATE_SOURCE = "http://127.0.0.1:" + (Get-Content -Raw "$upd\port.txt").Trim()
 $env:BS_UPDATE_MARKER = "$upd\marker.txt"
+# the public half of the test key the stand-in signs with
+$env:BANANASPLIT_UPDATE_KEY = 'd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'
 $env:BS_REAL_EXE = "$upd\real\bananasplit.exe"
 # what an update left next to the real copy: removed when it starts
 Set-Content -Path "$upd\real\bananasplit.exe.old" -Value 'old'
@@ -540,7 +578,7 @@ $cliOut = (& "$upd\cli\bananasplit.exe" --update 2>&1 | Out-String)
 Check ($LASTEXITCODE -eq 0 -and $cliOut -match 'installed BananaSplit 9\.9\.9') "--update installs it ($($cliOut.Trim()))"
 Check ((Get-FileHash "$upd\cli\bananasplit.exe").Hash -eq (Get-FileHash "$upd\fake.exe").Hash -and (Test-Path "$upd\cli\bananasplit.exe.old")) "in the place of the program that ran it"
 Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
-Remove-Item Env:\BANANASPLIT_UPDATE_SOURCE, Env:\BS_UPDATE_MARKER, Env:\BS_REAL_EXE -ErrorAction SilentlyContinue
+Remove-Item Env:\BANANASPLIT_UPDATE_SOURCE, Env:\BANANASPLIT_UPDATE_KEY, Env:\BS_UPDATE_MARKER, Env:\BS_REAL_EXE -ErrorAction SilentlyContinue
 
 # ---- at login, the taskbar may come after BananaSplit ----
 # Windows starts the autostart entry while Explorer is still starting. Here:

@@ -237,9 +237,9 @@ pub struct GuiConfig {
     pub window: Option<(u32, u32)>,
     /// The scene loaded or saved last ("" = none).
     pub scene: String,
-    /// Check for new versions once a day and install them (off: only when
-    /// the user asks). Written only when on, so an older BananaSplit can
-    /// still read the file.
+    /// Check for new versions once a day and install them once they are
+    /// two days old (off: only when the user asks). Written only when on,
+    /// so an older BananaSplit can still read the file.
     pub auto_update: bool,
 }
 
