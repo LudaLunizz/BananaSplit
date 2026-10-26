@@ -10,7 +10,7 @@
 //! * `GET  /api/ping`    `bananasplit-gui` (lets a second `bananasplit --gui` find this one)
 //! * `GET  /api/devices` what each channel can be connected to (its menu, JSON)
 //! * `GET  /api/update`  the updater's release page and notes (JSON)
-//! * `GET  /api/cables`  VB-Audio cables, Voicemeeter, Windows defaults (JSON)
+//! * `GET  /api/cables`  Splitter and VB-Audio cables, Voicemeeter, Windows defaults (JSON)
 //! * `POST /api/cmd`     one control change, form-encoded (`op=gain&ch=0&v=-3.5`)
 //!
 //! All mixer parameters (EQ, input gain and pan included) are atomics in
@@ -139,7 +139,7 @@ pub struct Hub {
     zoom: AtomicU32,
     pub autostart: AtomicBool,
     pub installed: AtomicBool,
-    /// The first start without VB-Audio cables: the page opens its
+    /// The first start without virtual cables: the page opens its
     /// "Virtual cables" window by itself, once.
     pub cable_welcome: AtomicBool,
     state: Mutex<(u64, Arc<String>)>,
@@ -1257,6 +1257,10 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
             Ok(msg)
         }
         "cables" => match f.req("a")? {
+            "splitter" => {
+                crate::desktop::open_page(crate::win::route::SPLITTER_PAGE)?;
+                Ok("opening the Splitter page in your browser".into())
+            }
             "page" => {
                 crate::desktop::open_page(crate::win::cables::VBCABLE_PAGE)?;
                 Ok("opening the VB-Audio page in your browser".into())

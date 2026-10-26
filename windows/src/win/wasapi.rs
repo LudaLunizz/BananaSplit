@@ -9,7 +9,7 @@
 //!
 //! Every stream is opened in **shared mode at 48 kHz, stereo, float32**,
 //! with AUTOCONVERTPCM, so Windows converts whatever the device runs at.
-//! Shared mode never blocks other apps, and VB-Audio cables can be opened
+//! Shared mode never blocks other apps, and virtual cables can be opened
 //! as many times as needed.
 //!
 //! Each Windows device has its own clock, so unlike JACK there is no single
@@ -440,7 +440,7 @@ impl Graph {
                         if !idx.contains(&i) {
                             idx.push(i);
                             shown.push(route::short_name(&d.name).to_string());
-                            if route::is_vb_cable(&d.name) {
+                            if route::is_cable(&d.name) {
                                 cables.insert(
                                     route::short_name(&d.name)
                                         .replace(" Input", "")
@@ -495,6 +495,8 @@ impl Graph {
             bus_devs.push(idx);
             desc.push(text);
         }
+
+        errs.extend(route::splitter_feedback(&cap_info, &ren_info, &strip_devs, &bus_devs));
 
         // ---- open render streams: first one becomes the master clock ------
         let mut master: Option<(usize, Stream)> = None;

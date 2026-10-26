@@ -269,13 +269,15 @@ if ($state) {
     Annotate 'notice' 'Mixer state' $line
 }
 Check (Until { (App-Windows).Count -ge 1 } 30) "a window titled BananaSplit opens"
-# The first start, without VB-Audio cables (the runner has none): the
-# page opens its "Virtual cables" window by itself (no message box that
-# could hide behind the window), and what happened at start is on the page.
+# The first start, without virtual cables (the runner has neither Splitter
+# nor VB-Audio's): the page opens its "Virtual cables" window by itself (no
+# message box that could hide behind the window), and what happened at
+# start is on the page.
 $cab = $null
 Check (Until { $script:cab = Get-Http '/api/cables' | ConvertFrom-Json; $null -ne $script:cab } 10) "it reports the virtual cables (valid JSON)"
 if ($cab) { Annotate 'notice' 'Virtual cables' ($cab | ConvertTo-Json -Compress) }
 Check ($cab.welcome -eq $true -and @($cab.pairs).Count -eq 0) "the first start without cables asks the page for the Virtual cables window"
+Check ($cab.splitter.found -eq $false -and @($cab.splitter.cables).Count -eq 0 -and @($cab.splitter.missing).Count -eq 11) "it reports Splitter as not installed, all 11 cables missing"
 Start-Sleep -Seconds 2
 Check ([BsSmoke.Win]::Dialogs([uint32]$p.Id).Count -eq 0) "and shows no message box"
 try { [void](Post-Cmd 'op=cables&a=seen') } catch { }

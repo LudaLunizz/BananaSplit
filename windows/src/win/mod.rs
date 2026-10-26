@@ -1,9 +1,10 @@
-//! Windows session: WASAPI shared-mode streams + VB-Audio virtual cables.
+//! Windows session: WASAPI shared-mode streams + virtual cables (Splitter,
+//! BananaSplit's own, or VB-Audio's).
 //!
 //! | Linux (version 2)                  | Windows                                           |
 //! |------------------------------------|---------------------------------------------------|
 //! | JACK client, one graph clock       | WASAPI streams, master clock + drift-corrected rings |
-//! | PipeWire null-sink cables (pactl)  | VB-Audio cables (driver; prompt to install)       |
+//! | PipeWire null-sink cables (pactl)  | Splitter or VB-Audio cables (drivers, optional)   |
 //! | JACK port regex in `connect`       | part of a device name in `connect`                |
 //! | termios raw mode, signals          | console raw mode, console control handler        |
 
@@ -44,7 +45,7 @@ pub struct Status {
     pub cpu: f32,
 }
 
-/// The VB-CABLE check at start (a note when none is installed). True if
+/// The virtual cable check at start (a note when none is installed). True if
 /// none is installed: on the very first start, the app's page opens its
 /// "Virtual cables" window (`cables::report`).
 pub fn first_run(

@@ -28,7 +28,7 @@
 | Platform | Audio backend | Window |
 | --- | --- | --- |
 | Linux | JACK client on PipeWire's JACK layer or JACK2, PipeWire virtual cables | GTK 3 + WebKitGTK |
-| Windows | WASAPI shared mode, VB-Audio cables | WebView2 |
+| Windows | WASAPI shared mode, Splitter or VB-Audio cables | WebView2 |
 
 ## Download
 
@@ -81,7 +81,7 @@ The full Linux manual covering configuration, latency tuning, VBAN and the recor
 
 1. Install the [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) if it is not already present.
 2. Extract the zip and run `bananasplit.exe`. It is a single standalone program: no installer, no console window.
-3. For per-channel virtual cables, install [VB-Audio CABLE](https://vb-audio.com/Cable/) (CABLE, CABLE-A … CABLE-D).
+3. For per-channel virtual cables, install [Splitter](https://github.com/LudaLunizz/Splitter/releases), BananaSplit's own (a cable for every channel; a test build for now, see the [Windows manual](windows/README.md#virtual-cables)), or [VB-Audio CABLE](https://vb-audio.com/Cable/) (CABLE, CABLE-A … CABLE-D).
 
 BananaSplit lives in the tray: closing the window keeps the mixer running there. **Install to Start Menu** and **Start with Windows** are in the app menu.
 

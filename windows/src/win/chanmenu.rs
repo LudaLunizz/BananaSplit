@@ -1,4 +1,5 @@
-﻿//! Windows channel menus: WASAPI devices and VB-Audio virtual cables.
+﻿//! Windows channel menus: WASAPI devices and virtual cables: BananaSplit's
+//! own (Splitter: one cable per channel) and VB-Audio's.
 
 use crate::gui::DevOp;
 use bananasplit::config::{Config, DEFAULT_DEVICE, PHYSICAL};
@@ -14,6 +15,8 @@ struct Plan {
     strip_cable_label: [Option<String>; NUM_STRIPS],
     bus_cable_label: [Option<String>; NUM_BUSES],
     families: Vec<Family>,
+    /// Some Splitter endpoint is installed.
+    splitter: bool,
     ok: bool,
     why: String,
 }
@@ -63,6 +66,7 @@ fn build_plan(cfg: &Config) -> Plan {
             strip_cable_label: Default::default(),
             bus_cable_label: Default::default(),
             families: vec![],
+            splitter: false,
             ok: false,
             why: e,
         },
@@ -122,17 +126,43 @@ pub fn cable_pairs(caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Vec<Stri
 
 fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Plan {
     let families = families(caps, rens);
-    let ok = !families.is_empty();
+    let splitter = caps.iter().chain(rens).any(|d| route::is_splitter(&d.name));
+    let ok = splitter || !families.is_empty();
     let why = if ok { String::new() } else { crate::win::cables::MISSING.to_string() };
-    // assign: first all strips in order, then buses? priority strips then buses for the rest; default cable true for all
     let mut used: HashSet<usize> = HashSet::new();
     let mut strip_cable = [const { None }; NUM_STRIPS];
     let mut bus_cable = [const { None }; NUM_BUSES];
     let mut strip_cable_label = [const { None }; NUM_STRIPS];
     let mut bus_cable_label = [const { None }; NUM_BUSES];
-    // assign to strips first
+    // Splitter first: every channel has a cable of its own, so switching
+    // one on or off never moves another. Strip N records "Splitter N
+    // Output" (apps play into "Splitter N"); bus B1 plays into "Splitter B1
+    // Input" (apps record "Splitter B1"). A cable counts only with both
+    // halves there (one may be switched off in the Windows sound settings).
     for s in 0..NUM_STRIPS {
         if !cfg.strips[s].cable { continue; }
+        if let (Some(out), Some(inp)) = (
+            route::splitter_endpoint(caps, s, route::SplitterEnd::Output),
+            route::splitter_endpoint(rens, s, route::SplitterEnd::Input),
+        ) {
+            strip_cable[s] = Some(out.name.clone());
+            strip_cable_label[s] = Some(inp.name.clone());
+        }
+    }
+    for b in 0..NUM_BUSES {
+        if !cfg.buses[b].cable { continue; }
+        if let (Some(inp), Some(out)) = (
+            route::splitter_endpoint(rens, NUM_STRIPS + b, route::SplitterEnd::Input),
+            route::splitter_endpoint(caps, NUM_STRIPS + b, route::SplitterEnd::Output),
+        ) {
+            bus_cable[b] = Some(inp.name.clone());
+            bus_cable_label[b] = Some(out.name.clone());
+        }
+    }
+    // VB-Audio pairs for the channels Splitter doesn't cover: strips first,
+    // in order, then buses.
+    for s in 0..NUM_STRIPS {
+        if !cfg.strips[s].cable || strip_cable[s].is_some() { continue; }
         // find free family not conflicting with explicit connects
         for (idx,f) in families.iter().enumerate() {
             if used.contains(&idx) { continue; }
@@ -151,9 +181,8 @@ fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo
             break;
         }
     }
-    // assign to buses
     for b in 0..NUM_BUSES {
-        if !cfg.buses[b].cable { continue; }
+        if !cfg.buses[b].cable || bus_cable[b].is_some() { continue; }
         for (idx,f) in families.iter().enumerate() {
             if used.contains(&idx) { continue; }
             let mut conflict = false;
@@ -169,7 +198,23 @@ fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo
             break;
         }
     }
-    Plan { strip_cable, bus_cable, strip_cable_label, bus_cable_label, families, ok, why }
+    Plan { strip_cable, bus_cable, strip_cable_label, bus_cable_label, families, splitter, ok, why }
+}
+
+/// Why channel `ch`'s cable can't be switched on, although some virtual
+/// cable is installed.
+fn no_free_cable(p: &Plan, ch: usize) -> String {
+    if p.splitter {
+        format!(
+            "{} is missing (switched off or renamed in the Windows sound settings?), and no VB-Audio cable pair is free",
+            route::splitter_name(ch)
+        )
+    } else {
+        format!(
+            "All {} installed VB-Audio cable pair(s) are already used. Install Splitter, BananaSplit's own cables (one for every channel: Menu › Virtual cables…), or more VB-Audio cables, or switch another channel's cable off.",
+            p.families.len()
+        )
+    }
 }
 
 fn json_escape(s: &str) -> String {
@@ -364,11 +409,9 @@ fn apply_dev(cfg: &mut Config, op: DevOp) -> Result<String, String> {
         }
         DevOp::Cable { ch, on } => {
             let p0 = build_plan(cfg);
-            if on && p0.families.is_empty() {
-                return Err(format!(
-                    "No VB-Audio virtual cable installed. Install VB-CABLE from {} to enable per-channel cables.",
-                    crate::win::cables::VBCABLE_PAGE
-                ));
+            if on && !p0.ok {
+                // no cable installed (or the devices can't be listed)
+                return Err(p0.why.clone());
             }
             if ch < NUM_STRIPS {
                 cfg.strips[ch].cable = on;
@@ -376,10 +419,7 @@ fn apply_dev(cfg: &mut Config, op: DevOp) -> Result<String, String> {
                     let p2 = build_plan(cfg);
                     if p2.strip_cable[ch].is_none() {
                         cfg.strips[ch].cable = false;
-                        return Err(format!(
-                            "All {} installed VB-Audio cable pair(s) are already used. Install more (CABLE-A to CABLE-D) or switch another channel's cable off.",
-                            p0.families.len()
-                        ));
+                        return Err(no_free_cable(&p0, ch));
                     }
                 }
             } else {
@@ -392,10 +432,7 @@ fn apply_dev(cfg: &mut Config, op: DevOp) -> Result<String, String> {
                     let p2 = build_plan(cfg);
                     if p2.bus_cable[b].is_none() {
                         cfg.buses[b].cable = false;
-                        return Err(format!(
-                            "All {} installed VB-Audio cable pair(s) are already used. Install more (CABLE-A to CABLE-D) or switch another channel's cable off.",
-                            p0.families.len()
-                        ));
+                        return Err(no_free_cable(&p0, ch));
                     }
                 }
             }
@@ -430,4 +467,142 @@ pub fn views(cfg: &Config) -> Vec<crate::gui::ChanView> {
         v.push(crate::gui::ChanView { dev, cable: plan.bus_cable[i].is_some() });
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn devs(names: &[&str]) -> Vec<route::DevInfo> {
+        names.iter().enumerate().map(|(i, n)| route::DevInfo { name: n.to_string(), id: format!("id{i}") }).collect()
+    }
+
+    /// Every Splitter endpoint, minus the ones named in `without`.
+    fn splitter(without: &[&str]) -> (Vec<route::DevInfo>, Vec<route::DevInfo>) {
+        let (mut caps, mut rens) = (Vec::new(), Vec::new());
+        for ch in 0..NUM_STRIPS + NUM_BUSES {
+            let n = route::splitter_name(ch);
+            let (input, output) = if ch < NUM_STRIPS { (n.clone(), format!("{n} Output")) } else { (format!("{n} Input"), n) };
+            if !without.contains(&input.as_str()) {
+                rens.push(format!("{input} (Splitter Cables)"));
+            }
+            if !without.contains(&output.as_str()) {
+                caps.push(format!("{output} (Splitter Cables)"));
+            }
+        }
+        let caps: Vec<&str> = caps.iter().map(|s| s.as_str()).collect();
+        let rens: Vec<&str> = rens.iter().map(|s| s.as_str()).collect();
+        (devs(&caps), devs(&rens))
+    }
+
+    const VB_CAPS: [&str; 2] = ["CABLE Output (VB-Audio Virtual Cable)", "CABLE-A Output (VB-Audio Cable A)"];
+    const VB_RENS: [&str; 2] = ["CABLE Input (VB-Audio Virtual Cable)", "CABLE-A Input (VB-Audio Cable A)"];
+
+    #[test]
+    fn splitter_gives_every_channel_its_own_cable() {
+        let mut cfg = Config::default();
+        for b in &mut cfg.buses {
+            b.cable = true;
+        }
+        let (caps, rens) = splitter(&[]);
+        let p = build_plan_info(&cfg, &caps, &rens);
+        assert!(p.ok && p.splitter && p.why.is_empty());
+        for s in 0..NUM_STRIPS {
+            assert_eq!(p.strip_cable[s].as_deref(), Some(format!("Splitter {} Output (Splitter Cables)", s + 1).as_str()));
+            assert_eq!(p.strip_cable_label[s].as_deref(), Some(format!("Splitter {} (Splitter Cables)", s + 1).as_str()));
+        }
+        for (b, id) in ["A1", "A2", "A3", "B1", "B2"].iter().enumerate() {
+            assert_eq!(p.bus_cable[b].as_deref(), Some(format!("Splitter {id} Input (Splitter Cables)").as_str()));
+            assert_eq!(p.bus_cable_label[b].as_deref(), Some(format!("Splitter {id} (Splitter Cables)").as_str()));
+        }
+    }
+
+    #[test]
+    fn default_config_uses_strips_and_b_buses() {
+        // strips and B1, B2 have their cables on; A1..A3 are speakers
+        let cfg = Config::default();
+        let (caps, rens) = splitter(&[]);
+        let p = build_plan_info(&cfg, &caps, &rens);
+        assert!(p.strip_cable.iter().all(|c| c.is_some()));
+        assert_eq!(p.bus_cable.iter().map(|c| c.is_some()).collect::<Vec<_>>(), [false, false, false, true, true]);
+    }
+
+    #[test]
+    fn switching_one_cable_off_moves_no_other() {
+        let mut cfg = Config::default();
+        cfg.strips[1].cable = false;
+        cfg.buses[3].cable = false;
+        let (caps, rens) = splitter(&[]);
+        let p = build_plan_info(&cfg, &caps, &rens);
+        assert!(p.strip_cable[1].is_none());
+        assert_eq!(p.strip_cable[2].as_deref(), Some("Splitter 3 Output (Splitter Cables)"));
+        assert!(p.bus_cable[3].is_none());
+        assert_eq!(p.bus_cable[4].as_deref(), Some("Splitter B2 Input (Splitter Cables)"));
+    }
+
+    #[test]
+    fn vb_audio_covers_what_splitter_does_not() {
+        let cfg = Config::default();
+        // strip 2's "Splitter 2" and bus B1's "Splitter B1" switched off in Windows
+        let (mut caps, mut rens) = splitter(&["Splitter 2", "Splitter B1"]);
+        caps.extend(devs(&VB_CAPS).into_iter().map(|mut d| { d.id.push_str("vb"); d }));
+        rens.extend(devs(&VB_RENS).into_iter().map(|mut d| { d.id.push_str("vb"); d }));
+        let p = build_plan_info(&cfg, &caps, &rens);
+        // strips first: strip 2 gets CABLE, then bus B1 gets CABLE-A
+        assert_eq!(p.strip_cable[1].as_deref(), Some(VB_CAPS[0]));
+        assert_eq!(p.strip_cable_label[1].as_deref(), Some(VB_RENS[0]));
+        assert_eq!(p.bus_cable[3].as_deref(), Some(VB_RENS[1]));
+        assert_eq!(p.bus_cable_label[3].as_deref(), Some(VB_CAPS[1]));
+        // the others keep their Splitter cables
+        assert_eq!(p.strip_cable[0].as_deref(), Some("Splitter 1 Output (Splitter Cables)"));
+        assert_eq!(p.bus_cable[4].as_deref(), Some("Splitter B2 Input (Splitter Cables)"));
+    }
+
+    #[test]
+    fn splitter_wins_over_vb_audio() {
+        // both installed, every cable on: VB-Audio's pairs stay free
+        let mut cfg = Config::default();
+        for b in &mut cfg.buses {
+            b.cable = true;
+        }
+        let (mut caps, mut rens) = splitter(&[]);
+        caps.extend(devs(&VB_CAPS).into_iter().map(|mut d| { d.id.push_str("vb"); d }));
+        rens.extend(devs(&VB_RENS).into_iter().map(|mut d| { d.id.push_str("vb"); d }));
+        let p = build_plan_info(&cfg, &caps, &rens);
+        let all: Vec<&str> = p.strip_cable.iter().chain(&p.bus_cable).map(|c| c.as_deref().unwrap()).collect();
+        assert_eq!(all.len(), NUM_STRIPS + NUM_BUSES);
+        assert!(all.iter().all(|c| c.ends_with("(Splitter Cables)")), "{all:?}");
+    }
+
+    #[test]
+    fn only_vb_audio_as_before() {
+        let cfg = Config::default();
+        let p = build_plan_info(&cfg, &devs(&VB_CAPS), &devs(&VB_RENS));
+        assert!(p.ok && !p.splitter);
+        assert_eq!(p.strip_cable[0].as_deref(), Some(VB_CAPS[0]));
+        assert_eq!(p.strip_cable[1].as_deref(), Some(VB_CAPS[1]));
+        assert!(p.strip_cable[2].is_none() && p.bus_cable[3].is_none());
+        assert!(no_free_cable(&p, 2).starts_with("All 2 installed VB-Audio cable pair(s) are already used. Install Splitter"));
+    }
+
+    #[test]
+    fn no_cables_at_all() {
+        let p = build_plan_info(&Config::default(), &devs(&["Microphone (USB Mic)"]), &devs(&["Speakers (Realtek(R) Audio)"]));
+        assert!(!p.ok && !p.splitter);
+        assert_eq!(p.why, crate::win::cables::MISSING);
+        assert!(p.strip_cable.iter().chain(&p.bus_cable).all(|c| c.is_none()));
+    }
+
+    #[test]
+    fn a_missing_splitter_cable_is_named() {
+        let cfg = Config::default();
+        let (caps, rens) = splitter(&["Splitter 4 Output", "Splitter B2"]);
+        let p = build_plan_info(&cfg, &caps, &rens);
+        assert!(p.ok && p.strip_cable[3].is_none() && p.bus_cable[4].is_none());
+        assert_eq!(
+            no_free_cable(&p, 3),
+            "Splitter 4 is missing (switched off or renamed in the Windows sound settings?), and no VB-Audio cable pair is free"
+        );
+        assert!(no_free_cable(&p, NUM_STRIPS + 4).starts_with("Splitter B2 is missing"));
+    }
 }
