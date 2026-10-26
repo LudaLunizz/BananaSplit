@@ -10,6 +10,8 @@
 
 <img src="docs/screenshots/dark.png" alt="BananaSplit mixer window" width="900">
 
+*Ευχαριστώ, φίλε!*
+
 </div>
 
 > [!WARNING]
