@@ -834,8 +834,8 @@ fn rec_line(rec: &Recorder, shared: &Shared) -> tui::RecLine {
     if st.on {
         let t = st.seconds() as u64;
         let mut text = format!("{:02}:{:02}:{:02}  {}  ", t / 3600, t / 60 % 60, t % 60, st.mode.as_str());
-        // the files being written (a take continues in new files at 4 GB
-        // and when the server changes its sample rate)
+        // the files being written (a take continues in new files every
+        // hour, at 4 GB and when the server changes its sample rate)
         let now = st.current_files();
         if let Some(f) = now.first() {
             text.push_str(&file_name(f));
@@ -854,10 +854,11 @@ fn rec_line(rec: &Recorder, shared: &Shared) -> tui::RecLine {
         tui::RecLine { on: false, text: e.clone() }
     } else {
         let links = recorder::format_links(shared.rec_links.load(Relaxed));
-        tui::RecLine {
-            on: false,
-            text: format!("{} · {} · links {links} → {}", set.mode.as_str(), set.format.as_str(), set.folder),
-        }
+        let format = match set.format {
+            recorder::Format::Mp3 => format!("mp3 {}", set.kbps),
+            f => f.as_str().to_string(),
+        };
+        tui::RecLine { on: false, text: format!("{} · {format} · links {links} → {}", set.mode.as_str(), set.folder) }
     }
 }
 

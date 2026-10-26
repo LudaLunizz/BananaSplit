@@ -21,7 +21,7 @@
 - **Per-channel menus** to pick devices, apps and a virtual cable for every channel.
 - **Input gain, pan and a 6-band EQ** on every channel, with mute, solo and mono.
 - **VBAN network audio**, compatible with Voicemeeter.
-- **Multitrack recorder and player**, plus saved **scenes**.
+- **Multitrack recorder (MP3 or WAV) and player**, plus saved **scenes**.
 - **Desktop app** with its own window and tray icon. Also runs in a terminal or headless as a service.
 - **Updates itself** from the GitHub releases, installing only releases signed with BananaSplit's release key: on request (Menu ▸ Check for updates…), or automatically once you switch that on (off by default).
 

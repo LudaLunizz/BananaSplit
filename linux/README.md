@@ -13,6 +13,16 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.4
+
+* **Recordings are MP3 now.** Takes are recorded as MP3 at 320 kbit/s: about 144 MB per hour and track, a seventh of 24-bit WAV, and they play everywhere. **FORMAT** in the recorder panel has MP3 next to 16-bit, 24-bit and 32-bit float WAV, which are still there for lossless takes; `bitrate =` under `[recorder]` sets 128 to 320 kbit/s. BananaSplit encodes the MP3 itself, on Linux and on Windows: nothing else to install.
+* **At their own speed, to the sample.** An MP3 has the sample rate the audio server runs at, so it plays at 1.0x. MP3 holds 32, 44.1 and 48 kHz: when the server runs at another rate (96 kHz, say), the take is converted to 48 kHz, and the recorder panel says so. Every file starts with an Info frame whose LAME tag gives its exact length, so players that read it (mpg123, GStreamer, ffmpeg and the programs built on them, and BananaSplit's own player) play exactly the samples that were recorded, without the short silence an MP3 otherwise starts with.
+* **Hourly parts that join without a seam.** A long take still continues in `_part2.mp3`, `_part3.mp3` … every hour, at the same sample on every track. Each part also holds the end of the part before it and the start of the next one, hidden by its LAME tag, so the moment where two parts meet is encoded like any other: played one after the other, the parts give the whole take back, without a gap, a repeated sample or a click.
+* **Every track is written by a thread of its own.** Encoding up to 11 tracks, finishing a part and waiting for the disk to store it no longer hold up the recorder. Before, a disk that took longer than the 4-second buffer to finish the files at an hourly split left a gap of silence at the start of the next part.
+* **The player plays MP3:** BananaSplit's takes and any other MP3 in the recordings folder (MPEG-1, 2 and 2.5, constant or variable bitrate, with ID3 or APE tags), with their waveform, from any point. A WAV file and an MP3 file of the same name are two takes.
+
+Configs saved by 2.8.3 and older say `format = wav24`, the default they were written with: those record MP3 now. A 16-bit or 32-bit float choice stays; 24-bit WAV is kept once you choose it again. Configs saved by 2.8.4 have a `bitrate =` line, and may say `format = mp3`, which 2.8.3 and older refuse; delete the line (and pick a WAV format) to go back.
+
 ## What's new in 2.8.3
 
 * **Windows: BananaSplit's own virtual cables.** BananaSplit for Windows now works with **Splitter**, its own cable driver (installed separately), which gives every channel a cable of its own, as Linux has always had: apps play into `Splitter 1` … `Splitter 6` to reach strips 1 to 6, and record `Splitter A1` … `Splitter B2` to hear buses A1 to B2 (once the bus's cable is on in its menu; B1 and B2 have theirs on to begin with). Switching one channel's cable off no longer moves another channel's. VB-Audio's cables still work, for any channel whose Splitter cable is missing; with Splitter installed, the other channels move to Splitter's cables, so apps you pointed at "CABLE Input" or "CABLE Output" need pointing at the Splitter cable of that channel. **Menu ▸ Virtual cables…** shows both. For now Splitter is a test build: Windows loads it only in test-signing mode. See the [Windows manual](../windows/README.md#virtual-cables).
@@ -232,7 +242,7 @@ Start **BananaSplit** from the app menu, or run `bananasplit --gui`. The window 
 
 Click a strip to select it (green outline); then **M** mutes it, **S** solos it, **O** switches mono, **E** opens its EQ, **1**–**5** route it (on a bus: its sends), **[** and **]** select the previous or next strip. **Space** plays or pauses. **Ctrl +**, **Ctrl −** and **Ctrl 0** zoom.
 
-**The recorder:** the **state** (ready, recording, playing, with the free disk space), the **waveform** of the selected recording (‹ › go through your takes; click into it to play from there; while recording it shows the armed channels' level), the **time code**, and **PLAY** (PAUSE while playing), **REC** and **STOP** (stops playback and recording). **PLAY TO** chooses the buses recordings play on (A1 by default): playback joins those buses before their EQ and fader, so it is heard, recorded and sent like anything else on them. **ARMED TRACKS** are the channels that are recorded: MIX puts them into one stereo file, MULTI writes one file per channel. **FORMAT** is 16-bit, 24-bit or 32-bit float. **OPEN** opens the recordings folder; the bar at the bottom is the disk.
+**The recorder:** the **state** (ready, recording, playing, with the free disk space), the **waveform** of the selected recording (‹ › go through your takes; click into it to play from there; while recording it shows the armed channels' level), the **time code**, and **PLAY** (PAUSE while playing), **REC** and **STOP** (stops playback and recording). **PLAY TO** chooses the buses recordings play on (A1 by default): playback joins those buses before their EQ and fader, so it is heard, recorded and sent like anything else on them. **ARMED TRACKS** are the channels that are recorded: MIX puts them into one stereo file, MULTI writes one file per channel. **FORMAT** is MP3 (the default), or 16-bit, 24-bit or 32-bit float WAV. **OPEN** opens the recordings folder; the bar at the bottom is the disk.
 
 **Scenes:** the **SCENE** menu saves the whole mix under a name ("Save the mix as a new scene…") and loads it back with one click; "Update" saves over the current scene, "Delete" (click twice) removes it. A scene holds every fader, gain, pan, mute, solo, mono, routing and EQ, and the armed tracks; it never changes names, devices, VBAN or recorder settings, and everything changes with the usual click-free ramps. Scenes are small files in `~/.config/bananasplit/scenes/`.
 
@@ -295,16 +305,16 @@ The recorder can take any combination of the 11 channels, numbered the same way 
 
 * **What is recorded:** strips after their fader (gain, mute, solo and mono applied, exactly what the strip sends to the buses), and buses as they leave the mixer.
 * **One mix file** (`mode = mix`): all linked channels are added into one stereo file. Links can change while recording; each change is ramped like a routing change, so it doesn't click. A strip linked together with a bus it feeds counts twice.
-* **A file per source** (`mode = multi`): one stereo file per linked channel, for example `…_1-Mic.wav`, `…_A1-Speakers.wav`. They are taken from the same audio cycle, so they start on the same sample and always have the same length; drop them into a DAW and they line up. The set of tracks is fixed when recording starts.
-* **Formats:** 16-bit, 24-bit (default) or 32-bit float WAV. 16- and 24-bit files clip anything above full scale, and the GUI and terminal UI warn you when that happens; 32-bit float keeps it.
-* **Files** go to `~/Music/BananaSplit/` by default, named `YYYY-MM-DD_HH-MM-SS_<label>.wav` in local time. An existing file is never overwritten. The WAV header is rewritten every 2 seconds, so a recording is still playable if BananaSplit is killed. Takes continue in `_part2.wav`, `_part3.wav` … every hour (`split =` in `[recorder]`, in minutes; `0` = off) and always before 4 GB, split at the same sample for every track.
-* **Sample rate:** files have the rate the audio server runs at (the top bar shows it), so they play at their real speed. If the server changes its rate during a take, the take continues in new files at the new rate, `YYYY-MM-DD_HH-MM-SS-2_<label>.wav`, starting on the same sample for every track, and the recorder panel says so.
-* **Real-time safe:** the audio callback copies each cycle into a preallocated lock-free ring buffer (no allocation, locks or syscalls; see `tests/recorder_no_alloc.rs`), and a separate thread writes the files. If the disk stalls for longer than the buffer holds (about 4 s with all 11 channels, much longer for fewer), the missing part is filled with silence so the tracks stay in sync, and the UI reports how many frames were lost.
+* **A file per source** (`mode = multi`): one stereo file per linked channel, for example `…_1-Mic.mp3`, `…_A1-Speakers.mp3`. They are taken from the same audio cycle, so they start on the same sample and always have the same length; drop them into a DAW and they line up. The set of tracks is fixed when recording starts.
+* **Formats:** MP3 (default), at 320 kbit/s unless `bitrate =` says 128, 160, 192, 224 or 256; or 16-bit, 24-bit or 32-bit float WAV. MP3 and 16- and 24-bit files clip anything above full scale, and the GUI and terminal UI warn you when that happens; 32-bit float keeps it. BananaSplit's MP3 encoder is its own (MPEG-1 Layer III, constant bitrate, joint stereo, short blocks on attacks).
+* **Files** go to `~/Music/BananaSplit/` by default, named `YYYY-MM-DD_HH-MM-SS_<label>.mp3` (or `.wav`) in local time. An existing file is never overwritten. The WAV header, or the MP3's Info frame, is rewritten every 2 seconds, so a recording is still playable if BananaSplit is killed. Takes continue in `_part2`, `_part3` … files every hour (`split =` in `[recorder]`, in minutes; `0` = off) and always before 4 GB, split at the same sample for every track. An MP3 part also holds a few milliseconds of its neighbours, which its LAME tag hides, so the parts join without a seam.
+* **Sample rate:** files have the rate the audio server runs at (the top bar shows it), so they play at their real speed. MP3 holds 32, 44.1 and 48 kHz: at another server rate the take is converted (96 and 192 kHz to 48 kHz, 88.2 kHz to 44.1 kHz) with the windowed-sinc resampler VBAN uses, and the recorder panel says so. If the server changes its rate during a take, the take continues in new files at the new rate, `YYYY-MM-DD_HH-MM-SS-2_<label>.mp3`, starting on the same sample for every track, and the recorder panel says so.
+* **Real-time safe:** the audio callback copies each cycle into a preallocated lock-free ring buffer (no allocation, locks or syscalls; see `tests/recorder_no_alloc.rs`), a separate thread takes the tracks apart, and a thread per track encodes and writes them. If the disk stalls for longer than the buffers hold (about 9 s with all 11 channels, much longer for fewer), the missing part is filled with silence so the tracks stay in sync, and the UI reports how many frames were lost.
 * The recorder is available in the terminal UI and the GUI. `--headless` runs without it, exactly as before.
 
 ### Playing recordings back
 
-The app's recorder panel also plays: it lists the WAV files in the recordings folder (newest last; ‹ › step through them), draws the selected one's waveform, and plays it with PLAY, PAUSE and STOP; clicking into the waveform plays from there. A multitrack take (the `_1-Mic.wav`, `_A1-Speakers.wav` … files of one recording) plays as one take, its tracks mixed. Files at another sample rate, from 8 kHz up to four times the mixer's (192 kHz at 48 kHz), are converted with the same windowed-sinc resampler VBAN uses; 8-, 16-, 24- and 32-bit PCM and 32/64-bit float WAV play. Stopping, seeking and changing takes fade out over one period, so they do not click. **PLAY TO** chooses the buses it plays on (`play_to` in `[recorder]`, A1 by default): playback joins those buses before their EQ and fader, so it is heard, recorded and sent over VBAN like anything else on them. The file is read by a separate thread; the audio callback only reads a preallocated lock-free buffer (see `tests/player_no_alloc.rs`). Recording and playing at the same time works; a take that is still being recorded plays up to where it was when the list was last refreshed (every 3 seconds).
+The app's recorder panel also plays: it lists the MP3 and WAV files in the recordings folder (newest last; ‹ › step through them), draws the selected one's waveform, and plays it with PLAY, PAUSE and STOP; clicking into the waveform plays from there. A multitrack take (the `_1-Mic.mp3`, `_A1-Speakers.mp3` … files of one recording) plays as one take, its tracks mixed. Files at another sample rate, from 8 kHz up to four times the mixer's (192 kHz at 48 kHz), are converted with the same windowed-sinc resampler VBAN uses. MP3 (MPEG-1, 2 and 2.5 Layer III, constant or variable bitrate, after an ID3v2 tag and before ID3v1 or APE tags; not the rare free-format streams) and 8-, 16-, 24- and 32-bit PCM and 32/64-bit float WAV play. An MP3 with a LAME tag (BananaSplit's, LAME's, ffmpeg's) plays exactly its own samples, so the parts of a take join and its tracks stay together. Stopping, seeking and changing takes fade out over one period, so they do not click. **PLAY TO** chooses the buses it plays on (`play_to` in `[recorder]`, A1 by default): playback joins those buses before their EQ and fader, so it is heard, recorded and sent over VBAN like anything else on them. The file is read by a separate thread; the audio callback only reads a preallocated lock-free buffer (see `tests/player_no_alloc.rs`). Recording and playing at the same time works; a take that is still being recorded plays up to where it was when the list was last refreshed (every 3 seconds).
 
 ## EQ
 
@@ -415,15 +425,17 @@ eq4 = bell 3000 -4.5 2
 
 [recorder]
 folder = ~/Music/BananaSplit
-# wav16 | wav24 | wav32f
-format = wav24
+# mp3 | wav16 | wav24 | wav32f
+format = mp3
+# kbit/s of MP3: 128 | 160 | 192 | 224 | 256 | 320
+bitrate = 320
 # mix (one stereo file) | multi (one file per linked channel)
 mode = mix
 # 1-6 = strips, A1-A3 / B1-B2 = buses, or none
 links = 1,A1
 # the buses recordings play on (any of A1..B2, or none)
 play_to = A1
-# minutes per file: a longer take goes on in _part2.wav, ... (0 = off)
+# minutes per file: a longer take goes on in _part2, _part3, ... (0 = off)
 split = 60
 
 [vban]
@@ -529,7 +541,7 @@ Cable names come from `client_name` in lower case, with `-` as `_` (`bananasplit
 ## Tests
 
 ```sh
-cargo test                       # 160 unit tests + 4 "audio path never allocates" tests
+cargo test                       # 225 unit tests, 4 "audio path never allocates" tests, MP3 against libmpg123
 tests/e2e/run_e2e.sh             # runs the real binary against a mock libjack (needs gcc, curl and python3)
 node tests/gui/ui_check.js       # clicks every control of the app in Chromium (needs Node.js + Playwright)
 node tests/gui/fixes_check.js    # the 2.7.1 fixes that show in the page, in Chromium
@@ -537,6 +549,8 @@ tests/window/run_window_test.sh  # the app window and the tray icon on Xvfb (nee
 ```
 
 The end-to-end test drives BananaSplit's real process callback through a mock JACK server. It checks that impulses fed to two different strips come out on A1 and B1 at the **exact same frame and cycle** they went in, with the correct mix values. It also checks that every output buffer is fully written each cycle, that 8 cables are created, wired and removed, that a stale cable from a crash is cleaned up, and that SIGINT/SIGTERM shut down cleanly. A third phase starts `bananasplit --gui`, drives it over HTTP exactly like the page does (including the security checks and a second `--gui` launch), records strip 1 and A1 in multi mode, and checks that both WAV files hold the impulse on the **same sample** with the correct values.
+
+New in 2.8.4: MP3. Unit tests encode and decode every MP3 rate at 128 and 320 kbit/s (the same length, level and timing come back), check the LAME tag field by field and the standard frame lengths, seek to the exact sample anywhere, read files after ID3v2 and before ID3v1 and APE tags or without an Info frame, survive damaged files, give attacks short blocks (with as little pre-echo as LAME 3.100), and check that the Huffman tables are complete prefix codes. Recorder tests split MP3 takes into parts that play back to back as cleanly as anywhere else, convert a 96 kHz take to 48 kHz, follow a rate change, and record the engine's impulses to the same sample of every MP3 track; config tests cover the old `format = wav24` becoming MP3. `tests/mp3_libmpg123.rs` plays BananaSplit's files with libmpg123 (when it is installed) and needs the same length and samples. The eighth end-to-end phase runs its three cases in MP3 too. While it was written, the encoder was also checked against ffmpeg's decoder and against LAME 3.100 on recordings, and the decoder against the ISO/IEC 11172-4 conformance streams (within half an LSB of their reference output, intensity stereo and mixed blocks included).
 
 A fourth phase covers the 2.3 fixes on a mock of the reviewed setup: a webcam listed before a USB mic, the mic's headphone side named `…-63`, and a 17.3 ms round trip. It checks that:
 
