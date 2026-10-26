@@ -1,4 +1,4 @@
-//! Recorder: capture any combination of the 11 mixer channels to WAV.
+//! Recorder: capture any combination of the 11 mixer channels to MP3 or WAV.
 //!
 //! Every channel can be *linked* to the recorder, using the same numbering as
 //! the rest of BananaSplit: strips `1`..`6` (tapped post-fader: after gain, mute,
@@ -14,9 +14,9 @@
 //!   set is fixed when the take starts.
 //!
 //! ```text
-//!  audio thread (Engine::process)          writer thread                disk
-//!  RecRt::push ──► lock-free SPSC ring ──► Take::write_block ──► 1..11 WAV files
-//!  (no alloc, no locks, no syscalls)       (convert + buffered write)
+//!  audio thread (Engine::process)          writer thread           track threads (1 per file)
+//!  RecRt::push ──► lock-free SPSC ring ──► Take::write_block ──► encode + write ──► 1..11 files
+//!  (no alloc, no locks, no syscalls)       (split into tracks)     (MP3 or WAV)
 //! ```
 //!
 //! The audio thread writes one block per cycle: a 5-word header (session,
@@ -24,17 +24,30 @@
 //! the ring is ever full (disk stalled for seconds) the block is dropped and
 //! its length is carried in the next header's `gap`; the writer fills the
 //! gap with silence, so a take never loses sync with the timeline or between
-//! tracks. Long takes continue in `_part2.wav`, `_part3.wav`, ... at the same
+//! tracks. Long takes continue in `_part2`, `_part3`, ... files at the same
 //! frame for every track: every hour by default (`split`, in minutes; 0 =
-//! never), and always before 4 GiB, as larger files are not valid WAV.
+//! never), and always before 4 GiB (larger files are not valid WAV, nor
+//! countable in an MP3's Info frame). Each track has a thread of its own
+//! that encodes and writes it, and finishes a part (its header, the disk
+//! sync) while the next part is already being written, so neither a slow
+//! disk at a split nor 11 tracks of MP3 encoding hold up the ring.
+//!
+//! MP3 files (the default, 320 kbit/s) start with an Info frame whose LAME
+//! tag gives their exact length, so the parts of a take play back to back
+//! without a gap in any player that reads it. MP3 stores 32, 44.1 and 48
+//! kHz; a take at another rate is converted (96 kHz to 48 kHz, ...) in the
+//! track threads, and its parts still meet at the same sample.
 //!
 //! Every file's header carries the sample rate the audio server really ran
 //! at while it was recorded (the rate in each block, which the engine takes
-//! from the server), so a take always plays back at its own speed. If the
-//! server changes its rate during a take, the take continues in new files
-//! (`<time>-2_…`) at the new rate.
+//! from the server, or the MP3 rate it was converted to), so a take always
+//! plays back at its own speed. If the server changes its rate during a
+//! take, the take continues in new files (`<time>-2_…`) at the new rate.
 
 use crate::engine::{MAX_FRAMES, NUM_BUSES, NUM_STRIPS};
+use crate::mp3;
+use crate::vban::resample::Resampler;
+use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -52,6 +65,7 @@ pub const ALL_LINKS: u16 = (1 << NUM_SOURCES) - 1;
 /// ~4 s of all 22 channels at 48 kHz, ~43 s of a stereo mix.
 pub const DEFAULT_RING_WORDS: usize = 1 << 22;
 /// Largest `data` chunk per file. RIFF sizes are 32-bit; stay clear of 4 GiB.
+/// MP3 files stop there too (their Info frame counts bytes in 32 bits).
 pub const MAX_WAV_DATA_BYTES: u64 = 0xFFF0_0000;
 pub const DEFAULT_FOLDER: &str = "~/Music/BananaSplit";
 /// A take continues in a new file after this many minutes.
@@ -101,16 +115,19 @@ pub fn format_links(mask: u16) -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
+    /// MP3 at the bitrate in `Settings::kbps`.
+    Mp3,
     Wav16,
     Wav24,
     Wav32f,
 }
 
 impl Format {
-    pub const ALL: [Format; 3] = [Format::Wav16, Format::Wav24, Format::Wav32f];
+    pub const ALL: [Format; 4] = [Format::Mp3, Format::Wav16, Format::Wav24, Format::Wav32f];
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Format::Mp3 => "mp3",
             Format::Wav16 => "wav16",
             Format::Wav24 => "wav24",
             Format::Wav32f => "wav32f",
@@ -121,15 +138,34 @@ impl Format {
         Format::ALL
             .into_iter()
             .find(|f| f.as_str().eq_ignore_ascii_case(v.trim()))
-            .ok_or_else(|| format!("unknown recorder format {v:?} (expected wav16, wav24, wav32f)"))
+            .ok_or_else(|| format!("unknown recorder format {v:?} (expected mp3, wav16, wav24, wav32f)"))
     }
 
+    /// Bytes per sample of a WAV format (MP3: those of 32-bit float, unused).
     fn bytes_per_sample(self) -> u16 {
         match self {
             Format::Wav16 => 2,
             Format::Wav24 => 3,
-            Format::Wav32f => 4,
+            Format::Wav32f | Format::Mp3 => 4,
         }
+    }
+
+    pub fn ext(self) -> &'static str {
+        if self == Format::Mp3 { "mp3" } else { "wav" }
+    }
+
+    /// Samples beyond full scale are cut off: in 16/24-bit WAV, and in MP3
+    /// (the encoder takes full scale at most, as players play it).
+    pub fn clips(self) -> bool {
+        self != Format::Wav32f
+    }
+}
+
+/// Parse `bitrate` (kbit/s of MP3 takes).
+pub fn parse_kbps(v: &str) -> Result<u32, String> {
+    match v.trim().parse::<u32>() {
+        Ok(k) if mp3::BITRATES.contains(&k) => Ok(k),
+        _ => Err(format!("recorder bitrate must be one of 128, 160, 192, 224, 256 or 320 (kbit/s), not {v:?}")),
     }
 }
 
@@ -164,15 +200,23 @@ pub struct Settings {
     /// Output folder as configured (`~/` is expanded when a take starts).
     pub folder: String,
     pub format: Format,
+    /// Bitrate of MP3 takes, kbit/s.
+    pub kbps: u32,
     pub mode: Mode,
-    /// Minutes per file; a longer take continues in `_part2.wav`, ...
+    /// Minutes per file; a longer take continues in `_part2`, ...
     /// (0 = only before 4 GiB).
     pub split_minutes: u32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { folder: DEFAULT_FOLDER.into(), format: Format::Wav24, mode: Mode::Mix, split_minutes: DEFAULT_SPLIT_MINUTES }
+        Settings {
+            folder: DEFAULT_FOLDER.into(),
+            format: Format::Mp3,
+            kbps: mp3::DEFAULT_KBPS,
+            mode: Mode::Mix,
+            split_minutes: DEFAULT_SPLIT_MINUTES,
+        }
     }
 }
 
@@ -621,8 +665,13 @@ fn encode(format: Format, x: f32, out: &mut Vec<u8>) {
     match format {
         Format::Wav16 => out.extend_from_slice(&((x.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes()),
         Format::Wav24 => out.extend_from_slice(&((x.clamp(-1.0, 1.0) * 8_388_607.0).round() as i32).to_le_bytes()[..3]),
-        Format::Wav32f => out.extend_from_slice(&x.to_le_bytes()),
+        Format::Wav32f | Format::Mp3 => out.extend_from_slice(&x.to_le_bytes()),
     }
+}
+
+/// `path: error`, for errors that are about one file.
+fn at(path: &Path, e: io::Error) -> io::Error {
+    io::Error::new(e.kind(), format!("{}: {e}", path.display()))
 }
 
 struct WavWriter {
@@ -630,19 +679,23 @@ struct WavWriter {
     format: Format,
     sample_rate: u32,
     data_bytes: u64,
+    buf: Vec<u8>,
 }
 
 impl WavWriter {
-    fn create(path: &Path, format: Format, sample_rate: u32) -> io::Result<WavWriter> {
-        let f = OpenOptions::new().write(true).create_new(true).open(path)?;
-        let mut out = BufWriter::with_capacity(1 << 18, f);
+    fn new(file: File, format: Format, sample_rate: u32) -> io::Result<WavWriter> {
+        let mut out = BufWriter::with_capacity(1 << 18, file);
         out.write_all(&wav_header(format, sample_rate, 0))?;
-        Ok(WavWriter { out, format, sample_rate, data_bytes: 0 })
+        Ok(WavWriter { out, format, sample_rate, data_bytes: 0, buf: Vec::with_capacity(CHUNK_FRAMES * 8) })
     }
 
-    fn write_data(&mut self, bytes: &[u8]) -> io::Result<()> {
-        self.out.write_all(bytes)?;
-        self.data_bytes += bytes.len() as u64;
+    fn write(&mut self, lr: &[f32]) -> io::Result<()> {
+        self.buf.clear();
+        for &x in lr {
+            encode(self.format, x, &mut self.buf);
+        }
+        self.out.write_all(&self.buf)?;
+        self.data_bytes += self.buf.len() as u64;
         Ok(())
     }
 
@@ -665,56 +718,436 @@ impl WavWriter {
     }
 }
 
+/// An MP3 file being written: an Info frame, then the frames. The Info
+/// frame is rewritten every 2 seconds (the file plays up to there if
+/// BananaSplit is killed) and at the end, with the exact length.
+struct Mp3Writer {
+    out: BufWriter<File>,
+    enc: mp3::enc::Encoder,
+    buf: Vec<u8>,
+}
+
+impl Mp3Writer {
+    fn new(file: File, rate: u32, kbps: u32) -> io::Result<Mp3Writer> {
+        let enc = mp3::enc::Encoder::new(rate, kbps).map_err(io::Error::other)?;
+        let mut out = BufWriter::with_capacity(1 << 16, file);
+        out.write_all(&enc.info_frame())?;
+        Ok(Mp3Writer { out, enc, buf: Vec::with_capacity(1 << 16) })
+    }
+
+    fn write(&mut self, lr: &[f32]) -> io::Result<()> {
+        self.buf.clear();
+        self.enc.encode(lr, &mut self.buf);
+        self.out.write_all(&self.buf)
+    }
+
+    /// The end of the previous part, before this part's first sample.
+    fn preroll(&mut self, lr: &[f32]) -> io::Result<()> {
+        self.buf.clear();
+        self.enc.preroll(lr, &mut self.buf);
+        self.out.write_all(&self.buf)?;
+        // (the Info frame's encoder delay now includes it)
+        self.refresh()
+    }
+
+    /// The start of the next part, after this part's last sample.
+    fn write_tail(&mut self, lr: &[f32]) -> io::Result<()> {
+        self.buf.clear();
+        self.enc.encode_tail(lr, &mut self.buf);
+        self.out.write_all(&self.buf)
+    }
+
+    fn refresh(&mut self) -> io::Result<()> {
+        self.out.seek(SeekFrom::Start(0))?;
+        self.out.write_all(&self.enc.info_frame())?;
+        self.out.seek(SeekFrom::End(0))?;
+        Ok(())
+    }
+
+    fn finish(mut self) -> io::Result<()> {
+        self.buf.clear();
+        self.enc.finish(&mut self.buf);
+        self.out.write_all(&self.buf)?;
+        self.refresh()?;
+        self.out.flush()?;
+        let _ = self.out.get_ref().sync_data();
+        Ok(())
+    }
+}
+
+/// One file of a track.
+struct Sink {
+    path: PathBuf,
+    kind: SinkKind,
+}
+
+enum SinkKind {
+    Wav(WavWriter),
+    Mp3(Mp3Writer),
+}
+
+impl Sink {
+    /// Write the header of a new file (`rate`: the file's sample rate).
+    fn new(path: PathBuf, file: File, format: Format, kbps: u32, rate: u32) -> io::Result<Sink> {
+        let kind = match format {
+            Format::Mp3 => SinkKind::Mp3(Mp3Writer::new(file, rate, kbps)?),
+            f => SinkKind::Wav(WavWriter::new(file, f, rate)?),
+        };
+        Ok(Sink { path, kind })
+    }
+
+    fn write(&mut self, lr: &[f32]) -> io::Result<()> {
+        match &mut self.kind {
+            SinkKind::Wav(w) => w.write(lr),
+            SinkKind::Mp3(m) => m.write(lr),
+        }
+        .map_err(|e| at(&self.path, e))
+    }
+
+    fn refresh(&mut self) -> io::Result<()> {
+        match &mut self.kind {
+            SinkKind::Wav(w) => w.refresh(),
+            SinkKind::Mp3(m) => m.refresh(),
+        }
+        .map_err(|e| at(&self.path, e))
+    }
+
+    /// MP3 encodes across a cut (see `mp3::enc::PREROLL`); WAV needs not.
+    fn overlaps(&self) -> bool {
+        matches!(self.kind, SinkKind::Mp3(_))
+    }
+
+    fn preroll(&mut self, lr: &[f32]) -> io::Result<()> {
+        match &mut self.kind {
+            SinkKind::Wav(_) => Ok(()),
+            SinkKind::Mp3(m) => m.preroll(lr),
+        }
+        .map_err(|e| at(&self.path, e))
+    }
+
+    fn write_tail(&mut self, lr: &[f32]) -> io::Result<()> {
+        match &mut self.kind {
+            SinkKind::Wav(_) => Ok(()),
+            SinkKind::Mp3(m) => m.write_tail(lr),
+        }
+        .map_err(|e| at(&self.path, e))
+    }
+
+    /// Nothing written yet, and the server now runs at another rate: the
+    /// file starts over at `rate` (the file's rate).
+    fn restart(&mut self, rate: u32) -> io::Result<()> {
+        match &mut self.kind {
+            SinkKind::Wav(w) => {
+                w.sample_rate = rate;
+                w.refresh()
+            }
+            SinkKind::Mp3(m) => {
+                m.enc = mp3::enc::Encoder::new(rate, m.enc.kbps()).map_err(io::Error::other)?;
+                m.out.seek(SeekFrom::Start(0))?;
+                m.out.get_ref().set_len(0)?;
+                m.out.write_all(&m.enc.info_frame())
+            }
+        }
+        .map_err(|e| at(&self.path, e))
+    }
+
+    fn finish(self) -> io::Result<()> {
+        match self.kind {
+            SinkKind::Wav(w) => w.finish(),
+            SinkKind::Mp3(m) => m.finish(),
+        }
+        .map_err(|e| at(&self.path, e))
+    }
+}
+
+/// What a track's thread is asked to do, in this order.
+enum Job {
+    /// Samples (L R …) at the server's rate.
+    Write(Vec<f32>),
+    /// Rewrite the header.
+    Refresh,
+    /// Nothing is written yet and the server now runs at `.0`; the files
+    /// are at `.1`.
+    Rate(u32, u32),
+    /// From frame `at` of the file's rate (counted from the take's start)
+    /// on, continue in `sink`, and finish the file before it.
+    Next { at: u64, sink: Sink },
+    /// The take ends after `total` frames at the file's rate.
+    Finish { total: u64 },
+}
+
+/// The first error of any of a take's track threads.
+type Failure = Arc<Mutex<Option<String>>>;
+
+/// One track's thread: converts the sample rate if the file needs it,
+/// encodes and writes, and moves on to the next part at its first frame.
+/// MP3 parts overlap where they meet: the new part starts with the end of
+/// the old one, and the old one is finished once it has the start of the
+/// new one (both hidden by their LAME tags), so the cut is encoded like
+/// any other moment of the recording.
+struct TrackWriter {
+    sink: Sink,
+    /// Frames written (at the file's rate) since the take started.
+    done: u64,
+    /// Parts to continue in, with the frame they start at.
+    next: VecDeque<(u64, Sink)>,
+    /// The part before the current one, and how many more frames it takes.
+    closing: Option<(Sink, usize)>,
+    /// The last frames written (L R …, at most `PREROLL`).
+    recent: Vec<f32>,
+    conv: Option<Resampler>,
+    tmp: Vec<f32>,
+    failure: Failure,
+    failed: bool,
+}
+
+/// Keep the first error of a take.
+fn record(failure: &Failure, e: io::Error) {
+    let mut f = lock(failure);
+    if f.is_none() {
+        *f = Some(e.to_string());
+    }
+}
+
+impl TrackWriter {
+    fn fail(&mut self, e: io::Error) {
+        self.failed = true;
+        record(&self.failure, e);
+    }
+
+    /// Finish the part that still took the start of its successor.
+    fn close(&mut self) {
+        if let Some((old, _)) = self.closing.take() {
+            if let Err(e) = old.finish() {
+                self.fail(e);
+            }
+        }
+    }
+
+    /// Move on to the parts that start at or before `done`.
+    fn advance(&mut self) {
+        while self.next.front().is_some_and(|(at, _)| *at <= self.done) {
+            let Some((_, sink)) = self.next.pop_front() else { break };
+            self.close();
+            let old = std::mem::replace(&mut self.sink, sink);
+            if self.sink.overlaps() && !self.failed {
+                if let Err(e) = self.sink.preroll(&self.recent) {
+                    self.fail(e);
+                }
+            }
+            if old.overlaps() && !self.failed {
+                self.closing = Some((old, mp3::enc::TAIL));
+            } else if let Err(e) = old.finish() {
+                self.fail(e);
+            }
+        }
+    }
+
+    /// Write `lr` (at the file's rate), up to frame `limit`, across parts.
+    fn put(&mut self, mut lr: &[f32], limit: u64) {
+        let cap = limit.saturating_sub(self.done).saturating_mul(2).min(usize::MAX as u64) as usize;
+        lr = &lr[..lr.len().min(cap)];
+        loop {
+            self.advance();
+            if lr.is_empty() {
+                return;
+            }
+            let room = self.next.front().map_or(usize::MAX, |(at, _)| (at - self.done) as usize);
+            let k = (lr.len() / 2).min(room);
+            let part = &lr[..2 * k];
+            if !self.failed {
+                if let Err(e) = self.sink.write(part) {
+                    self.fail(e);
+                }
+            }
+            // the start of this part ends the one before
+            if let Some((old, want)) = &mut self.closing {
+                let t = k.min(*want);
+                let res = old.write_tail(&part[..2 * t]);
+                *want -= t;
+                let done = *want == 0;
+                if let Err(e) = res {
+                    self.fail(e);
+                }
+                if done {
+                    self.close();
+                }
+            }
+            self.recent.extend_from_slice(part);
+            let keep = 2 * mp3::enc::PREROLL;
+            if self.recent.len() > 2 * keep {
+                self.recent.drain(..self.recent.len() - keep);
+            }
+            self.done += k as u64;
+            lr = &lr[2 * k..];
+        }
+    }
+
+    fn write(&mut self, lr: &[f32]) {
+        match &mut self.conv {
+            None => self.put(lr, u64::MAX),
+            Some(rs) => {
+                let mut tmp = std::mem::take(&mut self.tmp);
+                tmp.clear();
+                rs.process(lr, rs.nominal_step(), &mut tmp);
+                self.put(&tmp, u64::MAX);
+                self.tmp = tmp;
+            }
+        }
+    }
+
+    fn run(mut self, rx: mpsc::Receiver<Job>) {
+        for job in rx.iter() {
+            match job {
+                Job::Write(v) => self.write(&v),
+                Job::Refresh => {
+                    if !self.failed {
+                        if let Err(e) = self.sink.refresh() {
+                            self.fail(e);
+                        }
+                    }
+                }
+                Job::Rate(server, file) => {
+                    self.conv = (server != file).then(|| Resampler::new(server, file));
+                    if let Err(e) = self.sink.restart(file) {
+                        self.fail(e);
+                    }
+                }
+                Job::Next { at, sink } => {
+                    self.next.push_back((at, sink));
+                    self.advance();
+                }
+                Job::Finish { total } => {
+                    // the converter's last frames: push them out with silence
+                    if let Some(rs) = &self.conv {
+                        let tail = vec![0f32; 2 * (rs.delay().ceil() as usize + 2)];
+                        while self.done < total {
+                            let before = self.done;
+                            let mut tmp = std::mem::take(&mut self.tmp);
+                            tmp.clear();
+                            if let Some(rs) = &mut self.conv {
+                                rs.process(&tail, rs.nominal_step(), &mut tmp);
+                            }
+                            self.put(&tmp, total);
+                            self.tmp = tmp;
+                            if self.done == before {
+                                break;
+                            }
+                        }
+                    }
+                    self.advance();
+                    self.close();
+                    for (_, s) in std::mem::take(&mut self.next) {
+                        // (a part that never got a frame: none in practice)
+                        let p = s.path.clone();
+                        let _ = s.finish();
+                        let _ = std::fs::remove_file(p);
+                    }
+                    if let Err(e) = self.sink.finish() {
+                        record(&self.failure, e);
+                    }
+                    return;
+                }
+            }
+        }
+        // the take was dropped without finishing: still close the files
+        self.close();
+        let _ = self.sink.finish();
+    }
+}
+
+/// The writer thread's end of a track thread.
+struct Track {
+    tx: mpsc::SyncSender<Job>,
+    thread: Option<JoinHandle<()>>,
+    /// Samples not sent yet.
+    pending: Vec<f32>,
+}
+
+/// Jobs a track thread may have queued (about 5 s of audio): beyond that
+/// the writer thread waits, and the ring takes up the slack.
+const TRACK_QUEUE: usize = 64;
+
+/// What a take's files are and how they are split.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spec {
+    pub format: Format,
+    /// MP3 bitrate, kbit/s.
+    pub kbps: u32,
+    /// The rate the audio server runs at.
+    pub rate: u32,
+    /// Largest file (tests make it small).
+    pub max_data_bytes: u64,
+    /// A new part every this many seconds (0 = only before 4 GiB).
+    pub split_secs: u64,
+}
+
+impl Spec {
+    /// The files' sample rate (MP3 converts rates it cannot store).
+    fn file_rate(&self) -> u32 {
+        if self.format == Format::Mp3 { mp3::rate_for(self.rate) } else { self.rate }
+    }
+
+    /// Frames (at the server's rate) per part.
+    fn part_frames(&self) -> u64 {
+        let rate = u64::from(self.rate.max(1));
+        let bytes = self.max_data_bytes.min(MAX_WAV_DATA_BYTES);
+        let mut max = if self.format == Format::Mp3 {
+            // whole seconds of CBR frames, room left for the Info frame and the last frames
+            let per_sec = u64::from(self.kbps) * 1000 / 8;
+            (bytes.saturating_sub(4 * 1441) / per_sec.max(1)).max(1) * rate
+        } else {
+            (bytes / (2 * u64::from(self.format.bytes_per_sample()))).max(1)
+        };
+        if self.split_secs > 0 {
+            max = max.min(self.split_secs.saturating_mul(rate));
+        }
+        max
+    }
+}
+
 /// One recording: 1 (mix) or N (multi) stereo tracks, split into parts.
 pub struct Take {
     session: u16,
     word: u32,
-    format: Format,
-    sample_rate: u32,
+    spec: Spec,
     channels: usize,
     /// Where and under which names (to continue at another sample rate).
     folder: PathBuf,
     stamp: String,
     labels: Vec<String>,
-    max_data_bytes: u64,
     bases: Vec<PathBuf>,
-    tracks: Vec<WavWriter>,
+    tracks: Vec<Track>,
+    failure: Failure,
     files: Vec<PathBuf>,
     part: u32,
     part_frames: u64,
     max_part_frames: u64,
-    /// A new part starts after this many seconds (0 = only before 4 GiB).
-    split_secs: u64,
     frames: u64,
     /// Frames written at the current sample rate (since the take started,
     /// or since the server changed its rate).
     rate_frames: u64,
     /// Seconds recorded before the server's last change of sample rate.
     prior_secs: f64,
-    /// The server changed its sample rate during this take.
+    /// The server changed its sample rate during this take, or the take is
+    /// converted to a rate MP3 stores.
     rate_note: Option<String>,
-    /// Samples beyond full scale that a 16/24-bit file had to clip.
+    /// Samples beyond full scale that the files had to clip.
     clipped: u64,
-    buf: Vec<u8>,
     refreshed: Instant,
 }
 
 impl Take {
-    /// Create the first part of every track: `<folder>/<stamp>[-k]_<label>.wav`.
-    /// `-k` is added if any of the names already exists.
-    pub fn create(
-        folder: &Path,
-        stamp: &str,
-        labels: &[String],
-        format: Format,
-        sample_rate: u32,
-        max_data_bytes: u64,
-    ) -> Result<Take, String> {
+    /// Create the first part of every track: `<folder>/<stamp>[-k]_<label>.mp3`
+    /// (or `.wav`). `-k` is added if any of the names already exists.
+    pub fn create(folder: &Path, stamp: &str, labels: &[String], spec: Spec) -> Result<Take, String> {
         if labels.is_empty() {
             return Err("nothing to record".into());
         }
+        if spec.format == Format::Mp3 && mp3::enc::bitrate_index(spec.kbps).is_none() {
+            return Err(format!("{} kbit/s is not an MP3 bitrate", spec.kbps));
+        }
         std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-        let align = 2 * format.bytes_per_sample() as u64;
         // A take's files share `<stamp>[-k]_`: that key must be new, not
         // only these file names (a mix take and a multi-track take started
         // in the same second were listed, and played, as one take).
@@ -726,44 +1159,92 @@ impl Take {
             let suffix = if k == 1 { String::new() } else { format!("-{k}") };
             let key = format!("{stamp}{suffix}_");
             let bases: Vec<PathBuf> = labels.iter().map(|l| folder.join(format!("{key}{l}"))).collect();
-            if !taken.iter().any(|n| n.starts_with(&key)) && bases.iter().all(|b| !with_ext(b, 1).exists()) {
+            if !taken.iter().any(|n| n.starts_with(&key)) && bases.iter().all(|b| !with_ext(b, 1, spec.format).exists()) {
                 chosen = Some(bases);
                 break;
             }
         }
         let bases = chosen.ok_or("could not find a free file name")?;
+        let failure: Failure = Arc::new(Mutex::new(None));
+        let sinks = Take::open(&bases, 1, &spec).map_err(|e| e.to_string())?;
+        let file_rate = spec.file_rate();
+        let mut tracks = Vec::with_capacity(sinks.len());
+        let mut files = Vec::with_capacity(sinks.len());
+        for sink in sinks {
+            files.push(sink.path.clone());
+            let (tx, rx) = mpsc::sync_channel(TRACK_QUEUE);
+            let w = TrackWriter {
+                sink,
+                done: 0,
+                next: VecDeque::new(),
+                closing: None,
+                recent: Vec::with_capacity(4 * mp3::enc::PREROLL),
+                conv: (file_rate != spec.rate).then(|| Resampler::new(spec.rate.max(1), file_rate)),
+                tmp: Vec::new(),
+                failure: failure.clone(),
+                failed: false,
+            };
+            let thread = std::thread::Builder::new().name("bs-rec-track".into()).spawn(move || w.run(rx)).ok();
+            tracks.push(Track { tx, thread, pending: Vec::with_capacity(2 * CHUNK_FRAMES) });
+        }
         let mut t = Take {
             session: 0,
             word: 0,
-            format,
-            sample_rate,
+            spec,
             channels: 2 * labels.len(),
             folder: folder.to_path_buf(),
             stamp: stamp.to_string(),
             labels: labels.to_vec(),
-            max_data_bytes,
             bases,
-            tracks: Vec::new(),
-            files: Vec::new(),
-            part: 0,
+            tracks,
+            failure,
+            files,
+            part: 1,
             part_frames: 0,
-            max_part_frames: (max_data_bytes.min(MAX_WAV_DATA_BYTES) / align).max(1),
-            split_secs: 0,
+            max_part_frames: spec.part_frames(),
             frames: 0,
             rate_frames: 0,
             prior_secs: 0.0,
             rate_note: None,
             clipped: 0,
-            buf: Vec::with_capacity(CHUNK_FRAMES * align as usize),
             refreshed: Instant::now(),
         };
-        if let Err(e) = t.open_part() {
+        if t.tracks.iter().any(|tr| tr.thread.is_none()) {
+            let _ = t.end();
             for f in &t.files {
                 let _ = std::fs::remove_file(f);
             }
-            return Err(e.to_string());
+            return Err("could not start the recorder's file threads".into());
+        }
+        if file_rate != spec.rate {
+            t.rate_note = Some(convert_note(spec.rate, file_rate));
         }
         Ok(t)
+    }
+
+    /// Create part `part` of every track (all or none).
+    fn open(bases: &[PathBuf], part: u32, spec: &Spec) -> io::Result<Vec<Sink>> {
+        let mut sinks = Vec::with_capacity(bases.len());
+        let mut made = Vec::new();
+        let res = (|| {
+            for b in bases {
+                let p = with_ext(b, part, spec.format);
+                let f = OpenOptions::new().write(true).create_new(true).open(&p).map_err(|e| at(&p, e))?;
+                made.push(p.clone());
+                sinks.push(Sink::new(p.clone(), f, spec.format, spec.kbps, spec.file_rate()).map_err(|e| at(&p, e))?);
+            }
+            Ok(())
+        })();
+        match res {
+            Ok(()) => Ok(sinks),
+            Err(e) => {
+                drop(sinks);
+                for p in made {
+                    let _ = std::fs::remove_file(p);
+                }
+                Err(e)
+            }
+        }
     }
 
     pub fn files(&self) -> &[PathBuf] {
@@ -776,48 +1257,68 @@ impl Take {
 
     /// Length so far, in seconds (each part at its own sample rate).
     pub fn secs(&self) -> f64 {
-        self.prior_secs + self.rate_frames as f64 / self.sample_rate.max(1) as f64
+        self.prior_secs + self.rate_frames as f64 / self.spec.rate.max(1) as f64
     }
 
+    /// The rate of the take's (last) files.
     pub fn sample_rate(&self) -> u32 {
-        self.sample_rate
+        self.spec.file_rate()
     }
 
-    /// Continue in a new part every `secs` seconds (0 = only before 4 GiB).
-    pub fn set_split_secs(&mut self, secs: u64) {
-        self.split_secs = secs;
-        let align = 2 * self.format.bytes_per_sample() as u64;
-        let mut max = (self.max_data_bytes.min(MAX_WAV_DATA_BYTES) / align).max(1);
-        if secs > 0 {
-            max = max.min(secs.saturating_mul(self.sample_rate.max(1) as u64));
+    pub fn clipped(&self) -> u64 {
+        self.clipped
+    }
+
+    /// What went wrong in a track thread, if anything.
+    fn failure(&self) -> Option<io::Error> {
+        lock(&self.failure).clone().map(io::Error::other)
+    }
+
+    /// Frames at the file's rate for `frames` at the server's.
+    fn file_frames(&self, frames: u64) -> u64 {
+        let (fr, sr) = (u128::from(self.spec.file_rate()), u128::from(self.spec.rate.max(1)));
+        (u128::from(frames) * fr).div_ceil(sr) as u64
+    }
+
+    fn send(&self, t: usize, job: Job) -> io::Result<()> {
+        self.tracks[t].tx.send(job).map_err(|_| io::Error::other(format!("{}: its file thread stopped", self.labels[t])))
+    }
+
+    /// Hand the samples gathered for every track to its thread.
+    fn flush(&mut self) -> io::Result<()> {
+        for t in 0..self.tracks.len() {
+            if !self.tracks[t].pending.is_empty() {
+                let v = std::mem::replace(&mut self.tracks[t].pending, Vec::with_capacity(2 * CHUNK_FRAMES));
+                self.send(t, Job::Write(v))?;
+            }
         }
-        self.max_part_frames = max;
+        Ok(())
     }
 
     /// The server now runs at `rate`. Before anything was written, the files
     /// simply take the new rate; after, the take continues in new files
-    /// (`<stamp>-2_<label>.wav`, ...), so each file plays at its own speed.
+    /// (`<stamp>-2_<label>.mp3`, ...), so each file plays at its own speed.
     fn change_rate(&mut self, rate: u32) -> io::Result<()> {
-        if rate == self.sample_rate || rate == 0 {
+        if rate == self.spec.rate || rate == 0 {
             return Ok(());
         }
         if self.frames == 0 {
-            self.sample_rate = rate;
-            self.set_split_secs(self.split_secs);
-            for t in &mut self.tracks {
-                t.sample_rate = rate;
-                t.refresh()?;
+            self.spec.rate = rate;
+            self.max_part_frames = self.spec.part_frames();
+            let file_rate = self.spec.file_rate();
+            for t in 0..self.tracks.len() {
+                self.send(t, Job::Rate(rate, file_rate))?;
             }
+            self.rate_note = (file_rate != rate).then(|| convert_note(rate, file_rate));
             return Ok(());
         }
         let before = self.secs();
-        let old_rate = self.sample_rate;
-        self.close_part()?;
-        let mut next = Take::create(&self.folder, &self.stamp, &self.labels, self.format, rate, self.max_data_bytes)
-            .map_err(io::Error::other)?;
+        let old_rate = self.spec.rate;
+        self.end()?;
+        let spec = Spec { rate, ..self.spec };
+        let mut next = Take::create(&self.folder, &self.stamp, &self.labels, spec).map_err(io::Error::other)?;
         next.session = self.session;
         next.word = self.word;
-        next.set_split_secs(self.split_secs);
         next.frames = self.frames;
         next.prior_secs = before;
         next.clipped = self.clipped;
@@ -825,66 +1326,55 @@ impl Take {
         let mut files = std::mem::take(&mut self.files);
         files.append(&mut next.files);
         next.files = files;
+        let converted = next.rate_note.take().map(|_| format!(" (converted to {} kHz for MP3)", khz(next.sample_rate())));
         next.rate_note = Some(format!(
-            "the audio server changed from {} to {} kHz; the recording continues in {}",
+            "the audio server changed from {} to {} kHz; the recording continues in {}{}",
             khz(old_rate),
             khz(rate),
-            new_file.as_deref().and_then(Path::file_name).map_or(String::new(), |f| f.to_string_lossy().into_owned())
+            new_file.as_deref().and_then(Path::file_name).map_or(String::new(), |f| f.to_string_lossy().into_owned()),
+            converted.unwrap_or_default()
         ));
         *self = next;
         Ok(())
     }
 
-    pub fn clipped(&self) -> u64 {
-        self.clipped
-    }
-
-    fn open_part(&mut self) -> io::Result<()> {
+    /// Continue every track in its next part, from the frame written last.
+    fn next_part(&mut self) -> io::Result<()> {
+        self.flush()?;
+        let sinks = Take::open(&self.bases, self.part + 1, &self.spec)?;
         self.part += 1;
-        let mut tracks = Vec::with_capacity(self.bases.len());
-        for b in &self.bases {
-            let p = with_ext(b, self.part);
-            let w = WavWriter::create(&p, self.format, self.sample_rate)
-                .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", p.display())))?;
-            self.files.push(p);
-            tracks.push(w);
+        let at = self.file_frames(self.rate_frames);
+        for (t, sink) in sinks.into_iter().enumerate() {
+            self.files.push(sink.path.clone());
+            self.send(t, Job::Next { at, sink })?;
         }
-        self.tracks = tracks;
         self.part_frames = 0;
         Ok(())
-    }
-
-    fn close_part(&mut self) -> io::Result<()> {
-        let mut first_err = None;
-        for t in self.tracks.drain(..) {
-            if let Err(e) = t.finish() {
-                first_err.get_or_insert(e);
-            }
-        }
-        first_err.map_or(Ok(()), Err)
     }
 
     /// Append `n` frames to every track; `sample(track, frame)` gives L/R.
     fn emit(&mut self, n: u64, mut sample: impl FnMut(usize, usize) -> (f32, f32)) -> io::Result<()> {
         let mut done = 0u64;
+        let clips = self.spec.format.clips();
         while done < n {
             if self.part_frames >= self.max_part_frames {
-                self.close_part()?;
-                self.open_part()?;
+                self.next_part()?;
             }
             let k = (n - done).min(self.max_part_frames - self.part_frames).min(CHUNK_FRAMES as u64);
-            let int = self.format != Format::Wav32f;
             for t in 0..self.tracks.len() {
-                self.buf.clear();
+                let buf = &mut self.tracks[t].pending;
                 for f in done..done + k {
                     let (l, r) = sample(t, f as usize);
-                    if int {
+                    if clips {
                         self.clipped += u64::from(l.abs() > 1.0) + u64::from(r.abs() > 1.0);
                     }
-                    encode(self.format, l, &mut self.buf);
-                    encode(self.format, r, &mut self.buf);
+                    buf.push(l);
+                    buf.push(r);
                 }
-                self.tracks[t].write_data(&self.buf)?;
+                if buf.len() >= 2 * CHUNK_FRAMES {
+                    let v = std::mem::replace(buf, Vec::with_capacity(2 * CHUNK_FRAMES));
+                    self.send(t, Job::Write(v))?;
+                }
             }
             self.part_frames += k;
             self.frames += k;
@@ -903,17 +1393,49 @@ impl Take {
         self.emit(n as u64, |t, f| {
             let base = HDR + f * ch + 2 * t;
             (f32::from_bits(ring.peek(base)), f32::from_bits(ring.peek(base + 1)))
-        })
+        })?;
+        self.failure().map_or(Ok(()), Err)
     }
 
     fn refresh(&mut self) -> io::Result<()> {
         self.refreshed = Instant::now();
-        self.tracks.iter_mut().try_for_each(WavWriter::refresh)
+        self.flush()?;
+        for t in 0..self.tracks.len() {
+            self.send(t, Job::Refresh)?;
+        }
+        self.failure().map_or(Ok(()), Err)
+    }
+
+    /// Finish every file and wait for the track threads.
+    fn end(&mut self) -> io::Result<()> {
+        let flushed = self.flush();
+        let total = self.file_frames(self.rate_frames);
+        for t in 0..self.tracks.len() {
+            let _ = self.tracks[t].tx.send(Job::Finish { total });
+        }
+        for tr in &mut self.tracks {
+            if let Some(h) = tr.thread.take() {
+                let _ = h.join();
+            }
+        }
+        self.tracks.clear();
+        flushed?;
+        self.failure().map_or(Ok(()), Err)
     }
 
     fn finish(mut self) -> io::Result<()> {
-        self.close_part()
+        self.end()
     }
+}
+
+impl Drop for Take {
+    fn drop(&mut self) {
+        let _ = self.end();
+    }
+}
+
+fn convert_note(server: u32, file: u32) -> String {
+    format!("MP3 cannot hold the audio server's {} kHz: this take is recorded at {} kHz", khz(server), khz(file))
 }
 
 /// `48`, `44.1`.
@@ -922,12 +1444,13 @@ fn khz(rate: u32) -> String {
     if rate % 1000 == 0 { format!("{k:.0}") } else { format!("{k:.1}") }
 }
 
-fn with_ext(base: &Path, part: u32) -> PathBuf {
+fn with_ext(base: &Path, part: u32, format: Format) -> PathBuf {
     let mut s = base.as_os_str().to_owned();
     if part > 1 {
         s.push(format!("_part{part}"));
     }
-    s.push(".wav");
+    s.push(".");
+    s.push(format.ext());
     PathBuf::from(s)
 }
 
@@ -959,7 +1482,8 @@ pub struct Status {
     pub note: Option<String>,
     /// Frames lost to a full ring in the current take (filled with silence).
     pub dropped: u32,
-    /// Samples that were louder than full scale and clipped (16/24-bit only).
+    /// Samples that were louder than full scale and clipped (16/24-bit WAV
+    /// and MP3; 32-bit float keeps them).
     pub clipped: u64,
     pub error: Option<String>,
 }
@@ -1060,6 +1584,7 @@ impl Recorder {
         if s.split_minutes > MAX_SPLIT_MINUTES {
             return Err(format!("recorder split must be 0-{MAX_SPLIT_MINUTES} minutes"));
         }
+        parse_kbps(&s.kbps.to_string())?;
         lock(&self.inner).settings = s;
         Ok(())
     }
@@ -1100,8 +1625,14 @@ impl Recorder {
         let stamp: String =
             stamp.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
         let rate = self.sample_rate();
-        let mut take = Take::create(&expand_home(&s.folder), &stamp, &labels, s.format, rate, self.max_data_bytes)?;
-        take.set_split_secs(u64::from(s.split_minutes) * 60);
+        let spec = Spec {
+            format: s.format,
+            kbps: s.kbps,
+            rate,
+            max_data_bytes: self.max_data_bytes,
+            split_secs: u64::from(s.split_minutes) * 60,
+        };
+        let mut take = Take::create(&expand_home(&s.folder), &stamp, &labels, spec)?;
         inner.session = inner.session.wrapping_add(1);
         let session = inner.session;
         let multi = s.mode == Mode::Multi;
@@ -1109,6 +1640,7 @@ impl Recorder {
         take.session = session;
         take.word = RecTap::state_word(session, multi, mask);
         let files = take.files().to_vec();
+        let (file_rate, note) = (take.sample_rate(), take.rate_note.clone());
 
         // The writer must own the take before the audio thread produces
         // blocks for it, otherwise the first blocks would be discarded.
@@ -1123,9 +1655,9 @@ impl Recorder {
                 files: files.clone(),
                 tracks: files.len(),
                 frames: 0,
-                sample_rate: rate,
+                sample_rate: file_rate,
                 secs: 0.0,
-                note: None,
+                note,
                 dropped: 0,
                 clipped: 0,
                 error: None,
@@ -1257,7 +1789,7 @@ fn drain(tap: &RecTap, cur: &mut Option<Take>, status: &Mutex<Status>) {
             let mut st = lock(status);
             st.frames = t.frames;
             st.secs = t.secs();
-            st.sample_rate = t.sample_rate;
+            st.sample_rate = t.sample_rate();
             st.clipped = t.clipped;
             if t.rate_note.is_some() && st.note != t.rate_note {
                 st.note = t.rate_note.clone();
@@ -1270,7 +1802,7 @@ fn drain(tap: &RecTap, cur: &mut Option<Take>, status: &Mutex<Status>) {
 }
 
 fn finish(t: Take, status: &Mutex<Status>) {
-    let (frames, secs, rate, clipped, files) = (t.frames, t.secs(), t.sample_rate, t.clipped, t.files.clone());
+    let (frames, secs, rate, clipped, files) = (t.frames, t.secs(), t.sample_rate(), t.clipped, t.files.clone());
     let res = t.finish();
     let mut st = lock(status);
     st.frames = frames;
@@ -1357,6 +1889,10 @@ mod tests {
         d
     }
 
+    fn spec(format: Format, rate: u32, max_data_bytes: u64, split_secs: u64) -> Spec {
+        Spec { format, kbps: 320, rate, max_data_bytes, split_secs }
+    }
+
     #[test]
     fn source_ids_match_engine_numbering() {
         for s in 0..NUM_STRIPS {
@@ -1394,7 +1930,12 @@ mod tests {
         assert_eq!(source_label(0, "Guitar part"), "1-Guitar_part");
         assert_eq!(source_label(0, "part2"), "1-part2");
         assert_eq!(Format::parse("WAV24").unwrap(), Format::Wav24);
-        assert!(Format::parse("mp3").is_err());
+        assert_eq!(Format::parse(" MP3").unwrap(), Format::Mp3);
+        assert!(Format::parse("ogg").is_err());
+        assert_eq!(Settings::default().format, Format::Mp3);
+        assert_eq!(Settings::default().kbps, 320);
+        assert_eq!(parse_kbps("192").unwrap(), 192);
+        assert!(parse_kbps("320 ").is_ok() && parse_kbps("300").is_err() && parse_kbps("64").is_err());
         assert_eq!(Mode::parse("multitrack").unwrap(), Mode::Multi);
         assert!(validate_folder("").is_err());
         assert!(validate_folder("a\nb").is_err());
@@ -1646,7 +2187,7 @@ mod tests {
         let dir = tmpdir("split");
         let labels = vec!["1-Mic".to_string(), "A1-Out".to_string()];
         // 6 bytes per frame (wav24) -> 100 frames per part
-        let mut t = Take::create(&dir, "S", &labels, Format::Wav24, 48000, 600).unwrap();
+        let mut t = Take::create(&dir, "S", &labels, spec(Format::Wav24, 48000, 600, 0)).unwrap();
         t.emit(250, |tr, f| ((f as f32) / 1000.0, if tr == 0 { 0.5 } else { -0.5 })).unwrap();
         let files = t.files().to_vec();
         t.finish().unwrap();
@@ -1676,12 +2217,12 @@ mod tests {
             }
         }
         // same stamp again -> "-2" instead of overwriting
-        let t2 = Take::create(&dir, "S", &labels, Format::Wav16, 48000, MAX_WAV_DATA_BYTES).unwrap();
+        let t2 = Take::create(&dir, "S", &labels, spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
         assert!(t2.files()[0].ends_with("S-2_1-Mic.wav"));
         t2.finish().unwrap();
         // another take in that second with other tracks (a mix take after a
         // multi-track one): a key of its own, not one take with S's files
-        let t3 = Take::create(&dir, "S", &["mix".to_string()], Format::Wav16, 48000, MAX_WAV_DATA_BYTES).unwrap();
+        let t3 = Take::create(&dir, "S", &["mix".to_string()], spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
         assert!(t3.files()[0].ends_with("S-3_mix.wav"), "{:?}", t3.files());
         t3.finish().unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
@@ -1692,7 +2233,7 @@ mod tests {
         let dir = tmpdir("rate");
         let labels = vec!["1-Mic".to_string()];
         // Before any frame is written, the files just take the new rate.
-        let mut t = Take::create(&dir, "R", &labels, Format::Wav16, 48000, MAX_WAV_DATA_BYTES).unwrap();
+        let mut t = Take::create(&dir, "R", &labels, spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
         t.change_rate(44100).unwrap();
         t.emit(441, |_, _| (0.25, -0.25)).unwrap();
         assert!(t.rate_note.is_none());
@@ -1745,7 +2286,8 @@ mod tests {
         sh.sample_rate.store(44100, Relaxed); // what the graph really runs at
         run(&mut eng);
         assert_eq!(tap.rate.load(Relaxed), 44100);
-        let rec = Recorder::new(tap.clone(), 48000, Settings { folder: dir.display().to_string(), ..Settings::default() });
+        let settings = Settings { folder: dir.display().to_string(), format: Format::Wav24, ..Settings::default() };
+        let rec = Recorder::new(tap.clone(), 48000, settings);
         assert_eq!(rec.sample_rate(), 44100);
         rec.start(sh.rec_links.load(Relaxed), &[], "T").unwrap();
         for _ in 0..10 {
@@ -1821,7 +2363,7 @@ mod tests {
         let rec = Recorder::new(
             tap.clone(),
             48000,
-            Settings { folder: dir.display().to_string(), format: Format::Wav32f, mode: Mode::Multi, split_minutes: 0 },
+            Settings { folder: dir.display().to_string(), format: Format::Wav32f, kbps: 320, mode: Mode::Multi, split_minutes: 0 },
         );
         let files = rec.start(sh.rec_links.load(Relaxed), &names, "T").unwrap();
         assert_eq!(files.len(), 2);
@@ -1880,8 +2422,8 @@ mod tests {
     fn take_continues_in_a_new_file_every_split() {
         let dir = tmpdir("hourly");
         let labels = vec!["1-Mic".to_string(), "2-Discord".to_string()];
-        let mut t = Take::create(&dir, "H", &labels, Format::Wav16, 1000, MAX_WAV_DATA_BYTES).unwrap();
-        t.set_split_secs(2); // 2000 frames per part at 1 kHz
+        // 2000 frames per part at 1 kHz
+        let mut t = Take::create(&dir, "H", &labels, spec(Format::Wav16, 1000, MAX_WAV_DATA_BYTES, 2)).unwrap();
         t.emit(1500, |_, _| (0.25, -0.25)).unwrap();
         t.emit(3000, |tr, _| (0.5 * tr as f32, 0.0)).unwrap();
         // The server changes its rate: still 2 s per part (4000 frames at 2 kHz).
@@ -1912,7 +2454,7 @@ mod tests {
         let rec = Recorder::with_max_data_bytes(
             tap.clone(),
             48000,
-            Settings { folder: dir.display().to_string(), format: Format::Wav16, mode: Mode::Mix, split_minutes: 0 },
+            Settings { folder: dir.display().to_string(), format: Format::Wav16, kbps: 320, mode: Mode::Mix, split_minutes: 0 },
             4 * 50, // 50 frames per part
         );
         let names: Vec<String> = (0..NUM_SOURCES).map(|i| i.to_string()).collect();
@@ -1939,17 +2481,210 @@ mod tests {
     fn clipping_is_counted_only_for_integer_formats() {
         let dir = tmpdir("clip");
         let labels = vec!["mix".to_string()];
-        let mut t = Take::create(&dir, "C", &labels, Format::Wav16, 48000, MAX_WAV_DATA_BYTES).unwrap();
+        let mut t = Take::create(&dir, "C", &labels, spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
         t.emit(10, |_, f| (if f < 4 { 1.5 } else { 0.5 }, -1.0)).unwrap(); // exactly 1.0 is not clipping
         assert_eq!(t.clipped(), 4);
         t.finish().unwrap();
-        let mut t = Take::create(&dir, "F", &labels, Format::Wav32f, 48000, MAX_WAV_DATA_BYTES).unwrap();
+        let mut t = Take::create(&dir, "F", &labels, spec(Format::Wav32f, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
         t.emit(10, |_, _| (1.5, -3.0)).unwrap();
         assert_eq!(t.clipped(), 0, "float keeps values above full scale");
         let f = t.files()[0].clone();
         t.finish().unwrap();
         let (_, _, _, _, s) = read_wav(&f);
         assert_eq!(&s[..2], &[1.5, -3.0]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// An MP3 file decoded the way the player reads it: (rate, samples L R …).
+    fn read_mp3(path: &Path) -> (u32, Vec<f32>) {
+        let info = crate::mp3::probe(path).unwrap();
+        assert!(info.exact, "{}: no Info frame", path.display());
+        let mut r = crate::mp3::Reader::open(path, &info).unwrap();
+        let mut out = Vec::new();
+        while r.read(4096, &mut out).unwrap() > 0 {}
+        assert_eq!(out.len() as u64, 2 * info.samples);
+        (info.sample_rate, out)
+    }
+
+    /// Signal-to-noise ratio (dB) of `got` against `want` over `range` (frames, left channel).
+    fn snr(want: &[f32], got: &[f32], range: std::ops::Range<usize>) -> f64 {
+        let (mut s, mut e) = (0f64, 0f64);
+        for i in range {
+            s += f64::from(want[2 * i]).powi(2);
+            e += f64::from(got[2 * i] - want[2 * i]).powi(2);
+        }
+        10.0 * (s / e.max(1e-30)).log10()
+    }
+
+    /// A take in MP3 continues in new parts that play back to back: every
+    /// part holds exactly its frames, and nothing is lost or doubled where
+    /// they meet.
+    #[test]
+    fn mp3_parts_play_back_to_back() {
+        let dir = tmpdir("mp3-split");
+        let labels = vec!["1-Mic".to_string(), "A1-Out".to_string()];
+        let n = 120_000; // 2.5 s at 48 kHz, parts of 1 s
+        let tone = |t: usize, f: f64| (0.5 * (2.0 * std::f64::consts::PI * f * t as f64 / 48000.0).sin()) as f32;
+        let mut t = Take::create(&dir, "M", &labels, spec(Format::Mp3, 48000, MAX_WAV_DATA_BYTES, 1)).unwrap();
+        // uneven blocks, as the audio thread delivers them
+        let mut done = 0;
+        for k in 0.. {
+            let len = [128usize, 1, 333, 4096, 256][k % 5].min(n - done);
+            if len == 0 {
+                break;
+            }
+            t.emit(len as u64, |tr, f| {
+                let i = done + f;
+                if tr == 0 { (tone(i, 440.0), tone(i, 660.0)) } else { (tone(i, 1000.0), -tone(i, 1000.0)) }
+            })
+            .unwrap();
+            done += len;
+        }
+        let files = t.files().to_vec();
+        t.finish().unwrap();
+        let names: Vec<String> = files.iter().map(|p| p.file_name().unwrap().to_string_lossy().into()).collect();
+        assert_eq!(names, ["M_1-Mic.mp3", "M_A1-Out.mp3", "M_1-Mic_part2.mp3", "M_A1-Out_part2.mp3", "M_1-Mic_part3.mp3", "M_A1-Out_part3.mp3"]);
+        for track in 0..2 {
+            let mut all = Vec::new();
+            for part in 0..3 {
+                let (rate, pcm) = read_mp3(&files[2 * part + track]);
+                assert_eq!(rate, 48000);
+                assert_eq!(pcm.len() / 2, [48000, 48000, 24000][part], "track {track} part {part}");
+                all.extend_from_slice(&pcm);
+            }
+            let want: Vec<f32> = (0..n)
+                .flat_map(|i| if track == 0 { [tone(i, 440.0), tone(i, 660.0)] } else { [tone(i, 1000.0), -tone(i, 1000.0)] })
+                .collect();
+            assert!(snr(&want, &all, 0..n) > 45.0, "track {track}: {:.1} dB", snr(&want, &all, 0..n));
+            // where the parts meet as clean as anywhere: no worse than 3 dB
+            // over the noisiest stretch away from the cuts
+            let worst = |r: std::ops::Range<usize>| r.map(|i| (all[2 * i] - want[2 * i]).abs()).fold(0f32, f32::max);
+            let elsewhere = (2400..45_600).step_by(2400).map(|a| worst(a..a + 2400)).fold(0f32, f32::max);
+            for at in [48000, 96000] {
+                let here = worst(at - 1200..at + 1200);
+                assert!(here < 1.41 * elsewhere, "track {track} at {at}: {here} against {elsewhere}");
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The audio server at 96 kHz: MP3 cannot hold that, so the take is
+    /// converted to 48 kHz, plays at the same speed, and its parts still
+    /// meet at the same sample.
+    #[test]
+    fn mp3_takes_at_96_khz_are_converted_to_48() {
+        let dir = tmpdir("mp3-96k");
+        let n = 240_000; // 2.5 s at 96 kHz
+        let tone = |i: usize| (0.5 * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / 96000.0).sin()) as f32;
+        let mut t = Take::create(&dir, "K", &["mix".to_string()], spec(Format::Mp3, 96000, MAX_WAV_DATA_BYTES, 1)).unwrap();
+        assert_eq!(t.sample_rate(), 48000);
+        assert!(t.rate_note.as_deref().is_some_and(|m| m.contains("96 kHz") && m.contains("48 kHz")), "{:?}", t.rate_note);
+        for c in 0..n / 1000 {
+            t.emit(1000, |_, f| (tone(c * 1000 + f), tone(c * 1000 + f))).unwrap();
+        }
+        assert!((t.secs() - 2.5).abs() < 1e-9);
+        let files = t.files().to_vec();
+        t.finish().unwrap();
+        assert_eq!(files.len(), 3);
+        let mut all = Vec::new();
+        for (part, f) in files.iter().enumerate() {
+            let (rate, pcm) = read_mp3(f);
+            assert_eq!(rate, 48000);
+            assert_eq!(pcm.len() / 2, [48000, 48000, 24000][part]);
+            all.extend_from_slice(&pcm);
+        }
+        // the same tone at 48 kHz, from the same instant
+        let want: Vec<f32> = (0..n / 2).flat_map(|i| [tone(2 * i), tone(2 * i)]).collect();
+        assert!(snr(&want, &all, 200..n / 2 - 200) > 40.0, "{:.1} dB", snr(&want, &all, 200..n / 2 - 200));
+        for at in [48000, 96000] {
+            let s = snr(&want, &all, at - 1200..at + 1200);
+            assert!(s > 40.0, "at {at}: {s:.1} dB");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn mp3_take_follows_the_servers_sample_rate() {
+        let dir = tmpdir("mp3-rate");
+        let labels = vec!["1-Mic".to_string()];
+        let mut t = Take::create(&dir, "R", &labels, spec(Format::Mp3, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
+        // before anything is written the file just takes the new rate
+        t.change_rate(44100).unwrap();
+        t.emit(4410, |_, f| ((f as f32 / 4410.0) - 0.5, 0.25)).unwrap();
+        assert!(t.rate_note.is_none());
+        // after, it continues in a new file; 96 kHz becomes 48 kHz
+        t.change_rate(96000).unwrap();
+        t.emit(9600, |_, _| (0.5, -0.5)).unwrap();
+        assert!((t.secs() - 0.2).abs() < 1e-9, "{}", t.secs());
+        let note = t.rate_note.clone().unwrap();
+        assert!(note.contains("44.1 to 96 kHz") && note.contains("R-2_1-Mic.mp3") && note.contains("48 kHz for MP3"), "{note}");
+        let files = t.files().to_vec();
+        t.finish().unwrap();
+        let (r1, a) = read_mp3(&files[0]);
+        let (r2, b) = read_mp3(&files[1]);
+        assert_eq!((r1, a.len() / 2, r2, b.len() / 2), (44100, 4410, 48000, 4800));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Real engine -> recorder -> MP3 files: every track starts on the same
+    /// sample and has the same length, like the WAV ones.
+    #[test]
+    fn engine_to_mp3_files_are_sample_aligned() {
+        const N: usize = 256;
+        let dir = tmpdir("engine-mp3");
+        let sh = Shared::new();
+        let tap = RecTap::new();
+        let mut eng = Engine::new(sh.clone());
+        eng.attach_recorder(tap.clone());
+        sh.strips[0].routes.store(0b00001, Relaxed); // strip 1 -> A1
+        sh.rec_links.store(parse_links("1,A1").unwrap(), Relaxed);
+        let names: Vec<String> = ["Mic", "b", "c", "d", "e", "f", "Speakers", "x", "y", "z", "w"].iter().map(|s| s.to_string()).collect();
+        let mut store = vec![vec![0.0f32; N]; NUM_BUSES * 2];
+        let mut run = |eng: &mut Engine, impulse: bool| {
+            for s in 0..NUM_STRIPS {
+                for c in 0..2 {
+                    let mut v = [0.0f32; N];
+                    if impulse && s == 0 {
+                        v[100] = 0.8;
+                    }
+                    eng.load_input(s, c, &v);
+                }
+            }
+            let mut it = store.iter_mut();
+            let mut outs: [[&mut [f32]; 2]; NUM_BUSES] = std::array::from_fn(|_| {
+                let l = it.next().unwrap().as_mut_slice();
+                let r = it.next().unwrap().as_mut_slice();
+                [l, r]
+            });
+            eng.process(&mut outs);
+        };
+        run(&mut eng, false);
+        run(&mut eng, false);
+        let rec = Recorder::new(
+            tap.clone(),
+            48000,
+            Settings { folder: dir.display().to_string(), mode: Mode::Multi, ..Settings::default() },
+        );
+        let files = rec.start(sh.rec_links.load(Relaxed), &names, "T").unwrap();
+        assert!(files[0].ends_with("T_1-Mic.mp3") && files[1].ends_with("T_A1-Speakers.mp3"), "{files:?}");
+        for cycle in 0..200 {
+            run(&mut eng, cycle == 77);
+        }
+        rec.stop();
+        for _ in 0..3 {
+            run(&mut eng, false);
+        }
+        rec.shutdown();
+        let st = rec.status();
+        assert_eq!(st.frames, 200 * N as u64);
+        assert_eq!(st.error, None);
+        let (_, strip) = read_mp3(&files[0]);
+        let (_, bus) = read_mp3(&files[1]);
+        assert_eq!(strip.len(), 2 * 200 * N);
+        assert_eq!(bus.len(), strip.len());
+        let peak = |v: &[f32]| (0..v.len() / 2).max_by(|&a, &b| v[2 * a].abs().total_cmp(&v[2 * b].abs())).unwrap();
+        assert_eq!(peak(&strip), 77 * N + 100, "the impulse where it was recorded");
+        assert_eq!(peak(&bus), peak(&strip), "both tracks on the same sample");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

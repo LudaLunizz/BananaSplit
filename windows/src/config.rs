@@ -31,11 +31,12 @@
 //!
 //! [recorder]
 //! folder = ~/Music/BananaSplit
-//! format = wav24      # wav16 | wav24 | wav32f
+//! format = mp3       # mp3 | wav16 | wav24 | wav32f
+//! bitrate = 320       # kbit/s of MP3 takes: 128 | 160 | 192 | 224 | 256 | 320
 //! mode = mix          # mix (one stereo file) | multi (one file per channel)
 //! links = 1,A1        # channels feeding the recorder: 1-6, A1-A3, B1-B2 or none
 //! play_to = A1        # buses the player plays recordings into
-//! split = 60          # minutes per file; longer takes go on in _part2.wav, ... (0 = off)
+//! split = 60          # minutes per file; longer takes go on in _part2, _part3, ... (0 = off)
 //!
 //! [vban]
 //! enabled = true
@@ -111,6 +112,8 @@ fn check_connect(v: &str) -> Result<(), String> {
 pub struct RecorderConfig {
     pub folder: String,
     pub format: Format,
+    /// Bitrate of MP3 takes, kbit/s.
+    pub kbps: u32,
     pub mode: Mode,
     /// Minutes per file (0 = no time limit).
     pub split_minutes: u32,
@@ -126,6 +129,7 @@ impl Default for RecorderConfig {
         RecorderConfig {
             folder: s.folder,
             format: s.format,
+            kbps: s.kbps,
             mode: s.mode,
             split_minutes: s.split_minutes,
             links: 1 << NUM_STRIPS,
@@ -136,12 +140,19 @@ impl Default for RecorderConfig {
 
 impl RecorderConfig {
     pub fn settings(&self) -> Settings {
-        Settings { folder: self.folder.clone(), format: self.format, mode: self.mode, split_minutes: self.split_minutes }
+        Settings {
+            folder: self.folder.clone(),
+            format: self.format,
+            kbps: self.kbps,
+            mode: self.mode,
+            split_minutes: self.split_minutes,
+        }
     }
 
     pub fn set_settings(&mut self, s: &Settings) {
         self.folder = s.folder.clone();
         self.format = s.format;
+        self.kbps = s.kbps;
         self.mode = s.mode;
         self.split_minutes = s.split_minutes;
     }
@@ -467,6 +478,9 @@ impl Config {
         let mut bus_seen = [false; NUM_BUSES];
         // Line of each bus's `routes` (to point at it if they make a loop).
         let mut send_line = [0usize; NUM_BUSES];
+        // `bitrate` came with MP3 (2.8.4): a [recorder] without it was
+        // written by an older BananaSplit
+        let mut bitrate_seen = false;
 
         for (idx, raw) in text.lines().enumerate() {
             let line_no = idx + 1;
@@ -606,6 +620,10 @@ impl Config {
                             r.folder = v.into();
                         }
                         "format" => r.format = Format::parse(v).map_err(err)?,
+                        "bitrate" => {
+                            r.kbps = recorder::parse_kbps(v).map_err(err)?;
+                            bitrate_seen = true;
+                        }
                         "mode" => r.mode = Mode::parse(v).map_err(err)?,
                         "links" => r.links = recorder::parse_links(v).map_err(err)?,
                         "play_to" => r.play_to = parse_routes(v).map_err(err)?,
@@ -649,6 +667,13 @@ impl Config {
                     }
                 }
             }
+        }
+        // Up to 2.8.3 every config said `format = wav24`, the default then
+        // (MP3 did not exist): those record MP3 now, the new default. A WAV
+        // format chosen since (written with a bitrate), or 16-bit or
+        // 32-bit float chosen before, stays.
+        if !bitrate_seen && cfg.recorder.format == Format::Wav24 {
+            cfg.recorder.format = Format::Mp3;
         }
         // Bus sends must not make a loop (a bus would hear itself).
         let sends: [u8; NUM_BUSES] = std::array::from_fn(|b| cfg.buses[b].routes);
@@ -738,9 +763,11 @@ impl Config {
         let r = &self.recorder;
         let _ = writeln!(o, "\n[recorder]");
         let _ = writeln!(o, "# links: 1-6 = strips, A1-A3 / B1-B2 = buses; mode = mix | multi");
-        let _ = writeln!(o, "# split = minutes per file: a longer take goes on in _part2.wav, ... (0 = off)");
+        let _ = writeln!(o, "# format = mp3 | wav16 | wav24 | wav32f; bitrate = kbit/s of MP3: 128 | 160 | 192 | 224 | 256 | 320");
+        let _ = writeln!(o, "# split = minutes per file: a longer take goes on in _part2, ... (0 = off)");
         let _ = writeln!(o, "folder = {}", r.folder);
         let _ = writeln!(o, "format = {}", r.format.as_str());
+        let _ = writeln!(o, "bitrate = {}", r.kbps);
         let _ = writeln!(o, "mode = {}", r.mode.as_str());
         let _ = writeln!(o, "links = {}", recorder::format_links(r.links));
         let _ = writeln!(o, "play_to = {}", format_routes(r.play_to));
@@ -1133,12 +1160,44 @@ mod tests {
         assert_eq!(c.recorder.format, Format::Wav16);
         assert_eq!(c.recorder.mode, Mode::Multi);
         assert_eq!(c.recorder.links, 0b010_0000_0010);
-        let e = Config::parse("[recorder]\nformat = mp3\n").unwrap_err();
+        let e = Config::parse("[recorder]\nformat = flac\n").unwrap_err();
         assert_eq!(e.line, 2);
+        let c = Config::parse("[recorder]\nformat = mp3\nbitrate = 192\n").unwrap();
+        assert_eq!((c.recorder.format, c.recorder.kbps), (Format::Mp3, 192));
+        let e = Config::parse("[recorder]\nformat = mp3\nbitrate = 300\n").unwrap_err();
+        assert!(e.line == 3 && e.msg.contains("300"), "{e:?}");
         assert!(Config::parse("[recorder]\nmode = stereo\n").is_err());
         assert!(Config::parse("[recorder]\nlinks = 1,C9\n").unwrap_err().msg.contains("C9"));
         assert!(Config::parse("[recorder]\nfolder =\n").is_err());
         assert!(Config::parse("[recorder]\ngain = 1\n").unwrap_err().msg.contains("gain"));
+    }
+
+    /// 2.8.3 and older wrote `format = wav24`, their default, into every
+    /// config: those record MP3 now. A format chosen since (saved with a
+    /// bitrate), or 16-bit or 32-bit float, stays.
+    #[test]
+    fn old_default_wav24_becomes_mp3() {
+        let users = "[recorder]\n# links: 1-6 = strips, A1-A3 / B1-B2 = buses; mode = mix | multi\n\
+                     folder = /media/x/voicerecs\nformat = wav24\nmode = mix\nlinks = B2\nplay_to = A1\n";
+        let c = Config::parse(users).unwrap();
+        assert_eq!((c.recorder.format, c.recorder.kbps), (Format::Mp3, 320));
+        assert_eq!(c.recorder.links, 1 << 10);
+        for (text, want) in [
+            ("[recorder]\nformat = wav24\nsplit = 60\n", Format::Mp3),
+            ("[recorder]\nformat = wav24\nbitrate = 320\n", Format::Wav24),
+            ("[recorder]\nformat = wav16\n", Format::Wav16),
+            ("[recorder]\nformat = wav32f\n", Format::Wav32f),
+            ("[recorder]\nfolder = ~/x\n", Format::Mp3),
+        ] {
+            assert_eq!(Config::parse(text).unwrap().recorder.format, want, "{text:?}");
+        }
+        // a 24-bit choice saved by this version survives a save and load
+        let mut c = Config::default();
+        c.recorder.format = Format::Wav24;
+        c.recorder.kbps = 256;
+        let back = Config::parse(&c.to_ini()).unwrap();
+        assert_eq!((back.recorder.format, back.recorder.kbps), (Format::Wav24, 256));
+        assert_eq!(Config::parse(&Config::default().to_ini()).unwrap().recorder.format, Format::Mp3);
     }
 
     #[test]
