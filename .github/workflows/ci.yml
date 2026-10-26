@@ -129,6 +129,40 @@ jobs:
       - name: GUI tests
         run: node tests/gui/ui_check.js
 
+  macos:
+    name: macOS
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: macos
+
+      - name: Unit tests
+        run: cargo test --locked
+
+      - name: Build the app (Apple silicon and Intel)
+        run: sh packaging/bundle.sh
+
+      - name: Start, ask, start again and quit the app
+        run: sh tests/launch/smoke.sh dist/BananaSplit.app
+
+      - name: Upload the app
+        uses: actions/upload-artifact@v7
+        with:
+          name: bananasplit-macos
+          path: macos/dist/bananasplit-*-macos.zip
+          if-no-files-found: error
+          retention-days: 14
+
   windows:
     name: Windows
     runs-on: windows-latest
