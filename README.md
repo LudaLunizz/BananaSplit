@@ -2,7 +2,7 @@
 
 # BananaSplit
 
-**A low-latency virtual audio mixer for Linux and Windows, in the spirit of Voicemeeter Banana.**
+**A low-latency virtual audio mixer for Linux, Windows and macOS, in the spirit of Voicemeeter Banana.**
 
 [![CI](https://github.com/LudaLunizz/BananaSplit/actions/workflows/ci.yml/badge.svg)](https://github.com/LudaLunizz/BananaSplit/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/LudaLunizz/BananaSplit?include_prereleases&sort=semver)](https://github.com/LudaLunizz/BananaSplit/releases)
@@ -29,6 +29,7 @@
 | --- | --- | --- |
 | Linux | JACK client on PipeWire's JACK layer or JACK2, PipeWire virtual cables | GTK 3 + WebKitGTK |
 | Windows | WASAPI shared mode, Splitter or VB-Audio cables | WebView2 |
+| macOS (new) | Core Audio, BlackHole and other loopback cables | WKWebView |
 
 ## Download
 
@@ -39,6 +40,7 @@ Builds are published on the [Releases](https://github.com/LudaLunizz/BananaSplit
 | Debian, Ubuntu, Mint, Pop!_OS | `bananasplit_<version>_amd64.deb` |
 | Any other Linux (x86-64, glibc ≥ 2.34) | `bananasplit-<version>-linux-x86_64.tar.gz` |
 | Windows x64 | `bananasplit-<version>-windows-x64.zip` |
+| macOS 11 or newer (Apple silicon and Intel) | `bananasplit-<version>-macos.zip` |
 
 Every release ships a `SHA256SUMS.txt`.
 
@@ -87,6 +89,24 @@ BananaSplit lives in the tray: closing the window keeps the mixer running there.
 
 See [`windows/README.md`](windows/README.md) for paths and command-line options.
 
+### macOS
+
+The macOS app is new, so older releases don't have it.
+
+1. Unzip `bananasplit-<version>-macos.zip` and drag **BananaSplit** into Applications.
+2. Open it. The app isn't signed with an Apple Developer ID, so the first time macOS refuses to open it: allow it with **Open Anyway** in **System Settings › Privacy & Security**, as the [macOS manual](macos/README.md#installing) explains.
+3. Allow the microphone when macOS asks.
+4. For per-channel virtual cables, install [BlackHole](https://github.com/ExistentialAudio/BlackHole) (`brew install blackhole-2ch`).
+
+BananaSplit lives in the menu bar: closing the window keeps the mixer running there. See [`macos/README.md`](macos/README.md) for devices, cables, paths and command-line options.
+
+To build the app yourself on a Mac (Rust and Xcode's command line tools):
+
+```sh
+cd macos
+sh packaging/bundle.sh       # dist/BananaSplit.app, for Apple silicon and Intel
+```
+
 ## Repository layout
 
 ```
@@ -98,12 +118,13 @@ See [`windows/README.md`](windows/README.md) for paths and command-line options.
 │   ├── contrib/      desktop entry, PipeWire snippets, systemd unit
 │   └── assets/
 ├── windows/          Windows app (Rust crate, WASAPI / WebView2)
+├── macos/            macOS app (Rust crate, Core Audio / WKWebView)
 ├── docs/
 │   └── screenshots/
 └── .github/          CI, release automation, templates
 ```
 
-The Linux and Windows apps are separate crates that share most of their mixer code by copy. Each builds on its own.
+The Linux, Windows and macOS apps are separate crates that share most of their mixer code by copy. Each builds on its own.
 
 ## Building from source
 
@@ -125,6 +146,14 @@ cargo build --release
 target\release\bananasplit.exe
 ```
 
+**macOS**
+
+```sh
+cd macos
+cargo build --release
+target/release/bananasplit
+```
+
 ## Testing
 
 ```sh
@@ -134,6 +163,13 @@ sh tests/e2e/run_e2e.sh             # real binary against a mock libjack (gcc, c
 sh tests/window/run_window_test.sh  # app window and tray on Xvfb (GTK 3, dbus-python, PyGObject)
 node tests/gui/ui_check.js          # every GUI control in Chromium (Node.js, Playwright)
 sh packaging/build-packages.sh      # builds and verifies the .deb and portable package
+```
+
+```sh
+cd macos
+cargo test                          # unit and no-allocation tests
+sh packaging/bundle.sh && sh tests/launch/smoke.sh dist/BananaSplit.app
+                                    # builds the app, starts it, asks it, starts it again, quits it
 ```
 
 ```powershell
@@ -147,7 +183,7 @@ All of these run in CI on every push and pull request.
 
 ## Releasing
 
-1. Bump `version` in `linux/Cargo.toml` and `windows/Cargo.toml`.
+1. Bump `version` in `linux/Cargo.toml`, `windows/Cargo.toml` and `macos/Cargo.toml`.
 2. Tag the commit with the same version and push the tag:
 
    ```sh
@@ -163,7 +199,7 @@ All of these run in CI on every push and pull request.
 
 4. Write the release's notes on GitHub, then untick pre-release.
 
-The workflow builds the Linux packages and the Windows executable and writes `SHA256SUMS.txt`, but doesn't publish them. `sign-release.sh --release` does, with your own GitHub login (`gh`), so the release is made by your account:
+The workflow builds the Linux packages, the Windows executable and the macOS app and writes `SHA256SUMS.txt`, but doesn't publish them. `sign-release.sh --release` does, with your own GitHub login (`gh`), so the release is made by your account:
 
 - It takes the files that the workflow left for the tag, but only from a successful run of `release.yml` in this repository.
 - It checks the files against `SHA256SUMS.txt` and that the key is the one in `src/update.rs`.
@@ -171,7 +207,9 @@ The workflow builds the Linux packages and the Windows executable and writes `SH
 
 For a release that already exists (the workflow published them itself up to 2.8.2), it only signs that release's `SHA256SUMS.txt` and uploads `SHA256SUMS.txt.sig`.
 
-The in-app updater offers a release once it is published and **not** marked pre-release. It finds the files by their names (`bananasplit-<version>-linux-x86_64.tar.gz`, `bananasplit_<version>_amd64.deb`, `bananasplit-<version>-windows-x64.exe`) and installs a release only when its `SHA256SUMS.txt` is signed with the release key, so keep those names and `SHA256SUMS.txt`.
+The in-app updater offers a release once it is published and **not** marked pre-release. It finds the files by their names (`bananasplit-<version>-linux-x86_64.tar.gz`, `bananasplit_<version>_amd64.deb`, `bananasplit-<version>-windows-x64.exe`, `bananasplit-<version>-macos.zip`) and installs a release only when its `SHA256SUMS.txt` is signed with the release key, so keep those names and `SHA256SUMS.txt`.
+
+**The macOS app** is signed ad hoc only (Apple silicon runs nothing unsigned), not with an Apple Developer ID, and not notarized: macOS asks people once to allow it (**Open Anyway**).
 
 **The release key** is kept off GitHub on purpose (not even as a secret), so the workflow can't sign. A release without `SHA256SUMS.txt.sig` is offered but never installed. Keep a backup of the key: without it, no installed BananaSplit can update itself to a new release.
 
