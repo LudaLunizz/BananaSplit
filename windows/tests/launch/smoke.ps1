@@ -270,11 +270,16 @@ if ($state) {
 }
 Check (Until { (App-Windows).Count -ge 1 } 30) "a window titled BananaSplit opens"
 # The first start, without VB-Audio cables (the runner has none): the
-# welcome dialog offers them, and what happened at start is on the page.
-$welcome = $null
-Check (Until { $script:welcome = [BsSmoke.Win]::Dialogs([uint32]$p.Id) | Select-Object -First 1; $null -ne $script:welcome } 15) "the first start offers the VB-Audio cables in a dialog"
-if ($welcome) { [void][BsSmoke.Win]::PostMessage($welcome, 0x0111, [IntPtr]7, [IntPtr]::Zero) } # No
-Check (Until { [BsSmoke.Win]::Dialogs([uint32]$p.Id).Count -eq 0 } 10) "the dialog closes"
+# page opens its "Virtual cables" window by itself (no message box that
+# could hide behind the window), and what happened at start is on the page.
+$cab = $null
+Check (Until { $script:cab = Get-Http '/api/cables' | ConvertFrom-Json; $null -ne $script:cab } 10) "it reports the virtual cables (valid JSON)"
+if ($cab) { Annotate 'notice' 'Virtual cables' ($cab | ConvertTo-Json -Compress) }
+Check ($cab.welcome -eq $true -and @($cab.pairs).Count -eq 0) "the first start without cables asks the page for the Virtual cables window"
+Start-Sleep -Seconds 2
+Check ([BsSmoke.Win]::Dialogs([uint32]$p.Id).Count -eq 0) "and shows no message box"
+try { [void](Post-Cmd 'op=cables&a=seen') } catch { }
+Check (Until { (Get-Http '/api/cables' | ConvertFrom-Json).welcome -eq $false } 10) "once closed, the window does not open by itself again"
 $st0 = Get-Http '/api/state' | ConvertFrom-Json
 Check ($st0.status -match 'VB-Audio') "the start-up notes are in the page's status line ('$($st0.status)')"
 Check (Until { @(Get-NetTCPConnection -LocalPort $Port -State Established -ErrorAction SilentlyContinue).Count -ge 1 } 30) "the window's page connects to the mixer"

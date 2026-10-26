@@ -447,6 +447,17 @@ dialog::backdrop { background: var(--overlay); }
 .upd-auto p { margin: 0; color: var(--muted); font-size: 10.5px; }
 .upd-auto b { color: var(--text); font-size: 11.5px; }
 
+/* ---- virtual cables ---- */
+#cabdlg { width: min(620px, calc(100vw - 32px)); }
+.cab p, .cab li { margin: 0 0 8px; font-size: 11.5px; line-height: 1.45; }
+.cab .cab-state { font-size: 12.5px; color: var(--text); }
+.cab .cab-state.ok { color: var(--green); }
+.cab h4 { margin: 14px 0 6px; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; }
+.cab ol, .cab ul { margin: 0 0 8px; padding-left: 20px; }
+.cab .warn { color: var(--amber); }
+.cab .muted { color: var(--muted); }
+.cab [hidden] { display: none; }
+
 /* ---- a channel's menu (what it takes in / plays on) ---- */
 .cmenu {
   position: absolute; z-index: 40; width: 318px; max-height: 560px; overflow-y: auto; padding: 8px;
@@ -517,6 +528,7 @@ dialog::backdrop { background: var(--overlay); }
         <button class="mi" role="menuitemcheckbox" id="m-autostart" aria-checked="false"><span class="chk"></span>Start with the system</button>
         <button class="mi" role="menuitemcheckbox" id="m-tray" aria-checked="true"><span class="chk"></span>Closing the window keeps it running</button>
         <button class="mi" role="menuitem" id="m-install" hidden><span class="chk"></span>Add BananaSplit to the app menu</button>
+        <button class="mi" role="menuitem" id="m-cables"><span class="chk"></span>Virtual cables…</button>
         <button class="mi" role="menuitem" id="m-update"><span class="chk"></span><span id="m-updtxt">Check for updates…</span><span class="kb" id="m-updkb"></span></button>
         <div class="msep"></div>
         <button class="mi danger" role="menuitem" id="m-quit"><span class="chk"></span>Quit BananaSplit<span class="kb">removes the cables</span></button>
@@ -629,6 +641,45 @@ dialog::backdrop { background: var(--overlay); }
       <button class="tool switch" id="upd-auto" aria-pressed="false" aria-describedby="upd-autotxt">Off</button>
       <p id="upd-autotxt"><b>Install updates automatically</b><br>BananaSplit then checks GitHub a minute after it starts and once a day, installs a new version by itself once it has been out for two days and tells you when a restart finishes it. It never restarts on its own. Off (the default), it looks for a new version only when you click Check now.</p>
     </div>
+  </div>
+</dialog>
+
+<dialog id="cabdlg" aria-labelledby="cab-h">
+  <div class="dlg-head"><h3 id="cab-h">Virtual cables</h3><button class="tool" id="cabclose">Close</button></div>
+  <div class="dlg-body cab">
+    <p id="cab-welcome" hidden><b>Welcome to BananaSplit.</b> One optional step before you start: virtual cables. You can skip it, and come back with Menu › Virtual cables… at any time.</p>
+    <p class="cab-state" id="cab-state" role="status">Looking for cables…</p>
+    <div class="upd-acts">
+      <button class="tool primary" id="cab-page">VB-Audio download page</button>
+      <button class="tool" id="cab-sound">Windows sound settings</button>
+      <button class="tool" id="cab-again">Check again</button>
+    </div>
+
+    <h4>What they are for</h4>
+    <p>A virtual cable is an audio device that only exists in software. Each VB-Audio cable pair (CABLE, CABLE-A … CABLE-D) gives one BananaSplit channel its own device, strips first, then buses:</p>
+    <ul>
+      <li><b>On a strip</b> it is an output device. Pick “CABLE Input” as the speaker in a game, a browser or Discord, and that app’s sound has a strip of its own.</li>
+      <li><b>On a bus</b> it is a microphone. Pick “CABLE Output” as the microphone in Discord or OBS, and they hear that bus’s mix.</li>
+    </ul>
+    <p class="muted">Without cables, everything else works: your headset and other devices, the mixer, recording, playback and VBAN.</p>
+
+    <h4>With Voicemeeter</h4>
+    <p id="cab-vm"></p>
+    <p>VB-CABLE is a separate driver from the same company. Installing it adds new devices and leaves Voicemeeter’s own (Voicemeeter Input, Voicemeeter AUX …) and its settings as they are. BananaSplit never uses Voicemeeter’s devices as its cables, and only connects to one if you pick it in a channel’s menu.</p>
+    <p>To pass sound between Voicemeeter and BananaSplit without installing anything, use VBAN (the VBAN button at the top). On the same computer only one of them can listen on UDP port 6980, so give BananaSplit another port there (6981, say) and send to 127.0.0.1.</p>
+
+    <h4>Your default devices</h4>
+    <p id="cab-def"></p>
+    <p>BananaSplit never changes the Windows defaults. When a new audio device is installed, though, Windows may make it the default, so after installing a cable check here, or in the Windows sound settings, that your headset is still the default. Apps would otherwise play into the cable instead of your ears. (A1 on “Default output” skips a cable either way, so the mixer never feeds itself.)</p>
+
+    <h4>Installing</h4>
+    <ol>
+      <li>Open the VB-Audio download page and download the VB-CABLE driver pack (free). CABLE-A … CABLE-D, for more channels, come in two extra packs (A+B, C+D) on the same page.</li>
+      <li>Extract the zip, right-click <b>VBCABLE_Setup_x64.exe</b> and choose <b>Run as administrator</b>, then <b>Install Driver</b>.</li>
+      <li>Restart Windows: the driver needs it.</li>
+      <li>Start BananaSplit. It finds the cables by itself; check your default devices here.</li>
+    </ol>
+    <p class="muted">BananaSplit doesn’t install drivers itself: that takes administrator rights and VB-Audio’s own installer, and you decide whether you want them.</p>
   </div>
 </dialog>
 
@@ -1186,8 +1237,8 @@ function buildChanMenu(focus) {
     sub: !D.cables.ok ? D.cables.why
       : C.cable.on ? (users.length ? "Used by " + users.join(", ") : strip ? "Any app can choose it as its output" : "Any app can choose it as its microphone")
       : strip ? "Off: no app can play into " + id + " by itself" : "Off: no app can record " + id,
-    warn: !D.cables.ok, disabled: !D.cables.ok,
-    act: (v) => menuSend({ op: "cable", ch, v: v ? 1 : 0 }),
+    warn: !D.cables.ok, title: !D.cables.ok ? "What virtual cables are for, and how to install them" : "",
+    act: (v) => { if (D.cables.ok) menuSend({ op: "cable", ch, v: v ? 1 : 0 }); else { closeChanMenu(); openCables(); } },
   });
   // apps (the sound server's streams), moved into the cable
   if (D.pulse) {
@@ -1506,9 +1557,14 @@ document.querySelectorAll("[data-theme-v]").forEach((b) => b.addEventListener("c
 }));
 // A name too long for its strip gets a smaller font (down to 9px) before it
 // is cut with an ellipsis. (Measured unrounded: scrollWidth rounds.)
+// Measuring lays the page out again, several times per name: a name is only
+// fitted again when its text or its strip's width changed (or `force`).
 const NAME_PX = 12.5, NAME_MIN_PX = 9;
-function fitName(u) {
+function fitName(u, force) {
   const e = u.name;
+  const key = e.textContent + "|" + e.offsetWidth;
+  if (!force && u.nameFit === key) return;
+  u.nameFit = key;
   e.style.fontSize = "";
   const room = e.getBoundingClientRect().width;
   const full = () => {
@@ -1546,7 +1602,7 @@ function layout() {
   document.body.style.width = scroll ? Math.ceil(w * z) + "px" : "";
   document.body.style.height = scroll ? Math.ceil(h * z) + "px" : "";
   setText($("zoomval"), Math.round(userZoom * 100) + "%");
-  ui.forEach(fitName);
+  ui.forEach((u) => fitName(u));
   drawWave();
   if (eqCh >= 0) drawEq();
   if (menuCh >= 0) placeChanMenu();
@@ -1560,7 +1616,13 @@ function setZoom(z) {
 $("zoomin").addEventListener("click", (e) => { e.stopPropagation(); setZoom(userZoom + 0.1); });
 $("zoomout").addEventListener("click", (e) => { e.stopPropagation(); setZoom(userZoom - 0.1); });
 $("zoomval").addEventListener("click", (e) => { e.stopPropagation(); setZoom(1); });
-window.addEventListener("resize", layout);
+// A window being resized sends many resize events per frame: lay out once a frame.
+let layoutQueued = false;
+window.addEventListener("resize", () => {
+  if (layoutQueued) return;
+  layoutQueued = true;
+  requestAnimationFrame(() => { layoutQueued = false; layout(); });
+});
 
 $("m-autostart").addEventListener("click", () => {
   const on = $("m-autostart").getAttribute("aria-checked") !== "true";
@@ -2384,6 +2446,49 @@ $("vbanport").addEventListener("keydown", (e) => { if (e.key === "Enter") $("vba
 $("vbanport").addEventListener("change", () => { hold("vbanport", 1500); send({ op: "vbanport", v: $("vbanport").value.trim() }, false); });
 document.querySelectorAll("dialog input, dialog select").forEach((i) => i.addEventListener("keydown", (e) => e.stopPropagation()));
 
+// ---- virtual cables (VB-Audio) ----------------------------------------------------
+let cabLoading = false;
+async function loadCables() {
+  if (cabLoading) return;
+  cabLoading = true;
+  try {
+    const r = await fetch("/api/cables");
+    if (r.ok) renderCables(await r.json());
+  } catch (e) { /* "Check again" tries again */ }
+  cabLoading = false;
+}
+function renderCables(C) {
+  const n = C.pairs.length;
+  setText($("cab-state"), n
+    ? "Installed: " + C.pairs.join(", ") + (n === 1 ? ". It can serve one channel." : ". Each can serve one channel.")
+    : "No VB-Audio cables are installed. They are optional.");
+  $("cab-state").classList.toggle("ok", n > 0);
+  setText($("cab-vm"), C.voicemeeter.length
+    ? "Voicemeeter is installed here (" + C.voicemeeter.slice(0, 4).join(", ") + (C.voicemeeter.length > 4 ? " …" : "") + ")."
+    : "Voicemeeter is not installed here.");
+  const d = $("cab-def");
+  d.replaceChildren();
+  for (const [what, x] of [["Windows plays sound on ", C.output], ["Windows records from ", C.input]]) {
+    const line = el("span", x && x.cable ? "warn" : null, x ? what + x.name + (x.cable ? ": a virtual cable, not your headset or speakers." : ".") : what + "nothing (no device).");
+    if (d.childNodes.length) d.append(el("br"));
+    d.append(line);
+  }
+  $("cab-welcome").hidden = !C.welcome;
+  if (C.welcome && !$("cabdlg").open) $("cabdlg").showModal();
+}
+function openCables() {
+  closeMenus();
+  if (!$("cabdlg").open) $("cabdlg").showModal();
+  loadCables();
+}
+$("m-cables").addEventListener("click", openCables);
+$("cabclose").addEventListener("click", () => $("cabdlg").close());
+// the first start's welcome: shown once
+$("cabdlg").addEventListener("close", () => { if (!$("cab-welcome").hidden) { $("cab-welcome").hidden = true; send({ op: "cables", a: "seen" }, true); } });
+$("cab-page").addEventListener("click", () => send({ op: "cables", a: "page" }, false));
+$("cab-sound").addEventListener("click", () => send({ op: "cables", a: "sound" }, false));
+$("cab-again").addEventListener("click", loadCables);
+
 // ---- connection --------------------------------------------------------------------
 let lastMsg = 0, stopped = false, events = null;
 function showOverlay(h, p) {
@@ -2433,9 +2538,10 @@ $("busesB").append(...[9, 10].map(buildStrip));
 select(0);
 applyTheme(document.documentElement.dataset.theme || "auto");
 layout();
-if (document.fonts) document.fonts.ready.then(() => ui.forEach(fitName));
+if (document.fonts) document.fonts.ready.then(() => ui.forEach((u) => fitName(u, true)));
 lastMsg = performance.now();
 connect();
+loadCables();
 </script>
 </body>
 </html>

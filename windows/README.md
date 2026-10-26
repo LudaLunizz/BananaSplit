@@ -69,7 +69,13 @@ From the app menu:
 
 ## Virtual cables
 
-Per-channel virtual cables require genuine VB-Audio cable pairs. Each installed pair is assigned to at most one channel, strips first, then buses. Without any pairs, cables are unavailable.
+Per-channel virtual cables require genuine VB-Audio cable pairs. Each installed pair is assigned to at most one channel, strips first, then buses. Without any pairs, cables are unavailable; everything else works without them.
+
+**Menu ▸ Virtual cables…** explains them and shows which pairs are installed, whether Voicemeeter is, and the current Windows default devices. On the first start without cables it opens by itself, once. It has buttons for the VB-Audio download page and the Windows sound settings.
+
+- **Installing:** download the VB-CABLE driver pack (CABLE-A … CABLE-D come in two extra packs), run `VBCABLE_Setup_x64.exe` as administrator, **Install Driver**, restart Windows, then start BananaSplit. BananaSplit never installs drivers itself.
+- **With Voicemeeter:** VB-CABLE is a separate driver; installing it leaves Voicemeeter's devices and settings alone. BananaSplit never uses Voicemeeter's devices as its cables. To pass audio between the two without a driver, use VBAN, with BananaSplit on a port other than 6980 (Voicemeeter's) and 127.0.0.1 as the address.
+- **Default devices:** BananaSplit never changes them, but Windows may make a newly installed cable the default output or input. Check them in the Virtual cables window or the Windows sound settings after installing.
 
 Windows has no per-app stream routing like PipeWire, so device lists show WASAPI endpoints only.
 

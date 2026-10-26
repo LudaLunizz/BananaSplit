@@ -45,8 +45,8 @@ pub struct Status {
 }
 
 /// The VB-CABLE check at start (a note when none is installed). True if
-/// none is installed: on the very first start, the user is offered the
-/// download page (`desktop::cable_prompt`).
+/// none is installed: on the very first start, the app's page opens its
+/// "Virtual cables" window (`cables::report`).
 pub fn first_run(
     cfg: &mut Config,
     _path: &std::path::Path,
