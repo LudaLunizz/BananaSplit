@@ -3,8 +3,12 @@
 # release only when SHA256SUMS.txt.sig is the Ed25519 signature of it made
 # with the release key (its public half is SIGNING_KEY in src/update.rs).
 #
-#   packaging/sign-release.sh --release v2.8.1   download the release's SHA256SUMS.txt
-#                                                (gh), sign it, upload SHA256SUMS.txt.sig
+#   packaging/sign-release.sh --release v2.8.3   make the release (gh): take the files
+#                                                the release workflow left for the tag,
+#                                                check and sign SHA256SUMS.txt, publish
+#                                                them as a pre-release under your account
+#                                                (if the release exists: sign its
+#                                                SHA256SUMS.txt, upload SHA256SUMS.txt.sig)
 #   packaging/sign-release.sh SHA256SUMS.txt     write SHA256SUMS.txt.sig next to it
 #   packaging/sign-release.sh --new-key          make a release key (prints its public half)
 #
@@ -14,7 +18,7 @@
 # made by someone who got into the GitHub account. Without the key, no new
 # release can be installed by the updater (users install one by hand).
 #
-# Needs: openssl 1.1.1 or newer, od; gh for --release.
+# Needs: openssl 1.1.1 or newer, od; gh and sha256sum for --release.
 set -eu
 umask 077
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -60,20 +64,51 @@ case "${1:-}" in
     TAG=${2:-}
     [ -n "$TAG" ] || fail "--release needs a tag (v2.8.1)"
     command -v gh >/dev/null || fail "--release needs gh (GitHub's command line)"
+    command -v sha256sum >/dev/null || fail "--release needs sha256sum"
+    REPO=LudaLunizz/BananaSplit
     WORK=$(mktemp -d)
     trap 'rm -rf "$WORK"' EXIT
-    gh release download "$TAG" --repo LudaLunizz/BananaSplit --pattern SHA256SUMS.txt --dir "$WORK"
-    # the files the checksums are for are the ones the release has
-    for f in $(awk '{ sub(/^\*/, "", $2); print $2 }' "$WORK/SHA256SUMS.txt"); do
-      gh release view "$TAG" --repo LudaLunizz/BananaSplit --json assets --jq '.assets[].name' | grep -qx "$f" \
-        || fail "SHA256SUMS.txt lists $f, which the release does not have"
-    done
-    sign "$WORK/SHA256SUMS.txt"
-    gh release upload "$TAG" --repo LudaLunizz/BananaSplit --clobber "$WORK/SHA256SUMS.txt.sig"
-    echo "uploaded SHA256SUMS.txt.sig to $TAG; untick pre-release when it is ready for everyone"
+    if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+      # a release that exists already (the workflow made them up to 2.8.2)
+      gh release download "$TAG" --repo "$REPO" --pattern SHA256SUMS.txt --dir "$WORK"
+      # the files the checksums are for are the ones the release has
+      for f in $(awk '{ sub(/^\*/, "", $2); print $2 }' "$WORK/SHA256SUMS.txt"); do
+        gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' | grep -qx "$f" \
+          || fail "SHA256SUMS.txt lists $f, which the release does not have"
+      done
+      sign "$WORK/SHA256SUMS.txt"
+      gh release upload "$TAG" --repo "$REPO" --clobber "$WORK/SHA256SUMS.txt.sig"
+      echo "uploaded SHA256SUMS.txt.sig to $TAG; untick pre-release when it is ready for everyone"
+      exit 0
+    fi
+    # No release yet: make it from the files the release workflow left for
+    # the tag (the newest, if it ran more than once).
+    NAME="bananasplit-$TAG"
+    RUN=$(gh api "repos/$REPO/actions/artifacts?name=$NAME" \
+      --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last | .workflow_run.id // empty')
+    [ -n "$RUN" ] || fail "no release files for $TAG: has the release workflow finished for it?"
+    # Only from a finished, successful run of release.yml in this repository:
+    # a pull request's run could leave files of the same name.
+    FROM=$(gh api "repos/$REPO/actions/runs/$RUN" --jq '"\(.path) \(.event) \(.conclusion) \(.head_repository.full_name)"')
+    case "$FROM" in
+      ".github/workflows/release.yml push success $REPO" | ".github/workflows/release.yml workflow_dispatch success $REPO") ;;
+      *) fail "$NAME is from run $RUN ($FROM), not a successful run of release.yml" ;;
+    esac
+    gh run download "$RUN" --repo "$REPO" --name "$NAME" --dir "$WORK/files"
+    cd "$WORK/files"
+    [ -s SHA256SUMS.txt ] || fail "run $RUN left no SHA256SUMS.txt"
+    sha256sum --check --quiet --strict SHA256SUMS.txt || fail "run $RUN's files don't match its SHA256SUMS.txt"
+    # exactly the files the checksums are for
+    listed=$(awk '{ sub(/^\*/, "", $2); print $2 }' SHA256SUMS.txt | sort)
+    present=$(ls | grep -vx SHA256SUMS.txt | sort || true)
+    [ "$listed" = "$present" ] || fail "run $RUN's files are not the ones its SHA256SUMS.txt lists"
+    sign SHA256SUMS.txt
+    gh release create "$TAG" --repo "$REPO" ./* \
+      --title "BananaSplit ${TAG#v}" --generate-notes --prerelease --verify-tag
+    echo "made $TAG as a pre-release under your GitHub account, signed; write its notes, then untick pre-release when it is ready for everyone"
     ;;
   ""|-*)
-    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
   *)

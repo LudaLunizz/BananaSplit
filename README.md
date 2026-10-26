@@ -155,11 +155,25 @@ All of these run in CI on every push and pull request.
    git push origin v2.7.0
    ```
 
-The [release workflow](.github/workflows/release.yml) builds the Linux packages and the Windows executable, writes `SHA256SUMS.txt` and publishes a GitHub release.
+3. When the [release workflow](.github/workflows/release.yml) has finished, run this on the computer that has the release key:
 
-The in-app updater offers a release once it is published and **not** marked pre-release (the workflow creates new releases as pre-releases: untick that when the release is ready for everyone). It finds the files by their names (`bananasplit-<version>-linux-x86_64.tar.gz`, `bananasplit_<version>_amd64.deb`, `bananasplit-<version>-windows-x64.exe`) and installs a release only when its `SHA256SUMS.txt` is signed with the release key, so keep those names and `SHA256SUMS.txt`.
+   ```sh
+   linux/packaging/sign-release.sh --release v2.7.0
+   ```
 
-**Signing a release.** The release key is kept off GitHub on purpose (not even as a secret), so the workflow cannot sign: after it has published the pre-release, run `linux/packaging/sign-release.sh --release vX.Y.Z` on the computer that has the key. It downloads the release's `SHA256SUMS.txt`, signs it, checks that the key is the one in `src/update.rs`, and uploads `SHA256SUMS.txt.sig`. Then untick pre-release. A release without that file is offered but never installed. Keep a backup of the key: without it, no installed BananaSplit can update itself to a new release.
+4. Write the release's notes on GitHub, then untick pre-release.
+
+The workflow builds the Linux packages and the Windows executable and writes `SHA256SUMS.txt`, but doesn't publish them. `sign-release.sh --release` does, with your own GitHub login (`gh`), so the release is made by your account:
+
+- It takes the files that the workflow left for the tag, but only from a successful run of `release.yml` in this repository.
+- It checks the files against `SHA256SUMS.txt` and that the key is the one in `src/update.rs`.
+- It signs `SHA256SUMS.txt` and publishes everything, `SHA256SUMS.txt.sig` included, as a pre-release with generated notes.
+
+For a release that already exists (the workflow published them itself up to 2.8.2), it only signs that release's `SHA256SUMS.txt` and uploads `SHA256SUMS.txt.sig`.
+
+The in-app updater offers a release once it is published and **not** marked pre-release. It finds the files by their names (`bananasplit-<version>-linux-x86_64.tar.gz`, `bananasplit_<version>_amd64.deb`, `bananasplit-<version>-windows-x64.exe`) and installs a release only when its `SHA256SUMS.txt` is signed with the release key, so keep those names and `SHA256SUMS.txt`.
+
+**The release key** is kept off GitHub on purpose (not even as a secret), so the workflow can't sign. A release without `SHA256SUMS.txt.sig` is offered but never installed. Keep a backup of the key: without it, no installed BananaSplit can update itself to a new release.
 
 ## Contributing
 
