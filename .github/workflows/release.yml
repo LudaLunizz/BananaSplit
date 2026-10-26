@@ -25,7 +25,7 @@ jobs:
       run:
         working-directory: linux
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
           fetch-depth: 0
@@ -43,7 +43,7 @@ jobs:
       - name: Build and check packages
         run: sh packaging/build-packages.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-linux
           path: linux/dist/*
@@ -57,7 +57,7 @@ jobs:
         working-directory: windows
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
 
@@ -90,7 +90,7 @@ jobs:
           Compress-Archive -Path "$stage/*" -DestinationPath "dist/$name.zip" -Force
           Copy-Item target/x86_64-pc-windows-msvc/release/bananasplit.exe "dist/bananasplit-$version-windows-x64.exe"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-windows
           path: windows/dist/*
@@ -103,7 +103,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist
