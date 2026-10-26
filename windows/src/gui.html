@@ -531,7 +531,7 @@ dialog::backdrop { background: var(--overlay); }
         <button class="mi" role="menuitem" id="m-cables"><span class="chk"></span>Virtual cables…</button>
         <button class="mi" role="menuitem" id="m-update"><span class="chk"></span><span id="m-updtxt">Check for updates…</span><span class="kb" id="m-updkb"></span></button>
         <div class="msep"></div>
-        <button class="mi danger" role="menuitem" id="m-quit"><span class="chk"></span>Quit BananaSplit<span class="kb">removes the cables</span></button>
+        <button class="mi danger" role="menuitem" id="m-quit"><span class="chk"></span>Quit BananaSplit<span class="kb">cables fall silent</span></button>
       </div>
     </div>
   </div>
@@ -650,36 +650,50 @@ dialog::backdrop { background: var(--overlay); }
     <p id="cab-welcome" hidden><b>Welcome to BananaSplit.</b> One optional step before you start: virtual cables. You can skip it, and come back with Menu › Virtual cables… at any time.</p>
     <p class="cab-state" id="cab-state" role="status">Looking for cables…</p>
     <div class="upd-acts">
-      <button class="tool primary" id="cab-page">VB-Audio download page</button>
+      <button class="tool primary" id="cab-splitter">Splitter download page</button>
+      <button class="tool" id="cab-page">VB-Audio download page</button>
       <button class="tool" id="cab-sound">Windows sound settings</button>
       <button class="tool" id="cab-again">Check again</button>
     </div>
 
     <h4>What they are for</h4>
-    <p>A virtual cable is an audio device that only exists in software. Each VB-Audio cable pair (CABLE, CABLE-A … CABLE-D) gives one BananaSplit channel its own device, strips first, then buses:</p>
+    <p>A virtual cable is an audio device that only exists in software. It gives a BananaSplit channel a device of its own:</p>
     <ul>
-      <li><b>On a strip</b> it is an output device. Pick “CABLE Input” as the speaker in a game, a browser or Discord, and that app’s sound has a strip of its own.</li>
-      <li><b>On a bus</b> it is a microphone. Pick “CABLE Output” as the microphone in Discord or OBS, and they hear that bus’s mix.</li>
+      <li><b>On a strip</b> it is an output device. Pick it as the speaker in a game, a browser or Discord, and that app’s sound has a strip of its own.</li>
+      <li><b>On a bus</b> it is a microphone. Pick it as the microphone in Discord or OBS, and they hear that bus’s mix.</li>
+    </ul>
+    <p>Two kinds of cables work:</p>
+    <ul>
+      <li><b>Splitter</b>, BananaSplit’s own: a cable for every channel, named after it. Apps play into “Splitter 1” … “Splitter 6” to reach strips 1 to 6, and record “Splitter A1” … “Splitter B2” to hear buses A1 to B2 (once the bus’s cable is on in its menu; B1 and B2 have theirs on to begin with).</li>
+      <li><b>VB-Audio’s cables</b> (VB-CABLE: CABLE, CABLE-A … CABLE-D). Each pair serves one channel, strips first, then buses: “CABLE Input” is the output device, “CABLE Output” the microphone. BananaSplit uses them for the channels Splitter doesn’t cover.</li>
     </ul>
     <p class="muted">Without cables, everything else works: your headset and other devices, the mixer, recording, playback and VBAN.</p>
 
     <h4>With Voicemeeter</h4>
     <p id="cab-vm"></p>
-    <p>VB-CABLE is a separate driver from the same company. Installing it adds new devices and leaves Voicemeeter’s own (Voicemeeter Input, Voicemeeter AUX …) and its settings as they are. BananaSplit never uses Voicemeeter’s devices as its cables, and only connects to one if you pick it in a channel’s menu.</p>
+    <p>Splitter and VB-CABLE add devices of their own and leave Voicemeeter’s (Voicemeeter Input, Voicemeeter AUX …) and its settings as they are. BananaSplit never uses Voicemeeter’s devices as its cables, and only connects to one if you pick it in a channel’s menu.</p>
     <p>To pass sound between Voicemeeter and BananaSplit without installing anything, use VBAN (the VBAN button at the top). On the same computer only one of them can listen on UDP port 6980, so give BananaSplit another port there (6981, say) and send to 127.0.0.1.</p>
 
     <h4>Your default devices</h4>
     <p id="cab-def"></p>
     <p>BananaSplit never changes the Windows defaults. When a new audio device is installed, though, Windows may make it the default, so after installing a cable check here, or in the Windows sound settings, that your headset is still the default. Apps would otherwise play into the cable instead of your ears. (A1 on “Default output” skips a cable either way, so the mixer never feeds itself.)</p>
 
-    <h4>Installing</h4>
+    <h4>Installing Splitter</h4>
+    <p>For now, Splitter is a test build: Microsoft hasn’t signed it yet, so Windows only loads it in test-signing mode. That mode needs Secure Boot off, and some games’ anti-cheat refuses to run in it. If that matters to you, use VB-Audio’s cables until Splitter is signed.</p>
+    <ol>
+      <li>Open the Splitter download page, download the Splitter zip and extract it.</li>
+      <li>Switch test signing on as its README.txt explains (once), then double-click <b>install.cmd</b> and allow it to make changes.</li>
+      <li>Start BananaSplit. It finds the cables by itself and uses them instead of VB-Audio’s, so point your apps at the Splitter cables; check your default devices here.</li>
+    </ol>
+
+    <h4>Installing VB-Audio’s cables</h4>
     <ol>
       <li>Open the VB-Audio download page and download the VB-CABLE driver pack (free). CABLE-A … CABLE-D, for more channels, come in two extra packs (A+B, C+D) on the same page.</li>
       <li>Extract the zip, right-click <b>VBCABLE_Setup_x64.exe</b> and choose <b>Run as administrator</b>, then <b>Install Driver</b>.</li>
       <li>Restart Windows: the driver needs it.</li>
       <li>Start BananaSplit. It finds the cables by itself; check your default devices here.</li>
     </ol>
-    <p class="muted">BananaSplit doesn’t install drivers itself: that takes administrator rights and VB-Audio’s own installer, and you decide whether you want them.</p>
+    <p class="muted">BananaSplit doesn’t install drivers itself: that takes administrator rights and the driver’s own installer, and you decide whether you want them.</p>
   </div>
 </dialog>
 
@@ -1650,7 +1664,7 @@ $("m-quit").addEventListener("click", (e) => {
     if (events) events.close();
     closeMenus();
     send({ op: "quit" }, true);
-    showOverlay("BananaSplit has stopped", "The mixer is closed and its virtual cables are removed. You can close this window.");
+    showOverlay("BananaSplit has stopped", "The mixer is closed. Its virtual cables stay installed, but carry no sound until it starts again. You can close this window.");
     return;
   }
   quitArmed = performance.now() + 3000;
@@ -2446,7 +2460,7 @@ $("vbanport").addEventListener("keydown", (e) => { if (e.key === "Enter") $("vba
 $("vbanport").addEventListener("change", () => { hold("vbanport", 1500); send({ op: "vbanport", v: $("vbanport").value.trim() }, false); });
 document.querySelectorAll("dialog input, dialog select").forEach((i) => i.addEventListener("keydown", (e) => e.stopPropagation()));
 
-// ---- virtual cables (VB-Audio) ----------------------------------------------------
+// ---- virtual cables (Splitter, VB-Audio) ------------------------------------------
 let cabLoading = false;
 async function loadCables() {
   if (cabLoading) return;
@@ -2458,11 +2472,20 @@ async function loadCables() {
   cabLoading = false;
 }
 function renderCables(C) {
-  const n = C.pairs.length;
-  setText($("cab-state"), n
-    ? "Installed: " + C.pairs.join(", ") + (n === 1 ? ". It can serve one channel." : ". Each can serve one channel.")
-    : "No VB-Audio cables are installed. They are optional.");
-  $("cab-state").classList.toggle("ok", n > 0);
+  const S = C.splitter, n = C.pairs.length;
+  const st = $("cab-state");
+  st.replaceChildren();
+  const lines = !S.found && !n ? [[null, "No virtual cables are installed. They are optional."]] : [
+    !S.found ? [null, "Splitter is not installed."]
+      : !S.missing.length ? [null, "Splitter is installed: " + S.cables.length + " cables, one for every channel."]
+      : ["warn", "Splitter is installed, but " + S.missing.join(", ") + (S.missing.length === 1 ? " is" : " are") + " missing (switched off or renamed in the Windows sound settings?)."],
+    [null, n ? "VB-Audio cables: " + C.pairs.join(", ") + (n === 1 ? ". It can serve one channel." : ". Each can serve one channel.") : "VB-Audio cables: none."],
+  ];
+  for (const [cls, text] of lines) {
+    if (st.childNodes.length) st.append(el("br"));
+    st.append(el("span", cls, text));
+  }
+  st.classList.toggle("ok", S.found || n > 0);
   setText($("cab-vm"), C.voicemeeter.length
     ? "Voicemeeter is installed here (" + C.voicemeeter.slice(0, 4).join(", ") + (C.voicemeeter.length > 4 ? " …" : "") + ")."
     : "Voicemeeter is not installed here.");
@@ -2485,6 +2508,7 @@ $("m-cables").addEventListener("click", openCables);
 $("cabclose").addEventListener("click", () => $("cabdlg").close());
 // the first start's welcome: shown once
 $("cabdlg").addEventListener("close", () => { if (!$("cab-welcome").hidden) { $("cab-welcome").hidden = true; send({ op: "cables", a: "seen" }, true); } });
+$("cab-splitter").addEventListener("click", () => send({ op: "cables", a: "splitter" }, false));
 $("cab-page").addEventListener("click", () => send({ op: "cables", a: "page" }, false));
 $("cab-sound").addEventListener("click", () => send({ op: "cables", a: "sound" }, false));
 $("cab-again").addEventListener("click", loadCables);
