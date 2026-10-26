@@ -35,6 +35,7 @@
 //! mode = mix          # mix (one stereo file) | multi (one file per channel)
 //! links = 1,A1        # channels feeding the recorder: 1-6, A1-A3, B1-B2 or none
 //! play_to = A1        # buses the player plays recordings into
+//! split = 60          # minutes per file; longer takes go on in _part2.wav, ... (0 = off)
 //!
 //! [vban]
 //! enabled = true
@@ -111,6 +112,8 @@ pub struct RecorderConfig {
     pub folder: String,
     pub format: Format,
     pub mode: Mode,
+    /// Minutes per file (0 = no time limit).
+    pub split_minutes: u32,
     /// Linked channels, same bit layout as [`Shared::rec_links`].
     pub links: u16,
     /// Buses the player plays into (bit b = bus b).
@@ -120,19 +123,27 @@ pub struct RecorderConfig {
 impl Default for RecorderConfig {
     fn default() -> Self {
         let s = Settings::default();
-        RecorderConfig { folder: s.folder, format: s.format, mode: s.mode, links: 1 << NUM_STRIPS, play_to: 1 } // A1
+        RecorderConfig {
+            folder: s.folder,
+            format: s.format,
+            mode: s.mode,
+            split_minutes: s.split_minutes,
+            links: 1 << NUM_STRIPS,
+            play_to: 1, // A1
+        }
     }
 }
 
 impl RecorderConfig {
     pub fn settings(&self) -> Settings {
-        Settings { folder: self.folder.clone(), format: self.format, mode: self.mode }
+        Settings { folder: self.folder.clone(), format: self.format, mode: self.mode, split_minutes: self.split_minutes }
     }
 
     pub fn set_settings(&mut self, s: &Settings) {
         self.folder = s.folder.clone();
         self.format = s.format;
         self.mode = s.mode;
+        self.split_minutes = s.split_minutes;
     }
 }
 
@@ -598,6 +609,7 @@ impl Config {
                         "mode" => r.mode = Mode::parse(v).map_err(err)?,
                         "links" => r.links = recorder::parse_links(v).map_err(err)?,
                         "play_to" => r.play_to = parse_routes(v).map_err(err)?,
+                        "split" => r.split_minutes = recorder::parse_split(v).map_err(err)?,
                         _ => return Err(err(format!("unknown key {k:?} in [recorder]"))),
                     }
                 }
@@ -726,11 +738,13 @@ impl Config {
         let r = &self.recorder;
         let _ = writeln!(o, "\n[recorder]");
         let _ = writeln!(o, "# links: 1-6 = strips, A1-A3 / B1-B2 = buses; mode = mix | multi");
+        let _ = writeln!(o, "# split = minutes per file: a longer take goes on in _part2.wav, ... (0 = off)");
         let _ = writeln!(o, "folder = {}", r.folder);
         let _ = writeln!(o, "format = {}", r.format.as_str());
         let _ = writeln!(o, "mode = {}", r.mode.as_str());
         let _ = writeln!(o, "links = {}", recorder::format_links(r.links));
         let _ = writeln!(o, "play_to = {}", format_routes(r.play_to));
+        let _ = writeln!(o, "split = {}", r.split_minutes);
         let v = &self.vban;
         let _ = writeln!(o, "\n[vban]");
         let _ = writeln!(o, "# Network audio, compatible with Voicemeeter's VBAN. Streams (up to 8 each way):");

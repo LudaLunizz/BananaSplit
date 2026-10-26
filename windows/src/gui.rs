@@ -10,6 +10,7 @@
 //! * `GET  /api/ping`    `bananasplit-gui` (lets a second `bananasplit --gui` find this one)
 //! * `GET  /api/devices` what each channel can be connected to (its menu, JSON)
 //! * `GET  /api/update`  the updater's release page and notes (JSON)
+//! * `GET  /api/cables`  VB-Audio cables, Voicemeeter, Windows defaults (JSON)
 //! * `POST /api/cmd`     one control change, form-encoded (`op=gain&ch=0&v=-3.5`)
 //!
 //! All mixer parameters (EQ, input gain and pan included) are atomics in
@@ -138,6 +139,9 @@ pub struct Hub {
     zoom: AtomicU32,
     pub autostart: AtomicBool,
     pub installed: AtomicBool,
+    /// The first start without VB-Audio cables: the page opens its
+    /// "Virtual cables" window by itself, once.
+    pub cable_welcome: AtomicBool,
     state: Mutex<(u64, Arc<String>)>,
     cond: Condvar,
     names: Mutex<Vec<String>>,
@@ -179,6 +183,7 @@ impl Hub {
             zoom: AtomicU32::new(1f32.to_bits()),
             autostart: AtomicBool::new(false),
             installed: AtomicBool::new(false),
+            cable_welcome: AtomicBool::new(false),
             state: Mutex::new((0, Arc::new("{}".into()))),
             cond: Condvar::new(),
             names: Mutex::new(Vec::new()),
@@ -1251,6 +1256,21 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
             hub.installed.store(crate::desktop::menu_installed(), SeqCst);
             Ok(msg)
         }
+        "cables" => match f.req("a")? {
+            "page" => {
+                crate::desktop::open_page(crate::win::cables::VBCABLE_PAGE)?;
+                Ok("opening the VB-Audio page in your browser".into())
+            }
+            "sound" => {
+                crate::desktop::open_sound_settings()?;
+                Ok("opening the Windows sound settings".into())
+            }
+            "seen" => {
+                hub.cable_welcome.store(false, SeqCst);
+                Ok("ok".into())
+            }
+            a => Err(format!("unknown cables action {a:?}")),
+        },
         "autoupdate" => {
             hub.request(Request::AutoUpdate(f.flag()?));
             Ok("ok".into())
@@ -1501,6 +1521,10 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
             Ok(u) => respond(&mut s, 200, "application/json", u.details_json().as_bytes(), ""),
             Err(e) => respond(&mut s, 404, text, e.as_bytes(), ""),
         },
+        ("GET", "/api/cables") => {
+            let json = crate::win::cables::report(hub.cable_welcome.load(SeqCst));
+            respond(&mut s, 200, "application/json", json.as_bytes(), "")
+        }
         ("GET", "/api/takes") => respond(&mut s, 200, "application/json", hub.takes.list_json().as_bytes(), ""),
         ("GET", "/api/devices") => match hub.ask(DevOp::List) {
             Ok(j) => respond(&mut s, 200, "application/json", j.as_bytes(), ""),

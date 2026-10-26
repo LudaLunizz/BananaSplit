@@ -234,6 +234,11 @@ fn load_gtk() -> Result<(Gtk, Gdk), String> {
     unsafe { Ok((Gtk::load(open_lib(&["libgtk-3.so.0"])?)?, Gdk::load(open_lib(&["libgdk-3.so.0"])?)?)) }
 }
 
+/// NVIDIA's own driver is loaded (not nouveau).
+fn nvidia_driver() -> bool {
+    std::path::Path::new("/proc/driver/nvidia").exists() || std::path::Path::new("/sys/module/nvidia").exists()
+}
+
 fn load_webkit() -> Result<WebKit, String> {
     let h = open_lib(&["libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37"])
         .map_err(|_| "WebKitGTK is not installed (libwebkit2gtk-4.1 or 4.0)".to_string())?;
@@ -1225,9 +1230,11 @@ pub fn main(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    // WebKitGTK's DMA-BUF renderer shows an empty window on some drivers
-    // (NVIDIA); the shared-memory path always works and is plenty here.
-    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+    // WebKitGTK's DMA-BUF renderer shows an empty window with NVIDIA's
+    // driver; there the shared-memory path is used. Elsewhere it stays on:
+    // the shared-memory path copies every frame, and makes resizing the
+    // window lag.
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() && nvidia_driver() {
         // SAFETY: still single-threaded (no library loaded yet).
         unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
     }

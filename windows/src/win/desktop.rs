@@ -45,7 +45,6 @@ const MB_OK: u32 = 0x00000000;
 const MB_YESNO: u32 = 0x00000004;
 const MB_ICONERROR: u32 = 0x00000010;
 const MB_ICONWARNING: u32 = 0x00000030;
-const MB_ICONINFORMATION: u32 = 0x00000040;
 const MB_SETFOREGROUND: u32 = 0x0001_0000;
 const IDYES: i32 = 6;
 
@@ -199,21 +198,10 @@ pub fn open_page(url: &str) -> Result<(), String> {
     if open_url(url) { Ok(()) } else { Err("could not open the web browser".into()) }
 }
 
-/// The first start, without VB-Audio cables: say what they are for, and
-/// offer the download page (they are optional).
-pub fn cable_prompt() {
-    let text = format!(
-        "Welcome to BananaSplit.\n\nFor virtual inputs and outputs (one per channel, for apps like \
-         Discord or OBS), BananaSplit uses the free VB-Audio virtual cables (CABLE, CABLE-A … CABLE-D). \
-         None is installed yet. Everything else works without them.\n\n\
-         Open the VB-Audio download page?"
-    );
-    let (cap, t) = (wide("BananaSplit"), wide(&text));
-    // SAFETY: NUL-terminated UTF-16 strings.
-    let answer = unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_YESNO | MB_ICONINFORMATION | MB_SETFOREGROUND) };
-    if answer == IDYES {
-        open_url(crate::win::cables::VBCABLE_PAGE);
-    }
+/// Windows' sound settings (Settings › System › Sound): to check, or set
+/// back, the default devices.
+pub fn open_sound_settings() -> Result<(), String> {
+    if open_url("ms-settings:sound") { Ok(()) } else { Err("could not open the sound settings".into()) }
 }
 
 /// The desktop window could not start (usually: no WebView2 Runtime). The

@@ -80,7 +80,8 @@ pub fn cable_extra(
     (p.strip_cable.to_vec(), p.bus_cable.to_vec())
 }
 
-fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Plan {
+/// The complete VB-Audio cable pairs (both ends installed), CABLE first.
+fn families(caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Vec<Family> {
     // find families
     let mut by_base_out: BTreeMap<String, String> = BTreeMap::new();
     let mut by_base_in: BTreeMap<String, String> = BTreeMap::new();
@@ -111,8 +112,18 @@ fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo
             families.push(Family { base: b.clone(), out_friendly: o.clone(), in_friendly: i.clone() });
         }
     }
+    families
+}
+
+/// The names of the complete cable pairs, e.g. ["CABLE", "CABLE-A"].
+pub fn cable_pairs(caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Vec<String> {
+    families(caps, rens).into_iter().map(|f| f.base).collect()
+}
+
+fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Plan {
+    let families = families(caps, rens);
     let ok = !families.is_empty();
-    let why = if ok { String::new() } else { format!("VB-Audio virtual cables are not installed; install them from {} to use per-channel virtual cables", crate::win::cables::VBCABLE_PAGE) };
+    let why = if ok { String::new() } else { crate::win::cables::MISSING.to_string() };
     // assign: first all strips in order, then buses? priority strips then buses for the rest; default cable true for all
     let mut used: HashSet<usize> = HashSet::new();
     let mut strip_cable = [const { None }; NUM_STRIPS];
