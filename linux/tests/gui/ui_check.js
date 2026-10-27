@@ -280,7 +280,8 @@ async function until(pred, what, ms = 4000) {
   s = await until((s) => s.takes.count === 2, "the new take shows up next to the old one", 8000);
   await page.locator("#takeprev").click();
   s = await until((s) => s.player.take === "2026-01-01_10-00-00", "‹ selects the earlier take");
-  check((await page.locator("#taketitle").textContent()).includes("Take 01"), "waveform title shows TAKE 01");
+  // the page shows it on its next frame, once it has the new takes list
+  await untilPage(async () => (await page.locator("#taketitle").textContent()).includes("Take 01"), "waveform title shows TAKE 01");
   await page.locator("#playbtn").click();
   s = await until((s) => s.player.state === "playing", "PLAY plays it");
   await until((s) => s.ch[6].m[0] > -20, "the take reaches A1 (meter above -20 dB)");
