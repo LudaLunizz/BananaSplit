@@ -416,10 +416,10 @@ mod tests {
                 ],
             }),
             playing: vec![
-                Stream { id: 7, app: "Discord".into(), media: "Playback".into(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 51 },
-                Stream { id: 8, app: "Firefox".into(), media: "YouTube".into(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 50 },
+                Stream { id: 7, app: "Discord".into(), media: "Playback".into(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 51, pinned: String::new() },
+                Stream { id: 8, app: "Firefox".into(), media: "YouTube".into(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 50, pinned: String::new() },
             ],
-            recording: vec![Stream { id: 9, app: "OBS".into(), media: String::new(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 53 }],
+            recording: vec![Stream { id: 9, app: "OBS".into(), media: String::new(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 53, pinned: String::new() }],
             other: Vec::new(),
         }
     }

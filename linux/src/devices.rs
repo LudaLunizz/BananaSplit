@@ -128,6 +128,10 @@ pub struct Stream {
     pub nick: String,
     /// The sink or source it plays to / records from (its index).
     pub target: u32,
+    /// Its `target.object`: the node.name of the device someone put it on
+    /// (the app itself, the sound settings, a channel's menu); empty while
+    /// it just follows the default device.
+    pub pinned: String,
 }
 
 impl Stream {
@@ -185,6 +189,7 @@ pub fn parse_streams_all(text: &str, target_key: &str) -> (Vec<Stream>, Vec<Stre
                 desc: String::new(),
                 nick: String::new(),
                 target: u32::MAX,
+                pinned: String::new(),
             };
             cur = Some((st, false));
             continue;
@@ -207,6 +212,8 @@ pub fn parse_streams_all(text: &str, target_key: &str) -> (Vec<Stream>, Vec<Stre
             st.desc = v;
         } else if let Some(v) = prop("node.nick = ") {
             st.nick = v;
+        } else if let Some(v) = prop("target.object = ") {
+            st.pinned = v;
         } else if let Some(v) = prop("application.id = ") {
             *skip |= v == "org.PulseAudio.pavucontrol";
         } else if let Some(v) = prop("stream.monitor = ") {
@@ -1108,6 +1115,7 @@ mod tests {
             desc: String::new(),
             nick: String::new(),
             target: 0,
+            pinned: String::new(),
         };
         assert!(s("Firefox", "Firefox").is_jack_client("Firefox"));
         assert!(s("Firefox", "Firefox").is_jack_client("Firefox-123"));
