@@ -49,6 +49,30 @@ jobs:
           path: linux/dist/*
           if-no-files-found: error
 
+  flatpak:
+    name: Flatpak
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: linux
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: Install flatpak-builder
+        run: sudo apt-get update && sudo apt-get install -y flatpak flatpak-builder appstream desktop-file-utils
+
+      - name: Build and check the Flatpak
+        run: sh packaging/build-flatpak.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-flatpak
+          path: linux/dist/*.flatpak
+          if-no-files-found: error
+
   windows:
     name: Windows executable
     runs-on: windows-latest
@@ -102,7 +126,7 @@ jobs:
   # own GitHub account.
   files:
     name: Release files
-    needs: [linux, windows]
+    needs: [linux, flatpak, windows]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8

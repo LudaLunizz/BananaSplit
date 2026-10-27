@@ -40,6 +40,7 @@ Builds are published on the [Releases](https://github.com/LudaLunizz/BananaSplit
 | --- | --- |
 | Debian, Ubuntu, Mint, Pop!_OS | `bananasplit_<version>_amd64.deb` |
 | Any other Linux (x86-64, glibc ≥ 2.34) | `bananasplit-<version>-linux-x86_64.tar.gz` |
+| Any Linux with Flatpak (x86-64) | `bananasplit-<version>-x86_64.flatpak` |
 | Windows x64 | `bananasplit-<version>-windows-x64.zip` |
 
 Every release ships a `SHA256SUMS.txt`.
@@ -65,6 +66,14 @@ cd bananasplit-<version>-linux-x86_64
 ```
 
 This installs into `~/.local/bin` and your app menu without touching anything outside your home folder. `./install.sh --uninstall` removes it again.
+
+**Flatpak (any distribution)**
+
+```sh
+flatpak install --user bananasplit-<version>-x86_64.flatpak
+```
+
+It brings its own dependencies; see the [Linux manual](linux/README.md#install) for what works differently in it.
 
 Runtime dependencies:
 
@@ -136,6 +145,7 @@ sh tests/e2e/run_e2e.sh             # real binary against a mock libjack (gcc, c
 sh tests/window/run_window_test.sh  # app window and tray on Xvfb (GTK 3, dbus-python, PyGObject)
 node tests/gui/ui_check.js          # every GUI control in Chromium (Node.js, Playwright)
 sh packaging/build-packages.sh      # builds and verifies the .deb and portable package
+sh packaging/build-flatpak.sh       # builds and verifies the Flatpak (flatpak-builder)
 ```
 
 ```powershell
