@@ -81,6 +81,8 @@ pub fn helper_exe() -> Result<PathBuf, String> {
 }
 
 pub fn open_folder(path: &Path) -> Result<(), String> {
+    // the HTTP threads that call this have no COM of their own
+    let _com = crate::win::ffi::ComInit::sta();
     let p = to_wide(path);
     let open = wide("open");
     unsafe {
@@ -184,6 +186,8 @@ pub fn menu_installed() -> bool {
 
 /// Open a web page (or the mixer's own page) in the default browser.
 pub fn open_url(url: &str) -> bool {
+    // the HTTP threads that call this have no COM of their own
+    let _com = crate::win::ffi::ComInit::sta();
     let (open, u) = (wide("open"), wide(url));
     // SAFETY: NUL-terminated UTF-16 strings.
     let r = unsafe { ShellExecuteW(std::ptr::null_mut(), open.as_ptr(), u.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };

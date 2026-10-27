@@ -530,6 +530,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             installed: hub.installed.load(SeqCst),
             window: if window.proc.is_some() { "app" } else { "none" },
             tray: window.tray(),
+            welcome: hub.cable_welcome.load(SeqCst),
             update: &update_json,
         };
         hub.publish(gui::state_json(

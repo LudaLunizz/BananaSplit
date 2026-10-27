@@ -121,6 +121,7 @@ pub const STGM_READ: u32 = 0;
 pub const CLSCTX_ALL: u32 = 0x1 | 0x2 | 0x4 | 0x10;
 pub const COINIT_MULTITHREADED: u32 = 0;
 pub const COINIT_APARTMENTTHREADED: u32 = 0x2;
+pub const COINIT_DISABLE_OLE1DDE: u32 = 0x4;
 
 // IAudioClient
 pub const AUDCLNT_SHAREMODE_SHARED: u32 = 0;
@@ -506,6 +507,14 @@ impl ComInit {
         let hr = unsafe { CoInitializeEx(std::ptr::null_mut(), COINIT_MULTITHREADED) };
         // S_FALSE (already initialised) also needs a matching CoUninitialize;
         // RPC_E_CHANGED_MODE means someone else owns this thread's apartment.
+        ComInit(hr >= 0)
+    }
+    /// Single-threaded apartment, which ShellExecuteW wants: shell
+    /// extensions and protocol handlers (`ms-settings:`) may need it. On a
+    /// thread already in the multithreaded apartment this stays a no-op
+    /// (RPC_E_CHANGED_MODE), and COM is initialised either way.
+    pub fn sta() -> ComInit {
+        let hr = unsafe { CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
         ComInit(hr >= 0)
     }
 }

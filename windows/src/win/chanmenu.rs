@@ -18,6 +18,8 @@ struct Plan {
     /// Some Splitter endpoint is installed.
     splitter: bool,
     ok: bool,
+    /// No cable is installed (not: the devices could not be listed).
+    none: bool,
     why: String,
 }
 
@@ -31,6 +33,9 @@ struct Family {
 fn is_vb_pair_base(name: &str) -> Option<String> {
     let n = name.to_ascii_lowercase();
     if !n.contains("vb-audio") { return None; }
+    // Hi-Fi Cable is a pair of its own ("Hi-Fi Cable Input (VB-Audio Hi-Fi
+    // Cable)"), not one half of CABLE
+    if n.contains("hi-fi cable") { return Some("Hi-Fi Cable".to_string()); }
     // detect CABLE, CABLE-A, CABLE-B, CABLE-C, CABLE-D
     for b in ["cable-d", "cable-c", "cable-b", "cable-a", "cable"] {
         if n.starts_with(b) || n.contains(&format!("({b})")) || n.contains(&format!(" {b}")) {
@@ -68,6 +73,7 @@ fn build_plan(cfg: &Config) -> Plan {
             families: vec![],
             splitter: false,
             ok: false,
+            none: false,
             why: e,
         },
     }
@@ -124,10 +130,17 @@ pub fn cable_pairs(caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Vec<Stri
     families(caps, rens).into_iter().map(|f| f.base).collect()
 }
 
+/// Whether any cable BananaSplit can use is installed: a Splitter endpoint
+/// or a complete VB-Audio pair. The menus, the status line and the first
+/// start's welcome all go by this.
+pub fn has_cables(caps: &[route::DevInfo], rens: &[route::DevInfo]) -> bool {
+    caps.iter().chain(rens).any(|d| route::is_splitter(&d.name)) || !families(caps, rens).is_empty()
+}
+
 fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Plan {
     let families = families(caps, rens);
     let splitter = caps.iter().chain(rens).any(|d| route::is_splitter(&d.name));
-    let ok = splitter || !families.is_empty();
+    let ok = has_cables(caps, rens);
     let why = if ok { String::new() } else { crate::win::cables::MISSING.to_string() };
     let mut used: HashSet<usize> = HashSet::new();
     let mut strip_cable = [const { None }; NUM_STRIPS];
@@ -198,7 +211,7 @@ fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo
             break;
         }
     }
-    Plan { strip_cable, bus_cable, strip_cable_label, bus_cable_label, families, splitter, ok, why }
+    Plan { strip_cable, bus_cable, strip_cable_label, bus_cable_label, families, splitter, ok, none: !ok, why }
 }
 
 /// Why channel `ch`'s cable can't be switched on, although some virtual
@@ -332,7 +345,7 @@ pub fn list(cfg: &Config) -> String {
         let id = match i { 0=>"A1",1=>"A2",2=>"A3",3=>"B1",4=>"B2", _=>"A1" };
         ch_out.push_str(&format!("{{\"id\":\"{}\",\"cable\":{{\"on\":{},\"name\":\"{}\"}},\"conn\":[{}],\"connect\":[{}]}}", id, if cable_on {"true"} else {"false"}, json_escape(&short(&cable_name)), conn_json, connp_json));
     }
-    format!("{{\"cables\":{{\"ok\":{},\"why\":\"{}\"}},\"pulse\":false,\"strip\":[{}],\"bus\":[{}],\"play\":[],\"rec\":[],\"ch\":[{}]}}", if plan.ok {"true"} else {"false"}, json_escape(&plan.why), strip_cand.join(","), bus_cand.join(","), ch_out)
+    format!("{{\"cables\":{{\"ok\":{},\"none\":{},\"why\":\"{}\"}},\"pulse\":false,\"strip\":[{}],\"bus\":[{}],\"play\":[],\"rec\":[],\"ch\":[{}]}}", plan.ok, plan.none, json_escape(&plan.why), strip_cand.join(","), bus_cand.join(","), ch_out)
 }
 
 fn apply_dev(cfg: &mut Config, op: DevOp) -> Result<String, String> {
@@ -586,9 +599,23 @@ mod tests {
     }
 
     #[test]
+    fn hi_fi_cable_is_a_pair_of_its_own() {
+        let caps = ["CABLE Output (VB-Audio Virtual Cable)", "Hi-Fi Cable Output (VB-Audio Hi-Fi Cable)"];
+        let rens = ["Hi-Fi Cable Input (VB-Audio Hi-Fi Cable)", "CABLE Input (VB-Audio Virtual Cable)"];
+        assert_eq!(cable_pairs(&devs(&caps), &devs(&rens)), ["CABLE", "Hi-Fi Cable"]);
+        let p = build_plan_info(&Config::default(), &devs(&caps), &devs(&rens));
+        // strip 1 records CABLE Output, so apps must play into CABLE Input, not Hi-Fi's
+        assert_eq!((p.strip_cable[0].as_deref(), p.strip_cable_label[0].as_deref()), (Some(caps[0]), Some(rens[1])));
+        assert_eq!((p.strip_cable[1].as_deref(), p.strip_cable_label[1].as_deref()), (Some(caps[1]), Some(rens[0])));
+        // half a pair is no cable
+        assert!(!has_cables(&devs(&caps[1..]), &devs(&["Speakers (Realtek(R) Audio)"])));
+        assert!(has_cables(&devs(&caps[1..]), &devs(&rens[..1])));
+    }
+
+    #[test]
     fn no_cables_at_all() {
         let p = build_plan_info(&Config::default(), &devs(&["Microphone (USB Mic)"]), &devs(&["Speakers (Realtek(R) Audio)"]));
-        assert!(!p.ok && !p.splitter);
+        assert!(!p.ok && p.none && !p.splitter);
         assert_eq!(p.why, crate::win::cables::MISSING);
         assert!(p.strip_cable.iter().chain(&p.bus_cable).all(|c| c.is_none()));
     }
