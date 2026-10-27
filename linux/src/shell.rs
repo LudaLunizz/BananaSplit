@@ -132,6 +132,7 @@ api!(Gio {
     g_dbus_connection_call: unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *const c_char, *const c_char, Ptr, Ptr, c_int, c_int, Ptr, Ptr, Ptr),
     g_dbus_connection_call_finish: unsafe extern "C" fn(Ptr, Ptr, *mut Ptr) -> Ptr,
     g_dbus_connection_call_sync: unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *const c_char, *const c_char, Ptr, Ptr, c_int, c_int, Ptr, *mut Ptr) -> Ptr,
+    g_dbus_connection_get_unique_name: unsafe extern "C" fn(Ptr) -> *const c_char,
     g_bus_own_name_on_connection: unsafe extern "C" fn(Ptr, *const c_char, c_int, Ptr, Ptr, Ptr, Ptr) -> c_uint,
     g_bus_watch_name_on_connection: unsafe extern "C" fn(Ptr, *const c_char, c_int, Ptr, Ptr, Ptr, Ptr) -> c_uint,
     g_dbus_method_invocation_return_value: unsafe extern "C" fn(Ptr, Ptr),
@@ -703,6 +704,21 @@ fn bus_name() -> String {
     format!("org.kde.StatusNotifierItem-{}-1", std::process::id())
 }
 
+/// The name the watcher knows the icon by: in a Flatpak, which may not own
+/// `bus_name()`, the connection's unique name (the watcher then looks at
+/// `/StatusNotifierItem`).
+fn item_name(libs: &Libs, conn: Ptr) -> String {
+    if crate::desktop::flatpak_id().is_some() {
+        // SAFETY: valid connection; the string belongs to it.
+        let u = unsafe { (libs.gio.g_dbus_connection_get_unique_name)(conn) };
+        if !u.is_null() {
+            // SAFETY: a NUL-terminated string from GIO.
+            return unsafe { CStr::from_ptr(u) }.to_string_lossy().into_owned();
+        }
+    }
+    bus_name()
+}
+
 unsafe extern "C" fn registered(conn: Ptr, res: Ptr, _data: Ptr) {
     let Some(libs) = with(|a| a.libs) else { return };
     let mut err: Ptr = std::ptr::null_mut();
@@ -719,7 +735,7 @@ unsafe extern "C" fn registered(conn: Ptr, res: Ptr, _data: Ptr) {
 
 fn register_with_watcher() {
     let Some((libs, conn)) = with(|a| (a.libs, a.conn)) else { return };
-    let name = bus_name();
+    let name = item_name(libs, conn);
     let params = parsed(libs, &format!("('{name}',)"));
     // SAFETY: valid connection and strings; the callback runs on this thread.
     unsafe {
@@ -843,16 +859,18 @@ fn setup_tray(libs: &'static Libs) -> Ptr {
                 return std::ptr::null_mut();
             }
         }
-        let name = cstr(&bus_name());
-        (g.g_bus_own_name_on_connection)(
-            conn,
-            name.as_ptr(),
-            0,
-            name_acquired as *const () as Ptr,
-            name_lost as *const () as Ptr,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        );
+        if crate::desktop::flatpak_id().is_none() {
+            let name = cstr(&bus_name());
+            (g.g_bus_own_name_on_connection)(
+                conn,
+                name.as_ptr(),
+                0,
+                name_acquired as *const () as Ptr,
+                name_lost as *const () as Ptr,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+        }
         (g.g_bus_watch_name_on_connection)(
             conn,
             WATCHER.as_ptr(),

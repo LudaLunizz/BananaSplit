@@ -10,6 +10,9 @@
 //!   which runs `bananasplit --gui --hidden`: the mixer starts in the
 //!   tray, like Voicemeeter's "Run at startup".
 //!
+//! * In a Flatpak, the Flatpak itself adds the app-menu entry, and the
+//!   autostart entry runs `flatpak run --command=bananasplit <app ID>`.
+//!
 //! Every file written here carries an `X-BananaSplit-…` line, and only such
 //! files are ever changed or removed.
 
@@ -59,8 +62,22 @@ pub fn menu_entry_path() -> Option<PathBuf> {
     data_home().map(|d| d.join("applications").join(format!("{APP_ID}.desktop")))
 }
 
+/// The app ID of the Flatpak this BananaSplit runs in, if it runs in one.
+pub fn flatpak_id() -> Option<String> {
+    std::env::var("FLATPAK_ID").ok().filter(|id| valid_flatpak_id(id) && Path::new("/.flatpak-info").is_file())
+}
+
+fn valid_flatpak_id(id: &str) -> bool {
+    id.contains('.') && id.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+}
+
 pub fn autostart_path() -> Option<PathBuf> {
-    config_home().map(|d| d.join("autostart").join(format!("{APP_ID}.desktop")))
+    match flatpak_id() {
+        // The session's own folder (the manifest shares it), not the
+        // Flatpak's ~/.var/app/<id>/config.
+        Some(id) => home().map(|h| h.join(".config/autostart").join(format!("{id}.desktop"))),
+        None => config_home().map(|d| d.join("autostart").join(format!("{APP_ID}.desktop"))),
+    }
 }
 
 fn user_bin() -> Option<PathBuf> {
@@ -165,21 +182,28 @@ pub fn menu_entry(exec: &str) -> String {
 }
 
 pub fn autostart_entry(exec: &str) -> String {
+    autostart_text(&try_exec(exec), &exec_quote(exec), APP_ID)
+}
+
+/// The autostart entry of the Flatpak `id`.
+pub fn flatpak_autostart_entry(id: &str) -> String {
+    autostart_text("", &format!("flatpak run --command={APP_ID} {id}"), id)
+}
+
+fn autostart_text(try_exec: &str, exec: &str, icon: &str) -> String {
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\
          Name=BananaSplit\n\
          Comment=Start the BananaSplit mixer in the tray\n\
-         {}\
-         Exec={} --gui --hidden\n\
-         Icon={APP_ID}\n\
+         {try_exec}\
+         Exec={exec} --gui --hidden\n\
+         Icon={icon}\n\
          Terminal=false\n\
          X-GNOME-Autostart-enabled=true\n\
          X-GNOME-Autostart-Delay=3\n\
          X-KDE-autostart-after=panel\n\
-         {AUTOSTART_MARK}\n",
-        try_exec(exec),
-        exec_quote(exec)
+         {AUTOSTART_MARK}\n"
     )
 }
 
@@ -207,6 +231,9 @@ fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
 
 /// Is there an app-menu entry (the user's own, or a package's)?
 pub fn menu_installed() -> bool {
+    if flatpak_id().is_some() {
+        return true;
+    }
     let name = format!("applications/{APP_ID}.desktop");
     data_home().into_iter().chain(data_dirs()).any(|d| d.join(&name).is_file())
 }
@@ -239,8 +266,11 @@ pub fn set_autostart(on: bool) -> Result<String, String> {
         }
         // The copy the app menu starts, if BananaSplit was added to it:
         // this one may run from a download folder that goes away.
-        let prog = installed_program().or_else(program_path).ok_or("cannot find this program's path")?;
-        write_atomic(&path, autostart_entry(&prog.to_string_lossy()).as_bytes())?;
+        let entry = match flatpak_id() {
+            Some(id) => flatpak_autostart_entry(&id),
+            None => autostart_entry(&installed_program().or_else(program_path).ok_or("cannot find this program's path")?.to_string_lossy()),
+        };
+        write_atomic(&path, entry.as_bytes())?;
         Ok("BananaSplit starts in the tray when you log in".into())
     } else {
         if path.exists() {
@@ -288,6 +318,9 @@ fn icon_paths(data: &Path) -> Vec<(PathBuf, &'static [u8])> {
 /// `bananasplit --install`: this program into `~/.local/bin`, with its
 /// app-menu entry and icons.
 pub fn install() -> Result<String, String> {
+    if flatpak_id().is_some() {
+        return Err("this BananaSplit is a Flatpak, which already added it to the app menu".into());
+    }
     let prog = program_path().ok_or("cannot find this program's path")?;
     if is_system_path(&prog) && std::env::var_os("APPIMAGE").is_none() {
         return Err(format!("{} was installed by a package, which already added BananaSplit to the app menu", prog.display()));
@@ -426,6 +459,19 @@ mod tests {
         assert!(!menu_entry("bananasplit").contains("TryExec"));
         assert!(!menu_entry("/a\nb").contains("TryExec"));
         assert!(menu_entry("/x\\y").contains("\nTryExec=/x\\\\y\n"));
+    }
+
+    #[test]
+    fn flatpak_autostart() {
+        let e = flatpak_autostart_entry("io.github.LudaLunizz.BananaSplit");
+        assert!(e.contains("\nComment=Start the BananaSplit mixer in the tray\nExec=flatpak run --command=bananasplit io.github.LudaLunizz.BananaSplit --gui --hidden\n"));
+        assert!(e.contains("\nIcon=io.github.LudaLunizz.BananaSplit\n"));
+        assert!(!e.contains("TryExec"), "the program is inside the Flatpak");
+        assert!(e.lines().any(|l| l == AUTOSTART_MARK));
+        assert!(valid_flatpak_id("io.github.LudaLunizz.BananaSplit"));
+        for bad in ["", "bananasplit", "io.x y", "io.x;rm", "io.x\n"] {
+            assert!(!valid_flatpak_id(bad), "{bad:?}");
+        }
     }
 
     #[test]
