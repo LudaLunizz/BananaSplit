@@ -521,6 +521,8 @@ pub struct Extra<'a> {
     /// "app" (our own window), "browser" or "none".
     pub window: &'a str,
     pub tray: bool,
+    /// The first start's "Virtual cables" welcome is still to be shown.
+    pub welcome: bool,
     /// The updater's state (a JSON object, `Updater::json`).
     pub update: &'a str,
 }
@@ -728,7 +730,8 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     o.push_str(",\"secs\":");
     jnum(&mut o, st.seconds(), 2);
     let _ = write!(o, ",\"dropped\":{},\"clipped\":{},\"tracks\":{},\"files\":[", st.dropped, st.clipped, st.tracks);
-    for (k, p) in st.files.iter().enumerate() {
+    // only the files being written: the take's list grows every hour
+    for (k, p) in st.current_files().iter().enumerate() {
         if k > 0 {
             o.push(',');
         }
@@ -774,14 +777,15 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     let g = &f.cfg.gui;
     let _ = write!(
         o,
-        "],\"app\":{{\"theme\":\"{}\",\"closeToTray\":{},\"zoom\":{},\"autostart\":{},\"installed\":{},\"window\":\"{}\",\"tray\":{}}}",
+        "],\"app\":{{\"theme\":\"{}\",\"closeToTray\":{},\"zoom\":{},\"autostart\":{},\"installed\":{},\"window\":\"{}\",\"tray\":{},\"welcome\":{}}}",
         g.theme.as_str(),
         g.close_to_tray,
         g.zoom,
         x.autostart,
         x.installed,
         x.window,
-        x.tray
+        x.tray,
+        x.welcome
     );
     o.push_str(",\"update\":");
     o.push_str(if x.update.is_empty() { "null" } else { x.update });
@@ -1538,8 +1542,10 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
             Err(e) => respond(&mut s, 404, text, e.as_bytes(), ""),
         },
         ("GET", "/api/cables") => {
-            let json = crate::win::cables::report(hub.cable_welcome.load(SeqCst));
-            respond(&mut s, 200, "application/json", json.as_bytes(), "")
+            match crate::win::cables::report() {
+                Ok(json) => respond(&mut s, 200, "application/json", json.as_bytes(), ""),
+                Err(e) => respond(&mut s, 503, text, e.as_bytes(), ""),
+            }
         }
         ("GET", "/api/takes") => respond(&mut s, 200, "application/json", hub.takes.list_json().as_bytes(), ""),
         ("GET", "/api/devices") => match hub.ask(DevOp::List) {
@@ -2090,6 +2096,7 @@ mod tests {
             installed: true,
             window: "app",
             tray: true,
+            welcome: false,
             update: r#"{"auto":false,"phase":"idle"}"#,
         }
     }
@@ -2317,7 +2324,7 @@ mod tests {
         assert!(json.contains(r#""out":[{"on":false,"name":"Stream1","to":"192.168.1.20","port":6980,"src":9,"format":"int16","channels":2,"state":"off","text":"off""#), "{json}");
         assert!(json.contains(r#""seen":[{"name":"Stream1","from":"10.0.0.2","sr":44100,"ch":2,"format":"24-bit"}]},"player":"#), "{json}");
         assert!(json.contains(r#","player":{"state":"stopped","take":null,"pos":0.00,"dur":0.00,"underruns":0,"error":null},"playTo":1,"takes":{"rev":3,"count":2,"newest":"2026-10-21_14-03-05"},"disk":{"total":64000000000,"free":52000000000},"#), "{json}");
-        assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","closeToTray":true,"zoom":1,"autostart":false,"installed":true,"window":"app","tray":true}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
+        assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","closeToTray":true,"zoom":1,"autostart":false,"installed":true,"window":"app","tray":true,"welcome":false}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
         // balanced brackets outside strings
         let (mut depth, mut in_str, mut esc) = (0i32, false, false);
         for c in json.chars() {

@@ -10,20 +10,21 @@ pub const VBCABLE_PAGE: &str = "https://vb-audio.com/Cable/";
 /// The channel menus and the status line, while none is installed.
 pub const MISSING: &str = "No virtual cables are installed (they are optional): Menu › Virtual cables… explains what they are for";
 
-pub fn installed_cables(en: &Enumerator) -> Vec<String> {
-    let mut v = Vec::new();
-    for capture in [false, true] {
-        if let Ok(devs) = en.devices(capture) {
-            v.extend(devs.into_iter().map(|d| d.info.name).filter(|n| route::is_cable(n)));
-        }
-    }
-    v
+fn infos(en: &Enumerator, capture: bool) -> Result<Vec<DevInfo>, String> {
+    Ok(en.devices(capture)?.into_iter().map(|d| d.info).collect())
 }
 
 /// Report missing drivers (a note for the status line). True if none is
-/// installed.
+/// installed, by the same test as the channel menus (`chanmenu::has_cables`).
 pub fn first_run(en: &Enumerator, _cfg: &mut Config, headless: bool, notes: &mut Vec<String>) -> bool {
-    let missing = installed_cables(en).is_empty();
+    let (caps, rens) = match (infos(en, true), infos(en, false)) {
+        (Ok(c), Ok(r)) => (c, r),
+        (Err(e), _) | (_, Err(e)) => {
+            notes.push(e);
+            return false;
+        }
+    };
+    let missing = !super::chanmenu::has_cables(&caps, &rens);
     if missing && headless {
         notes.push(format!(
             "No virtual cables are installed (optional); install Splitter, BananaSplit's own ({}), or VB-Audio's ({VBCABLE_PAGE}) to use virtual app inputs and outputs",
@@ -36,19 +37,17 @@ pub fn first_run(en: &Enumerator, _cfg: &mut Config, headless: bool, notes: &mut
 }
 
 /// `GET /api/cables`: the cables (Splitter's, then VB-Audio's pairs),
-/// Voicemeeter's devices and the Windows defaults as they are now.
-/// `welcome`: the first start, so the page opens the window by itself.
-pub fn report(welcome: bool) -> String {
+/// Voicemeeter's devices and the Windows defaults as they are now. An error
+/// when Windows can't list its devices: then nothing is known about the
+/// cables, which is not the same as "none installed".
+pub fn report() -> Result<String, String> {
     let _com = super::ffi::ComInit::mta();
-    let Ok(en) = Enumerator::new() else {
-        return report_json(&[], &[], None, None, welcome);
-    };
-    let infos = |capture| en.devices(capture).map(|v| v.into_iter().map(|d| d.info).collect::<Vec<_>>()).unwrap_or_default();
-    let (caps, rens) = (infos(true), infos(false));
-    report_json(&caps, &rens, en.default_id(true).as_deref(), en.default_id(false).as_deref(), welcome)
+    let en = Enumerator::new()?;
+    let (caps, rens) = (infos(&en, true)?, infos(&en, false)?);
+    Ok(report_json(&caps, &rens, en.default_id(true).as_deref(), en.default_id(false).as_deref()))
 }
 
-fn report_json(caps: &[DevInfo], rens: &[DevInfo], def_cap: Option<&str>, def_ren: Option<&str>, welcome: bool) -> String {
+fn report_json(caps: &[DevInfo], rens: &[DevInfo], def_cap: Option<&str>, def_ren: Option<&str>) -> String {
     use crate::gui::jstr;
     // Splitter: whether any of its endpoints is there, and which channels'
     // cables are complete (both halves; one may be switched off in Windows)
@@ -109,8 +108,6 @@ fn report_json(caps: &[DevInfo], rens: &[DevInfo], def_cap: Option<&str>, def_re
             None => o.push_str("null"),
         }
     }
-    o.push_str(",\"welcome\":");
-    o.push_str(if welcome { "true" } else { "false" });
     o.push('}');
     o
 }
@@ -131,8 +128,8 @@ mod tests {
         let rens = devs(&["Headphones (Headset)", "Voicemeeter Input (VB-Audio Voicemeeter VAIO)", "Voicemeeter AUX Input (VB-Audio Voicemeeter AUX VAIO)"]);
         let caps = devs(&["Microphone (Headset)", "Voicemeeter Out B1 (VB-Audio Voicemeeter VAIO)"]);
         assert_eq!(
-            report_json(&caps, &rens, Some("id0"), Some("id1"), true),
-            NO_SPLITTER.to_string() + r#""pairs":[],"voicemeeter":["Voicemeeter Input","Voicemeeter AUX Input","Voicemeeter Out B1"],"output":{"name":"Voicemeeter Input","cable":false},"input":{"name":"Microphone","cable":false},"welcome":true}"#
+            report_json(&caps, &rens, Some("id0"), Some("id1")),
+            NO_SPLITTER.to_string() + r#""pairs":[],"voicemeeter":["Voicemeeter Input","Voicemeeter AUX Input","Voicemeeter Out B1"],"output":{"name":"Voicemeeter Input","cable":false},"input":{"name":"Microphone","cable":false}}"#
         );
     }
 
@@ -141,8 +138,8 @@ mod tests {
         let rens = devs(&["CABLE Input (VB-Audio Virtual Cable)", "CABLE-A Input (VB-Audio Cable A)", "Speakers (Realtek(R) Audio)"]);
         let caps = devs(&["CABLE Output (VB-Audio Virtual Cable)", "CABLE-A Output (VB-Audio Cable A)"]);
         assert_eq!(
-            report_json(&caps, &rens, None, Some("id0"), false),
-            NO_SPLITTER.to_string() + r#""pairs":["CABLE","CABLE-A"],"voicemeeter":[],"output":{"name":"CABLE Input","cable":true},"input":null,"welcome":false}"#
+            report_json(&caps, &rens, None, Some("id0")),
+            NO_SPLITTER.to_string() + r#""pairs":["CABLE","CABLE-A"],"voicemeeter":[],"output":{"name":"CABLE Input","cable":true},"input":null}"#
         );
     }
 
@@ -168,8 +165,8 @@ mod tests {
         let caps = devs(&caps.iter().map(|s| s.as_str()).collect::<Vec<_>>());
         // caps: strips' outputs id0..id5, then A1 (id6), A3 (id7), B1 (id8), B2 (id9)
         assert_eq!(
-            report_json(&caps, &rens, Some("id8"), Some("id11"), false),
-            r#"{"splitter":{"found":true,"cables":["Splitter 1","Splitter 2","Splitter 3","Splitter 4","Splitter 5","Splitter 6","Splitter A1","Splitter A3","Splitter B1","Splitter B2"],"missing":["Splitter A2"]},"pairs":[],"voicemeeter":[],"output":{"name":"Speakers","cable":false},"input":{"name":"Splitter B1","cable":true},"welcome":false}"#
+            report_json(&caps, &rens, Some("id8"), Some("id11")),
+            r#"{"splitter":{"found":true,"cables":["Splitter 1","Splitter 2","Splitter 3","Splitter 4","Splitter 5","Splitter 6","Splitter A1","Splitter A3","Splitter B1","Splitter B2"],"missing":["Splitter A2"]},"pairs":[],"voicemeeter":[],"output":{"name":"Speakers","cable":false},"input":{"name":"Splitter B1","cable":true}}"#
         );
     }
 }
