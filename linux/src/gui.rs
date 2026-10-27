@@ -1647,10 +1647,15 @@ pub fn url(port: u16) -> String {
 
 /// Where a running GUI notes its port (`$XDG_RUNTIME_DIR/bananasplit/<client>.port`),
 /// so that launching it again and `--quit` find it when 8790 was busy.
+/// In a Flatpak only `$XDG_RUNTIME_DIR/app/<app ID>` is shared by its instances.
 fn port_file(client: &str) -> Option<PathBuf> {
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
+        .map(|p| match crate::desktop::flatpak_id() {
+            Some(id) => p.join("app").join(id),
+            None => p,
+        })
         .or_else(|| std::env::var_os("HOME").filter(|h| !h.is_empty()).map(|h| PathBuf::from(h).join(".cache")))?;
     let name: String = client.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
     Some(base.join("bananasplit").join(format!("{name}.port")))
