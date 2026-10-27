@@ -550,12 +550,12 @@ m = Mixer(ini="[strip1]\nroutes = A1\n", rec="links = 1,A1\nmode = multi\n", MOC
 try:
     st, msg = m.post(op="rec", v=1)
     check(st == 200, f"recording 2 tracks: {msg}")
-    s = m.until(lambda s: s["rec"]["sr"] == 44100 and len(s["rec"]["files"]) == 4, "the server changes its rate: 2 more files", secs=8,
-                path="/api/state")
+    s = m.until(lambda s: s["rec"]["sr"] == 44100 and any("-2_" in os.path.basename(f) for f in s["rec"]["files"]),
+                "the server changes its rate: new files", secs=8, path="/api/state")
     r = (s or {}).get("rec", {})
     check(r.get("tracks") == 2, f"still 2 tracks (not 4): {r.get('tracks')}")
-    now = r.get("files", [])[-2:]
-    check(len(now) == 2 and all("-2_" in os.path.basename(f) for f in now), f"the files being written are the new ones: {now}")
+    now = r.get("files", [])
+    check(len(now) == 2 and all("-2_" in os.path.basename(f) for f in now), f"the state lists only the files being written: {now}")
     m.post(op="rec", v=0)
 finally:
     check(m.stop() == 0, "quit cleanly")

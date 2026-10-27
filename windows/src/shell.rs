@@ -234,9 +234,34 @@ fn load_gtk() -> Result<(Gtk, Gdk), String> {
     unsafe { Ok((Gtk::load(open_lib(&["libgtk-3.so.0"])?)?, Gdk::load(open_lib(&["libgdk-3.so.0"])?)?)) }
 }
 
-/// NVIDIA's own driver is loaded (not nouveau).
-fn nvidia_driver() -> bool {
-    std::path::Path::new("/proc/driver/nvidia").exists() || std::path::Path::new("/sys/module/nvidia").exists()
+/// Whether WebKitGTK's DMA-BUF renderer can be trusted here: every GPU
+/// render node is driven by Intel's, AMD's or Mesa's own driver. NVIDIA's
+/// driver (also on hybrid PRIME laptops, where it sits next to Intel's),
+/// virtual GPUs (virtio-gpu, vmwgfx, VirtualBox) and machines without a
+/// render node (llvmpipe) show an empty window with it.
+fn dmabuf_works() -> bool {
+    dmabuf_drivers_work(&render_node_drivers())
+}
+
+fn dmabuf_drivers_work(drivers: &[String]) -> bool {
+    const GOOD: [&str; 4] = ["i915", "xe", "amdgpu", "radeon"];
+    !drivers.is_empty() && drivers.iter().all(|d| GOOD.contains(&d.as_str()))
+}
+
+/// The kernel drivers of /dev/dri/renderD*, from sysfs.
+fn render_node_drivers() -> Vec<String> {
+    let Ok(dir) = std::fs::read_dir("/sys/class/drm") else {
+        return Vec::new();
+    };
+    let mut v = Vec::new();
+    for e in dir.flatten() {
+        if !e.file_name().to_string_lossy().starts_with("renderD") {
+            continue;
+        }
+        let driver = std::fs::read_link(e.path().join("device/driver")).ok();
+        v.push(driver.and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_default());
+    }
+    v
 }
 
 fn load_webkit() -> Result<WebKit, String> {
@@ -1230,11 +1255,11 @@ pub fn main(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    // WebKitGTK's DMA-BUF renderer shows an empty window with NVIDIA's
-    // driver; there the shared-memory path is used. Elsewhere it stays on:
-    // the shared-memory path copies every frame, and makes resizing the
-    // window lag.
-    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() && nvidia_driver() {
+    // WebKitGTK's DMA-BUF renderer shows an empty window on many setups
+    // (`dmabuf_works`); there the shared-memory path is used. Where it works
+    // it stays on: the shared-memory path copies every frame, and makes
+    // resizing the window lag.
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() && !dmabuf_works() {
         // SAFETY: still single-threaded (no library loaded yet).
         unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
     }
@@ -1393,6 +1418,19 @@ pub fn error_dialog(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dmabuf_only_on_known_drivers() {
+        let d = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(dmabuf_drivers_work(&d(&["amdgpu"])));
+        assert!(dmabuf_drivers_work(&d(&["i915", "amdgpu"])));
+        assert!(!dmabuf_drivers_work(&d(&[])), "no render node: llvmpipe");
+        assert!(!dmabuf_drivers_work(&d(&["nvidia"])));
+        assert!(!dmabuf_drivers_work(&d(&["i915", "nvidia"])), "hybrid PRIME laptop");
+        assert!(!dmabuf_drivers_work(&d(&["virtio_gpu"])));
+        assert!(!dmabuf_drivers_work(&d(&["vmwgfx"])));
+        assert!(!dmabuf_drivers_work(&d(&[""])), "a render node without a driver link");
+    }
 
     #[test]
     fn menu_layouts() {

@@ -1251,7 +1251,10 @@ function buildChanMenu(focus) {
     sub: !D.cables.ok ? D.cables.why
       : C.cable.on ? (users.length ? "Used by " + users.join(", ") : strip ? "Any app can choose it as its output" : "Any app can choose it as its microphone")
       : strip ? "Off: no app can play into " + id + " by itself" : "Off: no app can record " + id,
-    warn: !D.cables.ok, title: !D.cables.ok ? "What virtual cables are for, and how to install them" : "",
+    warn: !D.cables.ok, title: D.cables.none ? "What virtual cables are for, and how to install them" : "",
+    // with none installed it explains them; when Windows could not list its
+    // devices, the error above is all there is to say
+    disabled: !D.cables.ok && !D.cables.none,
     act: (v) => { if (D.cables.ok) menuSend({ op: "cable", ch, v: v ? 1 : 0 }); else { closeChanMenu(); openCables(); } },
   });
   // apps (the sound server's streams), moved into the cable
@@ -1822,6 +1825,8 @@ function render(S) {
   if (!held("tray")) setChecked($("m-tray"), S.app.closeToTray);
   $("m-install").hidden = S.app.installed;
   $("m-tray").title = S.app.tray ? "" : "No tray here: closing the window minimizes it instead";
+  // the first start: the "Virtual cables" window opens by itself, once
+  if (S.app.welcome && !welcomed) { welcomed = true; $("cab-welcome").hidden = false; openCables(); }
 
   // strips and buses
   S.ch.forEach((c, ch) => {
@@ -2463,13 +2468,14 @@ $("vbanport").addEventListener("change", () => { hold("vbanport", 1500); send({ 
 document.querySelectorAll("dialog input, dialog select").forEach((i) => i.addEventListener("keydown", (e) => e.stopPropagation()));
 
 // ---- virtual cables (Splitter, VB-Audio) ------------------------------------------
-let cabLoading = false;
+let cabLoading = false, welcomed = false;
 async function loadCables() {
   if (cabLoading) return;
   cabLoading = true;
   try {
     const r = await fetch("/api/cables");
     if (r.ok) renderCables(await r.json());
+    else cablesError(await r.text());
   } catch (e) { /* "Check again" tries again */ }
   cabLoading = false;
 }
@@ -2498,8 +2504,14 @@ function renderCables(C) {
     if (d.childNodes.length) d.append(el("br"));
     d.append(line);
   }
-  $("cab-welcome").hidden = !C.welcome;
-  if (C.welcome && !$("cabdlg").open) $("cabdlg").showModal();
+}
+// Windows could not list its devices: nothing is known about the cables
+function cablesError(why) {
+  const st = $("cab-state");
+  st.replaceChildren(el("span", "warn", "Could not list the sound devices: " + why));
+  st.classList.remove("ok");
+  setText($("cab-vm"), "");
+  $("cab-def").replaceChildren();
 }
 function openCables() {
   closeMenus();
@@ -2567,7 +2579,6 @@ layout();
 if (document.fonts) document.fonts.ready.then(() => ui.forEach((u) => fitName(u, true)));
 lastMsg = performance.now();
 connect();
-loadCables();
 </script>
 </body>
 </html>

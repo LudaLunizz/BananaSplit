@@ -722,7 +722,8 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     o.push_str(",\"secs\":");
     jnum(&mut o, st.seconds(), 2);
     let _ = write!(o, ",\"dropped\":{},\"clipped\":{},\"tracks\":{},\"files\":[", st.dropped, st.clipped, st.tracks);
-    for (k, p) in st.files.iter().enumerate() {
+    // only the files being written: the take's list grows every hour
+    for (k, p) in st.current_files().iter().enumerate() {
         if k > 0 {
             o.push(',');
         }
