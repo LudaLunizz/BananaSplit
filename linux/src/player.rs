@@ -1903,6 +1903,9 @@ mod tests {
 
     #[test]
     fn plays_a_take_from_disk_bit_exact_and_resampled() {
+        // feed the bus at the audio thread's pace (256 frames at 48 kHz); any
+        // faster and a slow machine's decoder falls behind and underruns
+        const CYCLE: Duration = Duration::from_micros(5333);
         let d = tmpdir("play");
         // 32-bit float at the mixer's rate: what comes out is what is in the file
         write_wav(&d.join("2026-01-01_00-00-00_mix.wav"), Format::Wav32f, 48000, 30_000, |i| {
@@ -1924,7 +1927,7 @@ mod tests {
             if first.is_some_and(|f| got.len() >= f + 30_000 + 512) || t0.elapsed() > Duration::from_secs(10) {
                 break;
             }
-            std::thread::sleep(Duration::from_micros(300));
+            std::thread::sleep(CYCLE);
         }
         // Playback starts on a cycle boundary with file frame 0 (-0.5, faded
         // in); after that first cycle every sample is exactly the file's.
@@ -1959,8 +1962,9 @@ mod tests {
             if b.out[0].iter().any(|&x| x != 0.0) || !got.is_empty() {
                 got.extend_from_slice(&b.out[0]);
             }
-            std::thread::sleep(Duration::from_micros(300));
+            std::thread::sleep(CYCLE);
         }
+        assert_eq!(tap.underruns(), 0, "the player fell behind");
         let mid = &got[4800..4800 + 4800];
         let peak = mid.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
         assert!((peak - 0.5).abs() < 0.01, "peak {peak}");
@@ -1974,7 +1978,7 @@ mod tests {
         let t0 = Instant::now();
         while p.status().pos < 0.9 && t0.elapsed() < Duration::from_secs(5) {
             b.run(&mut rt, &tap, 256);
-            std::thread::sleep(Duration::from_micros(300));
+            std::thread::sleep(CYCLE);
         }
         assert!(p.status().pos >= 0.9);
         p.pause().unwrap();
