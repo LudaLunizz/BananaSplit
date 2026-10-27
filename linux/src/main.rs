@@ -1,5 +1,6 @@
 //! BananaSplit — 6-strip / 5-bus virtual audio mixer for Linux (JACK / PipeWire).
 
+mod apphome;
 mod backend;
 mod cables;
 mod chanmenu;
@@ -648,7 +649,7 @@ fn run_headless(ctx: &Ctx, cfg: &Config, notes: Vec<String>) -> Result<(), Strin
     let mut lat = LatencyCheck::new();
     let mut vlog = VbanLog::default();
     let pulse = devices::PulseWatch::start();
-    let mut seen = PulseSeen::default();
+    let mut seen = PulseSeen::new(ctx.path);
     MIXING.store(true, SeqCst);
     while !sys::QUIT.load(SeqCst) {
         if backend.ctl.shutdown.load(Relaxed) {
@@ -656,6 +657,9 @@ fn run_headless(ctx: &Ctx, cfg: &Config, notes: Vec<String>) -> Result<(), Strin
         }
         let (moved, events) = seen.poll(&pulse, cfg, ctx.cables);
         if let Some(m) = cables::summary(&events, false) {
+            eprintln!("bananasplit: {m}");
+        }
+        for m in seen.take_notes() {
             eprintln!("bananasplit: {m}");
         }
         if backend.ctl.ports_changed.swap(false, Relaxed) || moved {
@@ -689,9 +693,22 @@ struct PulseSeen {
     defaults: Option<(Option<String>, Option<String>)>,
     /// When the sound server was asked to look again (a cable to make again).
     kicked: Option<Instant>,
+    /// Puts apps back on their strips (see [`apphome`]).
+    homes: Option<apphome::AppHomes>,
+    /// Lines for the user since the last [`PulseSeen::take_notes`].
+    notes: Vec<String>,
 }
 
 impl PulseSeen {
+    fn new(config: &Path) -> PulseSeen {
+        PulseSeen { homes: Some(apphome::AppHomes::load(config)), ..PulseSeen::default() }
+    }
+
+    /// What happened to apps put back on their strips.
+    fn take_notes(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notes)
+    }
+
     /// Look at the latest report, if it is new: did the defaults change,
     /// and what happened to cables that had disappeared?
     fn poll(&mut self, pulse: &devices::PulseWatch, cfg: &Config, cables: &RefCell<Cables>) -> (bool, Vec<cables::CableEvent>) {
@@ -711,8 +728,15 @@ impl PulseSeen {
         let now = info.devices.as_ref().map(|d| (d.default_sink.clone(), d.default_source.clone())).unwrap_or_default();
         let changed = self.defaults.as_ref().is_some_and(|l| *l != now);
         self.defaults = Some(now);
-        let events = cables.borrow_mut().check(&CableSet::for_config(cfg), info.devices.as_ref(), restarted);
-        (changed || !events.is_empty(), events)
+        let set = CableSet::for_config(cfg);
+        let events = cables.borrow_mut().check(&set, info.devices.as_ref(), restarted);
+        let mut moved = false;
+        if let Some(h) = self.homes.as_mut() {
+            let n = h.poll(&info, &set, &cables.borrow(), &channel_names(cfg));
+            moved = !n.is_empty();
+            self.notes.extend(n);
+        }
+        (changed || moved || !events.is_empty(), events)
     }
 }
 
@@ -896,7 +920,7 @@ fn run_tui(ctx: &Ctx, cfg: &mut Config, rec: &Recorder, notes: Vec<String>) -> R
     let mut ips = sys::local_ipv4();
     let mut ips_at = Instant::now();
     let pulse = devices::PulseWatch::start();
-    let mut seen = PulseSeen::default();
+    let mut seen = PulseSeen::new(ctx.path);
     let mut out = std::io::stdout();
     let frame = Duration::from_millis(33);
     MIXING.store(true, SeqCst);
@@ -943,6 +967,9 @@ fn run_tui(ctx: &Ctx, cfg: &mut Config, rec: &Recorder, notes: Vec<String>) -> R
         let (moved, events) = seen.poll(&pulse, cfg, ctx.cables);
         if let Some(m) = cables::summary(&events, false) {
             view.status = format!("\x1b[33m{m}\x1b[0m");
+        }
+        for m in seen.take_notes() {
+            view.status = m;
         }
         if backend.ctl.ports_changed.swap(false, Relaxed) || moved {
             changed_at = Some(Instant::now());
@@ -1179,7 +1206,7 @@ fn run_gui(
     // What the channels' menus show: the sound server's apps and devices
     // (its own thread), the JACK connections, this computer's addresses.
     let pulse = devices::PulseWatch::start();
-    let mut seen = PulseSeen::default();
+    let mut seen = PulseSeen::new(ctx.path);
     let mut conns: Vec<Vec<String>> = vec![Vec::new(); cables::NUM_CHANNELS];
     let mut conns_at = Instant::now() - Duration::from_secs(10);
     let mut pulse_rev = u64::MAX;
@@ -1313,6 +1340,11 @@ fn run_gui(
 
         let (moved, events) = seen.poll(&pulse, cfg, ctx.cables);
         if let Some(m) = cables::summary(&events, true) {
+            eprintln!("bananasplit: {m}");
+            status = m;
+            dev_rev += 1;
+        }
+        for m in seen.take_notes() {
             eprintln!("bananasplit: {m}");
             status = m;
             dev_rev += 1;

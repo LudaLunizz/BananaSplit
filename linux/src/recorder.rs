@@ -1102,6 +1102,10 @@ impl Spec {
 }
 
 /// One recording: 1 (mix) or N (multi) stereo tracks, split into parts.
+/// The quietest sample that counts as sound (-80 dBFS); below it, a take
+/// records silence.
+pub const AUDIBLE: f32 = 1e-4;
+
 pub struct Take {
     session: u16,
     word: u32,
@@ -1129,6 +1133,8 @@ pub struct Take {
     rate_note: Option<String>,
     /// Samples beyond full scale that the files had to clip.
     clipped: u64,
+    /// `frames` at the last audible sample (see [`AUDIBLE`]).
+    heard: u64,
     refreshed: Instant,
 }
 
@@ -1202,6 +1208,7 @@ impl Take {
             prior_secs: 0.0,
             rate_note: None,
             clipped: 0,
+            heard: 0,
             refreshed: Instant::now(),
         };
         if t.tracks.iter().any(|tr| tr.thread.is_none()) {
@@ -1251,6 +1258,11 @@ impl Take {
     }
 
     /// Length so far, in seconds (each part at its own sample rate).
+    /// Seconds since the last audible sample (since the start if none).
+    pub fn quiet_secs(&self) -> f64 {
+        (self.frames - self.heard) as f64 / f64::from(self.sample_rate().max(1))
+    }
+
     pub fn secs(&self) -> f64 {
         self.prior_secs + self.rate_frames as f64 / self.spec.rate.max(1) as f64
     }
@@ -1362,6 +1374,9 @@ impl Take {
                     let (l, r) = sample(t, f as usize);
                     if clips {
                         self.clipped += u64::from(l.abs() > 1.0) + u64::from(r.abs() > 1.0);
+                    }
+                    if l.abs() > AUDIBLE || r.abs() > AUDIBLE {
+                        self.heard = self.frames + f + 1 - done;
                     }
                     buf.push(l);
                     buf.push(r);
@@ -1480,6 +1495,9 @@ pub struct Status {
     /// Samples that were louder than full scale and clipped (16/24-bit WAV
     /// and MP3; 32-bit float keeps them).
     pub clipped: u64,
+    /// How long the current take has recorded nothing audible (seconds):
+    /// the armed channels get no sound.
+    pub quiet_secs: f64,
     pub error: Option<String>,
 }
 
@@ -1538,6 +1556,7 @@ impl Recorder {
             note: None,
             dropped: 0,
             clipped: 0,
+            quiet_secs: 0.0,
             error: None,
         }));
         let (tx, rx) = mpsc::channel();
@@ -1655,6 +1674,7 @@ impl Recorder {
                 note,
                 dropped: 0,
                 clipped: 0,
+                quiet_secs: 0.0,
                 error: None,
             };
         }
@@ -1786,6 +1806,7 @@ fn drain(tap: &RecTap, cur: &mut Option<Take>, status: &Mutex<Status>) {
             st.secs = t.secs();
             st.sample_rate = t.sample_rate();
             st.clipped = t.clipped;
+            st.quiet_secs = t.quiet_secs();
             if t.rate_note.is_some() && st.note != t.rate_note {
                 st.note = t.rate_note.clone();
             }
@@ -2165,6 +2186,7 @@ mod tests {
             note: None,
             dropped: 0,
             clipped: 0,
+            quiet_secs: 0.0,
             error: None,
         };
         assert_eq!(st.current_files(), [p("t_1-Mic.wav"), p("t_A1-Speakers.wav")]);
@@ -2487,6 +2509,23 @@ mod tests {
         t.finish().unwrap();
         let (_, _, _, _, s) = read_wav(&f);
         assert_eq!(&s[..2], &[1.5, -3.0]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A take whose armed channels get no sound says so (the 2.8.6 update
+    /// left Discord on another strip, and a take recorded only silence).
+    #[test]
+    fn a_take_knows_how_long_it_has_been_silent() {
+        let dir = tmpdir("quiet");
+        let labels = vec!["1-Mic".to_string(), "B2-Stream".to_string()];
+        let mut t = Take::create(&dir, "Q", &labels, spec(Format::Wav16, 1000, MAX_WAV_DATA_BYTES, 0)).unwrap();
+        t.emit(3000, |_, _| (0.0, 0.0)).unwrap();
+        assert_eq!(t.quiet_secs(), 3.0, "silent from the start");
+        t.emit(1000, |tr, f| if tr == 1 && f == 499 { (0.0, 0.01) } else { (5e-5, -5e-5) }).unwrap();
+        assert_eq!(t.quiet_secs(), 0.5, "one sound on one track, half a second ago; -86 dB is no sound");
+        t.emit(10, |_, _| (0.2, 0.2)).unwrap();
+        assert_eq!(t.quiet_secs(), 0.0);
+        t.finish().unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

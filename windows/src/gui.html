@@ -213,7 +213,7 @@ button { cursor: pointer; }
 .pkrow { display: flex; justify-content: space-between; align-items: flex-start; margin-top: 10px; padding: 0 2px; min-height: 30px; }
 .pk { display: flex; flex-direction: column; gap: 6px; font-size: 7.5px; }
 .pk small { font-size: 7.5px; letter-spacing: .1em; color: var(--muted); font-weight: 600; }
-.pk span { color: var(--muted); font-size: 9px; }
+.pk span { color: var(--muted); font-size: 9px; display: block; height: 11px; line-height: 11px; contain: strict; }
 .pk span.hot { color: var(--red); font-weight: 700; }
 .fval {
   width: 52px; text-align: center; border: 1px solid transparent; border-radius: 4px; background: none; padding: 1px 0;
@@ -275,7 +275,9 @@ button { cursor: pointer; }
 #wavec { display: block; width: 100%; flex: 1 1 auto; min-height: 50px; height: 50px; margin-top: 4px; cursor: pointer; }
 .wavef { font-size: 8px; letter-spacing: .1em; min-height: 11px; margin-top: 2px; }
 .tlbl { margin-top: 16px; }
-.tc { display: flex; align-items: baseline; gap: 22px; margin-top: 8px; }
+/* Texts that change on every frame (time code, levels) sit in boxes of a fixed
+   size (contain: strict), so a new value lays out only that box, not the page. */
+.tc { display: flex; align-items: baseline; gap: 22px; margin-top: 8px; height: 30px; contain: strict; }
 .tc .time { font-size: 30px; font-weight: 400; letter-spacing: .02em; font-variant-numeric: tabular-nums; line-height: 1; }
 .tc .fmt2 { font-size: 9px; color: var(--muted); white-space: nowrap; }
 .transport { display: grid; grid-template-columns: 1fr 1fr 1.15fr; gap: 10px; margin-top: 16px; }
@@ -334,7 +336,8 @@ button { cursor: pointer; }
 .qbar { border: 0; background: none; padding: 0; text-align: left; min-width: 0; }
 .qbar .caps { font-size: 7.5px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .track { height: 6px; border-radius: 3px; background: var(--off); margin-top: 9px; overflow: hidden; }
-.track i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--green); transition: width .08s linear; }
+/* scaled, not resized: a level change then needs no layout of the page */
+.track i { display: block; height: 100%; width: 100%; border-radius: 3px; background: var(--green); transform-origin: left center; transform: scaleX(0); transition: transform .08s linear; will-change: transform; }
 .qbar:nth-child(even) .track i { background: var(--teal); }
 .qroute { display: flex; gap: 3px; margin-top: 7px; }
 .qroute i { font-style: normal; font-size: 7px; font-weight: 700; color: var(--dim); letter-spacing: .04em; }
@@ -350,7 +353,7 @@ button { cursor: pointer; }
 .orow .track i { background: var(--blue); }
 .orow.b .track i { background: var(--purple); }
 .orow.muted .track i { background: var(--seg-muted); }
-.orow em { font-style: normal; font-size: 9px; text-align: right; color: var(--text); }
+.orow em { font-style: normal; font-size: 9px; text-align: right; color: var(--text); display: block; height: 12px; line-height: 12px; contain: strict; }
 .orow.sel span { color: var(--text); }
 .qbar.muted .track i { background: var(--seg-muted) !important; }
 .session { padding: 14px 18px; min-height: 104px; }
@@ -558,8 +561,8 @@ dialog::backdrop { background: var(--overlay); }
         <button class="t-rec" id="recbtn"><i class="ic rec"></i><span>REC</span></button>
         <button class="t-stop" id="stopbtn"><i class="ic stop"></i><span>STOP</span></button>
       </div>
-      <div class="lbl sect"><span class="caps">Play to</span><div class="playto" id="playto" role="group" aria-label="Buses playback goes to"></div></div>
-      <div class="lbl sect"><span class="caps" id="l-armed">Armed tracks</span><span class="segs" id="modeseg"><button data-mode="mix" title="All armed channels into one stereo file">Mix</button><button data-mode="multi" title="One stereo file per armed channel, sample-aligned">Multi</button></span></div>
+      <div class="lbl sect"><span class="caps" title="Where recordings are played back. This does not change what is recorded: that is Armed tracks.">Play back on</span><div class="playto" id="playto" role="group" aria-label="Buses playback goes to (not what is recorded)"></div></div>
+      <div class="lbl sect"><span class="caps" id="l-armed" title="The channels that are recorded: click one to arm it (red dot).">Armed tracks · recorded</span><span class="segs" id="modeseg"><button data-mode="mix" title="All armed channels into one stereo file">Mix</button><button data-mode="multi" title="One stereo file per armed channel, sample-aligned">Multi</button></span></div>
       <div class="armed" id="armed" role="group" aria-labelledby="l-armed"></div>
       <div class="lbl sect"><span class="caps">Format</span><span class="segs" id="fmtseg"><button data-format="mp3" title="MP3, 320 kbit/s (about 144 MB per hour and track)">MP3</button><button data-format="wav16" title="16-bit WAV">16-bit</button><button data-format="wav24" title="24-bit WAV">24-bit</button><button data-format="wav32f" title="32-bit float WAV: keeps what is louder than full scale">32-bit float</button></span></div>
       <div class="folder"><input id="folder" spellcheck="false" autocomplete="off" aria-label="Recordings folder"><button class="small-btn" id="openfolder" title="Open the folder">OPEN</button></div>
@@ -748,6 +751,11 @@ const fmtTrim = (v) => {
 const fmtPan = (p) => { const n = Math.round(p * 100); return n === 0 ? "C" : n < 0 ? "L" + -n : "R" + n; };
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const setText = (e, t) => { if (e.textContent !== t) e.textContent = t; };
+// Write only what changed: the page gets a new state 30 times a second, and
+// every write (even of the same value) can make WebKit restyle and repaint.
+const setClass = (e, c) => { if (e.className !== c) e.className = c; };
+const setTitle = (e, t) => { if (e.title !== t) e.title = t; };
+const setBar = (e, frac) => { const t = "scaleX(" + clamp(frac, 0, 1).toFixed(3) + ")"; if (e.style.transform !== t) e.style.transform = t; };
 const setPressed = (e, on) => { const v = on ? "true" : "false"; if (e.getAttribute("aria-pressed") !== v) e.setAttribute("aria-pressed", v); };
 const pad2 = (n) => String(n).padStart(2, "0");
 function clock(s) {
@@ -1353,7 +1361,7 @@ const armEls = IDS.map((id, ch) => {
 const playtoEls = BUSES.map((b, i) => {
   const k = el("button", "rt " + (i < 3 ? "a" : "b"), b);
   k.setAttribute("aria-pressed", "false");
-  k.title = "Play recordings on " + b;
+  k.title = "Play recordings back on " + b + " (does not change what is recorded)";
   k.addEventListener("click", () => {
     const on = k.getAttribute("aria-pressed") !== "true";
     setPressed(k, on);
@@ -1655,7 +1663,7 @@ $("m-tray").addEventListener("click", () => {
 });
 $("m-install").addEventListener("click", () => { closeMenus(); send({ op: "install" }, false); });
 function setChecked(b, on) {
-  b.setAttribute("aria-checked", String(on));
+  if (b.getAttribute("aria-checked") !== String(on)) b.setAttribute("aria-checked", String(on));
   setText(b.querySelector(".chk"), on ? "✓" : "");
 }
 let quitArmed = 0;
@@ -1803,78 +1811,88 @@ function reachOf(S, from) {
   return seen;
 }
 
+// Levels, knobs and faders follow every frame (30 a second); names, tooltips
+// and the panels 10 times a second, which costs WebKit far less CPU.
+const SLOW_MS = 100;
+let slowAt = -Infinity;
 function render(S) {
   last = S;
   const now = performance.now();
-  // top bar
-  setText($("client"), S.client);
-  const sr = (S.sr / 1000).toFixed(S.sr % 1000 ? 1 : 0);
-  setText($("fmt"), sr + " kHz · " + S.period.toFixed(2) + " ms");
-  $("engine").classList.remove("off");
-  setText($("engtxt"), "Engine online");
-  setText($("scenename"), S.scene || "None");
-  setText($("sessname"), S.scene || "No scene");
-  if (!held("theme")) {
-    const t = S.app.theme;
-    const curT = document.documentElement.dataset.theme || "auto";
-    if (curT !== t) applyTheme(t);
-    document.querySelectorAll("[data-theme-v]").forEach((b) => setPressed(b, b.dataset.themeV === t));
+  const full = now - slowAt >= SLOW_MS;
+  if (full) slowAt = now;
+  if (full) {
+    // top bar
+    setText($("client"), S.client);
+    const sr = (S.sr / 1000).toFixed(S.sr % 1000 ? 1 : 0);
+    setText($("fmt"), sr + " kHz · " + S.period.toFixed(2) + " ms");
+    $("engine").classList.remove("off");
+    setText($("engtxt"), "Engine online");
+    setText($("scenename"), S.scene || "None");
+    setText($("sessname"), S.scene || "No scene");
+    if (!held("theme")) {
+      const t = S.app.theme;
+      const curT = document.documentElement.dataset.theme || "auto";
+      if (curT !== t) applyTheme(t);
+      document.querySelectorAll("[data-theme-v]").forEach((b) => setPressed(b, b.dataset.themeV === t));
   }
   if (!held("zoom") && S.app.zoom !== userZoom) { userZoom = S.app.zoom; layout(); }
   if (!held("autostart")) setChecked($("m-autostart"), S.app.autostart);
   if (!held("tray")) setChecked($("m-tray"), S.app.closeToTray);
-  $("m-install").hidden = S.app.installed;
-  $("m-tray").title = S.app.tray ? "" : "No tray here: closing the window minimizes it instead";
+  if ($("m-install").hidden !== S.app.installed) $("m-install").hidden = S.app.installed;
+  setTitle($("m-tray"), S.app.tray ? "" : "No tray here: closing the window minimizes it instead");
+  }
   // the first start: the "Virtual cables" window opens by itself, once
   if (S.app.welcome && !welcomed) { welcomed = true; $("cab-welcome").hidden = false; openCables(); }
 
   // strips and buses
   S.ch.forEach((c, ch) => {
     const u = ui[ch];
-    u.realName = c.name || IDS[ch];
-    if (!u.renaming && !held("name" + ch) && u.name.textContent !== u.realName) { u.name.textContent = u.realName; fitName(u); }
-    // its menu button: what it takes in / plays on
-    setText(u.devT, c.dev || "Not connected");
-    u.dev.classList.toggle("none", c.dev === "Not connected");
-    const tip = (c.strip ? "What " : "Where ") + IDS[ch] + (c.strip ? " takes in: " : " plays: ") + (c.dev || "nothing") +
-      (c.cable ? " (its virtual cable is on)" : "") + (c.conn && c.conn !== "(nothing connected)" ? "\nConnected: " + c.conn : "") + "\nClick to choose";
-    if (u.dev.title !== tip) u.dev.title = tip;
-    const nt = u.realName + " · double-click to rename";
-    if (u.name.title !== nt) u.name.title = nt;
-    if (!held("mute" + ch)) setPressed(u.mute, c.mute);
-    u.muteLed.className = c.mute ? "m" : "";
-    if (!held("mono" + ch)) setPressed(u.mono, c.mono);
-    setPressed(u.eq, c.eq.on);
-    u.eq.title = "EQ of " + IDS[ch] + " is " + (c.eq.on ? "on" : "off") + ": open the editor";
     // muted, or soloed out: the meter shows what comes in, greyed
     const silenced = c.mute || (c.strip && S.anySolo && !c.solo);
-    u.routes.forEach((k, b) => { if (!held("route" + ch + b)) setPressed(k, (c.routes >> b) & 1); });
-    if (c.strip) {
-      if (!held("solo" + ch)) setPressed(u.solo, c.solo);
-      u.soloLed.className = c.solo ? "s" : "";
-      u.root.classList.toggle("dim", S.anySolo && !c.solo);
-      const q = qmEls[ch];
-      setText(q.firstChild, c.name || IDS[ch]);
-      q.routeEls.forEach((i, b) => { i.className = (c.routes >> b) & 1 ? (b < 3 ? "a" : "b") : ""; });
-      q.classList.toggle("muted", silenced);
-      q.bar.style.width = (clamp((meterDb(silenced ? c.mi : c.m) + 60) / 60, 0, 1) * 100).toFixed(1) + "%";
-    } else {
-      // a send that would close a loop can't be made
-      const me = ch - NUM_STRIPS;
-      u.routes.forEach((k, b) => {
-        if (b === me) return;
-        const loop = (reachOf(S, b) >> me) & 1;
-        k.classList.toggle("loop", !!loop);
-        const t = loop ? BUSES[b] + " already feeds " + IDS[ch] + ", so " + IDS[ch] + " can't feed " + BUSES[b] : "Send " + IDS[ch] + " to " + BUSES[b];
-        if (k.title !== t) k.title = t;
-      });
-      const o = outEls[me];
-      setText(o.nm, c.name || IDS[ch]);
-      o.classList.toggle("muted", silenced);
-      o.classList.toggle("sel", ch === selected);
-      const od = meterDb(silenced ? c.mi : c.m);
-      setText(o.db, od <= -59.9 ? "–∞" : Math.round(od) + " dB");
-      o.bar.style.width = (clamp((od + 60) / 60, 0, 1) * 100).toFixed(1) + "%";
+    if (full) {
+      u.realName = c.name || IDS[ch];
+      if (!u.renaming && !held("name" + ch) && u.name.textContent !== u.realName) { u.name.textContent = u.realName; fitName(u); }
+      // its menu button: what it takes in / plays on
+      setText(u.devT, c.dev || "Not connected");
+      u.dev.classList.toggle("none", c.dev === "Not connected");
+      const tip = (c.strip ? "What " : "Where ") + IDS[ch] + (c.strip ? " takes in: " : " plays: ") + (c.dev || "nothing") +
+        (c.cable ? " (its virtual cable is on)" : "") + (c.conn && c.conn !== "(nothing connected)" ? "\nConnected: " + c.conn : "") + "\nClick to choose";
+      if (u.dev.title !== tip) u.dev.title = tip;
+      const nt = u.realName + " · double-click to rename";
+      if (u.name.title !== nt) u.name.title = nt;
+      if (!held("mute" + ch)) setPressed(u.mute, c.mute);
+      setClass(u.muteLed, c.mute ? "m" : "");
+      if (!held("mono" + ch)) setPressed(u.mono, c.mono);
+      setPressed(u.eq, c.eq.on);
+      setTitle(u.eq, "EQ of " + IDS[ch] + " is " + (c.eq.on ? "on" : "off") + ": open the editor");
+      u.routes.forEach((k, b) => { if (!held("route" + ch + b)) setPressed(k, (c.routes >> b) & 1); });
+      if (c.strip) {
+        if (!held("solo" + ch)) setPressed(u.solo, c.solo);
+        setClass(u.soloLed, c.solo ? "s" : "");
+        u.root.classList.toggle("dim", S.anySolo && !c.solo);
+        const q = qmEls[ch];
+        setText(q.firstChild, c.name || IDS[ch]);
+        q.routeEls.forEach((i, b) => setClass(i, (c.routes >> b) & 1 ? (b < 3 ? "a" : "b") : ""));
+        q.classList.toggle("muted", silenced);
+        setBar(q.bar, (meterDb(silenced ? c.mi : c.m) + 60) / 60);
+      } else {
+        // a send that would close a loop can't be made
+        const me = ch - NUM_STRIPS;
+        u.routes.forEach((k, b) => {
+          if (b === me) return;
+          const loop = (reachOf(S, b) >> me) & 1;
+          k.classList.toggle("loop", !!loop);
+          const t = loop ? BUSES[b] + " already feeds " + IDS[ch] + ", so " + IDS[ch] + " can't feed " + BUSES[b] : "Send " + IDS[ch] + " to " + BUSES[b];
+          setTitle(k, t);
+        });
+        const o = outEls[me];
+        setText(o.nm, c.name || IDS[ch]);
+        o.classList.toggle("muted", silenced);
+        o.classList.toggle("sel", ch === selected);
+        const od = meterDb(silenced ? c.mi : c.m);
+        setText(o.db, od <= -59.9 ? "–∞" : Math.round(od) + " dB");
+        setBar(o.bar, (od + 60) / 60);
+      }
     }
     if (!u.dragging && !held("gain" + ch)) showGain(u, c.gain);
     if (!held("trim" + ch)) { u.trim.show(c.trim); setText(u.trimVal, fmtTrim(c.trim)); }
@@ -1897,14 +1915,16 @@ function render(S) {
     setText(u.pkv, u.pk <= -59.9 ? "–∞" : u.pk.toFixed(1));
     u.pkv.classList.toggle("hot", u.clipUntil > now);
     const lamp = silenced ? meterDb(c.mi) : db;
-    u.led.className = "led" + (u.clipUntil > now ? " clip" : lamp > -50 ? " on" : "");
+    setClass(u.led, "led" + (u.clipUntil > now ? " clip" : lamp > -50 ? " on" : ""));
     // recorder rows
+    if (!full) return;
     if (!held("link" + ch)) setPressed(armEls[ch], c.link);
     setText(armEls[ch].lastChild, c.name || IDS[ch]);
-    armEls[ch].title = (c.link ? "Armed: " : "Arm ") + IDS[ch] + " " + (c.name || "") + (c.strip ? " (after its fader)" : " (as it leaves the mixer)");
+    setTitle(armEls[ch], (c.link ? "Armed: " : "Arm ") + IDS[ch] + " " + (c.name || "") + (c.strip ? " (after its fader)" : " (as it leaves the mixer)"));
   });
 
-  renderRecorder(S, now);
+  renderRecorder(S, now, full);
+  if (!full) return;
 
   // session
   if (performance.now() > toastUntil) {
@@ -1922,7 +1942,9 @@ function render(S) {
   if (menuCh >= 0 && S.devRev !== menuRev && !menuLoading) loadChanMenu(false);
 }
 
-function renderRecorder(S, now) {
+// seconds of silence in a running take before the recorder warns
+const QUIET_WARN = 10;
+function renderRecorder(S, now, full) {
   const R = S.rec, P = S.player;
   // takes list
   if (S.takes.rev !== takesRev) loadTakes(S.takes.rev);
@@ -1967,43 +1989,52 @@ function renderRecorder(S, now) {
   const bits = R.format === "mp3" ? "MP3 " + R.kbps + " KBPS" : { wav16: "16 BIT", wav24: "24 BIT", wav32f: "32 BIT FLOAT" }[R.format];
   const tsr = R.on && R.sr ? R.sr : S.sr;
   setText($("tcfmt"), (tsr / 1000).toFixed(tsr % 1000 ? 1 : 0) + " kHz · " + bits);
+  if (!full) return;
   // buttons
   const playing = P.state === "playing";
   $("playbtn").classList.toggle("on", playing);
-  $("playbtn").querySelector(".ic").className = "ic " + (playing ? "pause" : "play");
+  setClass($("playbtn").querySelector(".ic"), "ic " + (playing ? "pause" : "play"));
   setText($("playbtn").lastChild, playing ? "PAUSE" : "PLAY");
   if (!held("rec")) $("recbtn").classList.toggle("on", R.on);
   setText($("recbtn").lastChild, R.on ? "RECORDING" : "REC");
   playtoEls.forEach((k, b) => { if (!held("playto" + b)) setPressed(k, (S.playTo >> b) & 1); });
   if (!held("mode")) document.querySelectorAll("[data-mode]").forEach((b) => setPressed(b, b.dataset.mode === R.mode));
   if (!held("format")) document.querySelectorAll("[data-format]").forEach((b) => setPressed(b, b.dataset.format === R.format));
-  $("fmtseg").firstChild.title = "MP3, " + R.kbps + " kbit/s (about " + Math.round(R.kbps * 0.45) + " MB per hour and track)";
-  document.querySelectorAll("#modeseg button, #fmtseg button, #folder").forEach((b) => { b.disabled = R.on; });
+  setTitle($("fmtseg").firstChild, "MP3, " + R.kbps + " kbit/s (about " + Math.round(R.kbps * 0.45) + " MB per hour and track)");
+  document.querySelectorAll("#modeseg button, #fmtseg button, #folder").forEach((b) => { if (b.disabled !== R.on) b.disabled = R.on; });
   const folder = $("folder");
   if (document.activeElement !== folder && !held("folder") && folder.value !== R.folder) folder.value = R.folder;
-  folder.title = R.path;
+  setTitle(folder, R.path);
 
   // state pill + disk
   const linked = S.ch.filter((x) => x.link).length;
   const free = S.disk ? bytes(S.disk.free) + " free" : "";
   const pill = $("recstate");
   let cls = "", txt;
-  if (R.on) { cls = "rec"; txt = "Recording" + (free ? " · " + free : ""); }
+  const silent = R.on && R.quiet >= QUIET_WARN;
+  if (silent) { cls = "warn"; txt = "Recording silence"; }
+  else if (R.on) { cls = "rec"; txt = "Recording" + (free ? " · " + free : ""); }
   else if (playing) { cls = "play"; txt = "Playing"; }
   else if (!linked) { cls = "warn"; txt = "Arm a track"; }
   else txt = "Ready" + (free ? " · " + free : "");
-  pill.className = "state" + (cls ? " " + cls : "");
+  setClass(pill, "state" + (cls ? " " + cls : ""));
   setText($("recstatetxt"), txt);
   if (S.disk) {
     const usedPct = 100 * (1 - S.disk.free / Math.max(1, S.disk.total));
     setText($("disktxt"), "Disk " + bytes(S.disk.total) + "  /  " + Math.round(100 - usedPct) + "% free");
-    $("diskbar").style.width = usedPct.toFixed(1) + "%";
+    const dw = usedPct.toFixed(1) + "%";
+    if ($("diskbar").style.width !== dw) $("diskbar").style.width = dw;
     $("diskbar").classList.toggle("low", S.disk.free < 2e9);
   } else {
     setText($("disktxt"), "Disk: unknown");
   }
   let warn = "";
   if (R.error) warn = R.error;
+  else if (silent) {
+    const armed = S.ch.filter((x) => x.link).map((x) => x.id + " " + x.name).join(", ");
+    warn = "No sound for " + dur(R.quiet) + ": the armed tracks (" + armed + ") get nothing, so the take is silent. "
+      + "Check that their meters move and that your apps play into the right strip. Armed tracks decide what is recorded; Play back on does not.";
+  }
   else if (R.note) warn = R.note;
   else if (P.error) warn = "Player: " + P.error;
   else if (R.dropped > 0) warn = R.dropped + " frames were lost because the disk was too slow; they are filled with silence.";
@@ -2401,7 +2432,7 @@ function renderVbanIps(V) {
 function renderVban(S) {
   const V = S.vban;
   const d = vDot(V);
-  $("vbandot").className = "dot" + (d ? " " + d : "");
+  setClass($("vbandot"), "dot" + (d ? " " + d : ""));
   renderVbanIps(V);
   if (!$("vbandlg").open) return;
   if (!held("vbanon")) { setPressed($("vbanon"), V.on); setText($("vbanon"), V.on ? "On" : "Off"); }

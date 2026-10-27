@@ -729,6 +729,8 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     jstr(&mut o, &recorder::expand_home(&s.folder).display().to_string());
     o.push_str(",\"secs\":");
     jnum(&mut o, st.seconds(), 2);
+    o.push_str(",\"quiet\":");
+    jnum(&mut o, if st.on { st.quiet_secs } else { 0.0 }, 1);
     let _ = write!(o, ",\"dropped\":{},\"clipped\":{},\"tracks\":{},\"files\":[", st.dropped, st.clipped, st.tracks);
     // only the files being written: the take's list grows every hour
     for (k, p) in st.current_files().iter().enumerate() {
