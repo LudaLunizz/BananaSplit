@@ -276,12 +276,12 @@ Check (Until { (App-Windows).Count -ge 1 } 30) "a window titled BananaSplit open
 $cab = $null
 Check (Until { $script:cab = Get-Http '/api/cables' | ConvertFrom-Json; $null -ne $script:cab } 10) "it reports the virtual cables (valid JSON)"
 if ($cab) { Annotate 'notice' 'Virtual cables' ($cab | ConvertTo-Json -Compress) }
-Check ($cab.welcome -eq $true -and @($cab.pairs).Count -eq 0) "the first start without cables asks the page for the Virtual cables window"
+Check ((Get-Http '/api/state' | ConvertFrom-Json).app.welcome -eq $true -and @($cab.pairs).Count -eq 0) "the first start without cables asks the page for the Virtual cables window"
 Check ($cab.splitter.found -eq $false -and @($cab.splitter.cables).Count -eq 0 -and @($cab.splitter.missing).Count -eq 11) "it reports Splitter as not installed, all 11 cables missing"
 Start-Sleep -Seconds 2
 Check ([BsSmoke.Win]::Dialogs([uint32]$p.Id).Count -eq 0) "and shows no message box"
 try { [void](Post-Cmd 'op=cables&a=seen') } catch { }
-Check (Until { (Get-Http '/api/cables' | ConvertFrom-Json).welcome -eq $false } 10) "once closed, the window does not open by itself again"
+Check (Until { (Get-Http '/api/state' | ConvertFrom-Json).app.welcome -eq $false } 10) "once closed, the window does not open by itself again"
 $st0 = Get-Http '/api/state' | ConvertFrom-Json
 Check ($st0.status -match 'No virtual cables are installed') "the start-up notes are in the page's status line ('$($st0.status)')"
 Check (Until { @(Get-NetTCPConnection -LocalPort $Port -State Established -ErrorAction SilentlyContinue).Count -ge 1 } 30) "the window's page connects to the mixer"
