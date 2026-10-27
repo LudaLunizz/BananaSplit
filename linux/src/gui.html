@@ -549,7 +549,7 @@ dialog::backdrop { background: var(--overlay); }
       <div class="lbl sect"><span class="caps">Play to</span><div class="playto" id="playto" role="group" aria-label="Buses playback goes to"></div></div>
       <div class="lbl sect"><span class="caps" id="l-armed">Armed tracks</span><span class="segs" id="modeseg"><button data-mode="mix" title="All armed channels into one stereo file">Mix</button><button data-mode="multi" title="One stereo file per armed channel, sample-aligned">Multi</button></span></div>
       <div class="armed" id="armed" role="group" aria-labelledby="l-armed"></div>
-      <div class="lbl sect"><span class="caps">Format</span><span class="segs" id="fmtseg"><button data-format="wav16">16-bit</button><button data-format="wav24">24-bit</button><button data-format="wav32f">32-bit float</button></span></div>
+      <div class="lbl sect"><span class="caps">Format</span><span class="segs" id="fmtseg"><button data-format="mp3" title="MP3, 320 kbit/s (about 144 MB per hour and track)">MP3</button><button data-format="wav16" title="16-bit WAV">16-bit</button><button data-format="wav24" title="24-bit WAV">24-bit</button><button data-format="wav32f" title="32-bit float WAV: keeps what is louder than full scale">32-bit float</button></span></div>
       <div class="folder"><input id="folder" spellcheck="false" autocomplete="off" aria-label="Recordings folder"><button class="small-btn" id="openfolder" title="Open the folder">OPEN</button></div>
       <p class="warnline" id="recwarn" hidden></p>
       <div class="disk"><div class="caps" id="disktxt">Disk</div><div class="dbar"><i id="diskbar"></i></div></div>
@@ -1860,8 +1860,9 @@ function renderRecorder(S, now) {
   const t = takes.find((x) => x.key === key);
   const idx = t ? takes.indexOf(t) : -1;
   if (R.on) {
-    // the file being written: the take continues in new files at 4 GB and
-    // when the server changes its sample rate (one per track each time)
+    // the file being written: the take continues in new files every hour
+    // (split), at 4 GB and when the server changes its sample rate (one per
+    // track each time)
     const n = Math.max(1, R.tracks || 1);
     const f = (R.files[Math.max(0, R.files.length - n)] || "").split("/").pop();
     setText($("taketitle"), "REC · " + (R.takeMode === "multi" ? n + (n === 1 ? " track" : " tracks") : "mix"));
@@ -1893,7 +1894,7 @@ function renderRecorder(S, now) {
   // time code and format
   const pos = R.on ? R.secs : P.take ? P.pos : 0;
   setText($("tc"), clock(pos));
-  const bits = { wav16: "16 BIT", wav24: "24 BIT", wav32f: "32 BIT FLOAT" }[R.format];
+  const bits = R.format === "mp3" ? "MP3 " + R.kbps + " KBPS" : { wav16: "16 BIT", wav24: "24 BIT", wav32f: "32 BIT FLOAT" }[R.format];
   const tsr = R.on && R.sr ? R.sr : S.sr;
   setText($("tcfmt"), (tsr / 1000).toFixed(tsr % 1000 ? 1 : 0) + " kHz · " + bits);
   // buttons
@@ -1906,6 +1907,7 @@ function renderRecorder(S, now) {
   playtoEls.forEach((k, b) => { if (!held("playto" + b)) setPressed(k, (S.playTo >> b) & 1); });
   if (!held("mode")) document.querySelectorAll("[data-mode]").forEach((b) => setPressed(b, b.dataset.mode === R.mode));
   if (!held("format")) document.querySelectorAll("[data-format]").forEach((b) => setPressed(b, b.dataset.format === R.format));
+  $("fmtseg").firstChild.title = "MP3, " + R.kbps + " kbit/s (about " + Math.round(R.kbps * 0.45) + " MB per hour and track)";
   document.querySelectorAll("#modeseg button, #fmtseg button, #folder").forEach((b) => { b.disabled = R.on; });
   const folder = $("folder");
   if (document.activeElement !== folder && !held("folder") && folder.value !== R.folder) folder.value = R.folder;

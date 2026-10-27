@@ -357,7 +357,7 @@ Tray-Item 2
 Check (Until { (Get-Http '/api/state' | ConvertFrom-Json).rec.on -eq $true } 10) "the tray's Start recording starts a take"
 Tray-Item 2
 Check (Until { (Get-Http '/api/state' | ConvertFrom-Json).rec.on -eq $false } 10) "and its Stop recording stops it"
-$takes = @(Get-ChildItem -Recurse -Filter *.wav "$work\takes" -ErrorAction SilentlyContinue)
+$takes = @(Get-ChildItem -Recurse -Include *.mp3, *.wav -Path "$work\takes" -ErrorAction SilentlyContinue)
 Check ($takes.Count -ge 1) "the take was written ($(($takes | Select-Object -First 1).Name))"
 
 # ---- quitting saves and closes everything ----

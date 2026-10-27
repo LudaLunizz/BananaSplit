@@ -415,7 +415,7 @@ impl Takes {
             o.push_str("],\"secs\":");
             jnum(&mut o, t.secs(), 3);
             let _ = write!(o, ",\"sr\":{},\"fmt\":", t.sample_rate);
-            jstr(&mut o, t.kind.label());
+            jstr(&mut o, &t.fmt);
             let _ = write!(o, ",\"bytes\":{}}}", t.bytes);
         }
         o.push_str("]}");
@@ -706,7 +706,16 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     }
     let st = f.rec;
     let s = f.rec_settings;
-    let _ = write!(o, "],\"rec\":{{\"on\":{},\"takeMode\":\"{}\",\"mode\":\"{}\",\"format\":\"{}\",\"sr\":{},\"folder\":", st.on, st.mode.as_str(), s.mode.as_str(), s.format.as_str(), st.sample_rate);
+    let _ = write!(
+        o,
+        "],\"rec\":{{\"on\":{},\"takeMode\":\"{}\",\"mode\":\"{}\",\"format\":\"{}\",\"kbps\":{},\"sr\":{},\"folder\":",
+        st.on,
+        st.mode.as_str(),
+        s.mode.as_str(),
+        s.format.as_str(),
+        s.kbps,
+        st.sample_rate
+    );
     jstr(&mut o, &s.folder);
     o.push_str(",\"path\":");
     jstr(&mut o, &recorder::expand_home(&s.folder).display().to_string());
@@ -1011,6 +1020,9 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
             }
             if let Some(fm) = f.get("format") {
                 s.format = Format::parse(fm)?;
+            }
+            if let Some(k) = f.get("kbps") {
+                s.kbps = recorder::parse_kbps(k)?;
             }
             if let Some(d) = f.get("folder") {
                 s.folder = d.trim().to_string();
@@ -2135,7 +2147,7 @@ mod tests {
         assert!(command(&h, "op=rec&v=1").unwrap_err().contains("link"));
         command(&h, "op=link&ch=6&v=1").unwrap();
         let msg = command(&h, "op=rec&v=1").unwrap();
-        assert!(msg.starts_with("recording to ") && msg.ends_with("_mix.wav"), "{msg}");
+        assert!(msg.starts_with("recording to ") && msg.ends_with("_mix.mp3"), "{msg}");
         assert!(h.recorder.is_recording());
         command(&h, "op=rec&v=0").unwrap();
         assert!(!h.recorder.is_recording());
