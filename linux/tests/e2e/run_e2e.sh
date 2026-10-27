@@ -403,7 +403,11 @@ python3 "$HERE/rec_rate.py" "$BIN" "$HERE" 2.0 1 MOCKJACK_RATE=44100 MOCKJACK_PR
 # its own in the list), long enough to time the player over a second
 python3 "$HERE/rec_rate.py" "$BIN" "$HERE" 3.0 2 MOCKJACK_RATE=48000 MOCKJACK_RATE_SWITCH=800:96000 || fail "8: rate change during a take"
 python3 "$HERE/rec_rate.py" "$BIN" "$HERE" 2.0 1 MOCKJACK_RATE=48000 MOCKJACK_PRE_RATE=44100 MOCKJACK_NO_SRATE_CB=1 || fail "8: libjack without the rate callback"
-echo "E2E PASS: recordings carry the rate the server really runs at, play at 1.0x, and follow a rate change"
+# The same in MP3 (2.8.4): 96 kHz is stored at 48 kHz, still at 1.0x.
+python3 "$HERE/rec_rate.py" "$BIN" "$HERE" 2.0 1 MOCKJACK_RATE=44100 MOCKJACK_PRE_RATE=48000 REC_FORMAT=mp3 || fail "8: MP3 at 44.1 kHz"
+python3 "$HERE/rec_rate.py" "$BIN" "$HERE" 3.0 2 MOCKJACK_RATE=48000 MOCKJACK_RATE_SWITCH=800:96000 REC_FORMAT=mp3 || fail "8: MP3 across a rate change"
+python3 "$HERE/rec_rate.py" "$BIN" "$HERE" 2.0 1 MOCKJACK_RATE=48000 MOCKJACK_PRE_RATE=44100 MOCKJACK_NO_SRATE_CB=1 REC_FORMAT=mp3 || fail "8: MP3 without the rate callback"
+echo "E2E PASS: recordings (WAV and MP3) carry the rate the server really runs at, play at 1.0x, and follow a rate change"
 
 # ---- phase 9: the channels' menus, cables on every channel, apps (2.7) ----
 python3 "$HERE/menus.py" "$BIN" "$HERE" || fail "9: channel menus"
