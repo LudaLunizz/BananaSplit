@@ -1454,6 +1454,10 @@ pub fn method() -> Method {
         return Method::Manual("the release page has BananaSplit for x86-64 (64-bit Intel and AMD) only".into());
     }
     #[cfg(unix)]
+    if crate::desktop::flatpak_id().is_some() {
+        return Method::Manual("this BananaSplit is a Flatpak: install the new .flatpak from the release page".into());
+    }
+    #[cfg(unix)]
     if std::env::var_os("APPIMAGE").is_some_and(|a| !a.is_empty()) {
         return Method::Manual("this BananaSplit runs from an AppImage: download the new one from the release page".into());
     }

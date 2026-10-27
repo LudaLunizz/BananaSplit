@@ -13,6 +13,12 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.5
+
+* **BananaSplit as a Flatpak.** Every release now also has `bananasplit-<version>-x86_64.flatpak`, for any distribution with Flatpak: `flatpak install --user bananasplit-<version>-x86_64.flatpak` (it fetches the GNOME runtime from Flathub). It is the same mixer, with its virtual cables, tray icon, VBAN and recorder; see [Install](#install) for what the Flatpak may reach and what works differently in it.
+
+Nothing changes for the .deb and the portable package.
+
 ## What's new in 2.8.4
 
 * **Recordings are MP3 now.** Takes are recorded as MP3 at 320 kbit/s: about 144 MB per hour and track, a seventh of 24-bit WAV, and they play everywhere. **FORMAT** in the recorder panel has MP3 next to 16-bit, 24-bit and 32-bit float WAV, which are still there for lossless takes; `bitrate =` under `[recorder]` sets 128 to 320 kbit/s. BananaSplit encodes the MP3 itself, on Linux and on Windows: nothing else to install.
@@ -203,6 +209,16 @@ Then start **BananaSplit** from the app menu. What it needs from the system (Pip
 
 Or JACK2 (`jackd2`) instead of PipeWire. The virtual cables need PipeWire; without it, set `create_cables = false` (or start with `--no-cables`, which applies to that run only) and route with JACK. Without WebKitGTK, BananaSplit shows its window in Chromium, Chrome, Brave, Edge or Vivaldi (or your default browser) instead.
 
+**Flatpak (any distribution):** `flatpak install --user bananasplit-<version>-x86_64.flatpak`, then start **BananaSplit** from the app menu. The Flatpak brings everything it needs (GNOME runtime 51, from Flathub). It may reach PipeWire and PulseAudio (for the cables), the network (VBAN, the window on localhost, update checks), the tray, your home folder and drives under `/media`, `/run/media` and `/mnt` (for recording folders), and `~/.config/autostart`. In the Flatpak:
+
+* its settings are its own, in `~/.var/app/io.github.LudaLunizz.BananaSplit/config/bananasplit/bananasplit.ini`; copy your `~/.config/bananasplit/bananasplit.ini` there to take them along;
+* Flatpak adds the app-menu entry, so `--install` is not needed (and refuses);
+* "Start with the system" starts it with `flatpak run`;
+* the updater checks for new versions but does not install them: install the new `.flatpak` from the release page (or run `flatpak update` once it comes from a Flatpak repository);
+* run it from a terminal with `flatpak run io.github.LudaLunizz.BananaSplit --gui` (or `--headless`, `--quit`, …).
+
+Run one BananaSplit at a time: a Flatpak and a .deb install with the same `client_name` would make cables of the same names.
+
 **From source:**
 
 ```sh
@@ -211,7 +227,7 @@ target/release/bananasplit --install    # into ~/.local/bin and the app menu
 bananasplit --low-latency               # optional but recommended for < 10 ms (see Latency)
 ```
 
-`packaging/build-packages.sh` builds the .deb and the portable package. Run BananaSplit with `bananasplit --gui` (the app), `bananasplit` (terminal UI) or `bananasplit --headless` (no UI; `contrib/systemd/bananasplit.service` runs it in the background).
+`packaging/build-packages.sh` builds the .deb and the portable package, `packaging/build-flatpak.sh` the Flatpak (`packaging/flatpak/`). Run BananaSplit with `bananasplit --gui` (the app), `bananasplit` (terminal UI) or `bananasplit --headless` (no UI; `contrib/systemd/bananasplit.service` runs it in the background).
 
 ## Using it
 
@@ -293,7 +309,7 @@ Every strip and every bus has a menu: the button under its name. It lists what t
 * **Install** downloads it to `~/.cache/bananasplit/update/` (`bananasplit --update`: `update-cli/`) and checks it before anything is changed: it must come from BananaSplit's own release downloads over HTTPS, have the size GitHub lists, and match the release's `SHA256SUMS.txt`, which must be signed with BananaSplit's release key (`SHA256SUMS.txt.sig`; an unsigned release is refused), and GitHub's SHA-256 of the file. The new program must also run on this computer and say it is that version.
   * **Portable package, or a copy in a folder of yours:** the new `bananasplit` is written next to the old one and renamed over it (in one step, so there is never half a program). The copy in `~/.local/bin` that your app menu starts is updated too. The mixer that runs keeps using the old program until it ends.
   * **The .deb:** BananaSplit installs the downloaded package with `apt-get` through `pkexec`, so your desktop asks for your password. As root, the package is first copied to a folder only root can write and checked again, and apt-get never removes another package for it.
-  * **Anything else** (another package manager, an AppImage, a folder BananaSplit cannot write to): the window says so, and **Release page** opens the release in your browser so you can install it yourself.
+  * **Anything else** (another package manager, a Flatpak, an AppImage, a folder BananaSplit cannot write to): the window says so, and **Release page** opens the release in your browser so you can install it yourself.
 * **Restart now** saves everything, removes the cables, quits, and starts the new version with the same options. It stays offered until you restart, also when a later check fails. While you are recording it asks for a second click, because the restart ends the take.
 * **Install updates automatically** is **off** by default (`auto_update` in `[gui]`, written only when it is on). Off, BananaSplit asks nothing of anybody: it checks only when you click Check now. On, it checks a minute after it starts and then once a day (an hour later if a check fails), installs a new version by itself once it has been published for two days (so a broken release can be withdrawn before it reaches you; Install takes it at once), and says in the status line and with a dot on the Menu button that a restart finishes the update. It never restarts on its own. With the .deb it downloads and checks the package by itself and waits for you to click Install (and enter your password).
 * `bananasplit --update` checks and installs from a terminal (a running BananaSplit uses the new version after a restart). With the .deb, it installs in a terminal (it asks for your password there) and otherwise prints the `sudo apt install` command for the package it checked.

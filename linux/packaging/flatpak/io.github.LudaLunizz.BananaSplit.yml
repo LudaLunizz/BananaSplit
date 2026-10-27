@@ -1,0 +1,57 @@
+# The Flatpak of BananaSplit. packaging/build-flatpak.sh builds it into
+# dist/bananasplit-<version>-x86_64.flatpak; by hand:
+#
+#   flatpak-builder --user --install --force-clean build packaging/flatpak/io.github.LudaLunizz.BananaSplit.yml
+#
+# BananaSplit has no crate dependencies, so cargo builds offline.
+id: io.github.LudaLunizz.BananaSplit
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: bananasplit
+finish-args:
+  # The window (GTK 3 + WebKitGTK)
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # The GUI on localhost (one per user, found again by its port), VBAN and
+  # the update check
+  - --share=network
+  # Audio: pactl makes the virtual cables, libjack talks to PipeWire
+  - --socket=pulseaudio
+  - --filesystem=xdg-run/pipewire-0
+  # Tray icon (StatusNotifierItem, under the connection's own name)
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # Recording folders anywhere in your home and on other drives
+  - --filesystem=home
+  - --filesystem=/media
+  - --filesystem=/run/media
+  - --filesystem=/mnt
+  # "Start with the system": the session's own autostart folder
+  - --filesystem=xdg-config/autostart:create
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/bananasplit/cargo
+modules:
+  - name: bananasplit
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --locked --offline
+      - install -Dm755 target/release/bananasplit /app/bin/bananasplit
+      - sed 's/^Icon=bananasplit$/Icon=io.github.LudaLunizz.BananaSplit/; /^#/d' contrib/bananasplit.desktop > io.github.LudaLunizz.BananaSplit.desktop
+      - install -Dm644 io.github.LudaLunizz.BananaSplit.desktop -t /app/share/applications
+      - install -Dm644 packaging/flatpak/io.github.LudaLunizz.BananaSplit.metainfo.xml -t /app/share/metainfo
+      - install -Dm644 assets/icons/bananasplit.svg /app/share/icons/hicolor/scalable/apps/io.github.LudaLunizz.BananaSplit.svg
+      - for s in 16 24 32 48 64 128 256; do install -Dm644 assets/icons/bananasplit-$s.png /app/share/icons/hicolor/${s}x${s}/apps/io.github.LudaLunizz.BananaSplit.png; done
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - target
+          - dist
+          - build
+          - .flatpak-builder
