@@ -13,6 +13,10 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.12
+
+* **Safer building blocks.** The second part of the Rust code review (#26): JACK ports can no longer be passed around as bare pointers, the compiler now checks what the audio threads share, tray texts are checked before GLib reads them (a bad one is logged instead of crashing the window), and on Windows COM reports when it can't start, its handles can't be closed twice, and a failed audio thread stops the others instead of leaving devices open.
+
 ## What's new in 2.8.11
 
 * **Code review fixes.** A review of the Rust code against the current Rust and Linux state found no memory bugs that can happen today, and fixed a handful of small ones that could later: the tray and dark-style checks free their errors and check D-Bus replies, recording passes less data between threads, Windows audio threads release their devices before ending COM, and the network list and autostart path are read safely. Needs Rust 1.88 or newer to build (#24).
