@@ -1942,6 +1942,7 @@ function renderRecorder(S, now, full) {
   const pill = $("recstate");
   let cls = "", txt;
   const silent = R.on && R.quiet >= QUIET_WARN;
+  // the label alone says it (no notice below the recorder)
   if (silent) { cls = "warn"; txt = "Recording silence"; }
   else if (R.on) { cls = "rec"; txt = "Recording" + (free ? " · " + free : ""); }
   else if (playing) { cls = "play"; txt = "Playing"; }
@@ -1960,11 +1961,6 @@ function renderRecorder(S, now, full) {
   }
   let warn = "";
   if (R.error) warn = R.error;
-  else if (silent) {
-    const armed = S.ch.filter((x) => x.link).map((x) => x.id + " " + x.name).join(", ");
-    warn = "No sound for " + dur(R.quiet) + ": the armed tracks (" + armed + ") get nothing, so the take is silent. "
-      + "Check that their meters move and that your apps play into the right strip. Armed tracks decide what is recorded; Play back on does not.";
-  }
   else if (R.note) warn = R.note;
   else if (P.error) warn = "Player: " + P.error;
   else if (R.dropped > 0) warn = R.dropped + " frames were lost because the disk was too slow; they are filled with silence.";
