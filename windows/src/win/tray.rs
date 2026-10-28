@@ -215,12 +215,14 @@ pub fn icon_bgra(set: &[(u32, &[u8])], size: u32) -> Vec<u8> {
 }
 
 fn make_icon(set: &[(u32, &[u8])]) -> Handle {
+    // SAFETY: plain call with a constant index.
     let size = match unsafe { GetSystemMetrics(SM_CXSMICON) } {
         s if (8..=256).contains(&s) => s as u32,
         _ => 16,
     };
     let bgra = icon_bgra(set, size);
     let and_mask = vec![0u8; (size.div_ceil(32) * 4 * size) as usize];
+    // SAFETY: `bgra` is size*size*4 bytes (32 bpp), `and_mask` size DWORD-padded 1-bpp rows (at least the WORD-aligned rows CreateIcon reads).
     unsafe {
         CreateIcon(GetModuleHandleW(std::ptr::null()), size as i32, size as i32, 1, 32, and_mask.as_ptr(), bgra.as_ptr())
     }
@@ -247,6 +249,7 @@ fn try_add(st: &mut State) {
 }
 
 fn notify(st: &State, message: u32) -> bool {
+    // SAFETY: NotifyIconData is repr(C) integers, raw pointers and arrays: all-zero is valid; cb_size is set next.
     let mut d: NotifyIconData = unsafe { std::mem::zeroed() };
     d.cb_size = std::mem::size_of::<NotifyIconData>() as u32;
     d.hwnd = st.hwnd;
@@ -255,6 +258,7 @@ fn notify(st: &State, message: u32) -> bool {
     d.callback_message = WM_TRAY;
     d.icon = st.icons[usize::from(st.recording)];
     copy_wide(&mut d.tip, if st.recording { "BananaSplit (recording)" } else { "BananaSplit" });
+    // SAFETY: `d` is a fully initialised local NOTIFYICONDATAW with cb_size set, for our own window.
     unsafe { Shell_NotifyIconW(message, &mut d) != 0 }
 }
 
@@ -263,6 +267,7 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 fn menu(hwnd: Hwnd, recording: bool) -> Option<TrayAction> {
+    // SAFETY: a menu we create and destroy here, our own window; the strings are NUL-terminated locals (AppendMenuW copies them).
     unsafe {
         let m = CreatePopupMenu();
         if m.is_null() {
@@ -333,6 +338,7 @@ unsafe extern "system" fn wndproc(hwnd: Hwnd, msg: u32, w: usize, l: isize) -> i
         });
         return 0;
     }
+    // SAFETY: forwards exactly the arguments Windows passed to this window procedure.
     unsafe { DefWindowProcW(hwnd, msg, w, l) }
 }
 
@@ -344,6 +350,7 @@ impl Tray {
     /// If the notification area is not there yet, the icon comes as soon as
     /// it is (`shown` says whether it has).
     pub fn add(on_action: impl Fn(TrayAction) + 'static) -> Result<Tray, String> {
+        // SAFETY: `wc` is complete with cb_size set and a WNDPROC-typed `wndproc`; the class and title strings are NUL-terminated and outlive the calls.
         unsafe {
             let instance = GetModuleHandleW(std::ptr::null());
             let class = wide("BananaSplitTray");
@@ -424,6 +431,7 @@ impl Drop for Tray {
             if st.shown {
                 notify(&st, NIM_DELETE);
             }
+            // SAFETY: our window and icons, made by `add`; STATE was taken, so each is destroyed once.
             unsafe {
                 KillTimer(st.hwnd, RETRY_TIMER);
                 for i in st.icons {

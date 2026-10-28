@@ -22,23 +22,28 @@ fn armed() -> bool {
     ARMED.try_with(Cell::get).unwrap_or(false)
 }
 
+// SAFETY: forwards to System unchanged, so the GlobalAlloc contract is System's; counting
+// only touches an atomic and a const thread-local Cell, neither of which allocates.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
         if armed() {
             EVENTS.fetch_add(1, SeqCst);
         }
+        // SAFETY: forwarded with the caller's arguments, which meet System's same contract.
         unsafe { System.alloc(l) }
     }
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
         if armed() {
             EVENTS.fetch_add(1, SeqCst);
         }
+        // SAFETY: forwarded with the caller's arguments, which meet System's same contract.
         unsafe { System.dealloc(p, l) }
     }
     unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
         if armed() {
             EVENTS.fetch_add(1, SeqCst);
         }
+        // SAFETY: forwarded with the caller's arguments, which meet System's same contract.
         unsafe { System.realloc(p, l, n) }
     }
 }

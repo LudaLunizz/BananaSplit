@@ -58,6 +58,7 @@ fn exe_path() -> PathBuf {
         return p;
     }
     let mut buf = vec![0u16; 1024];
+    // SAFETY: `buf` and its length in u16s are passed together; only `buf[..n]` is read, with n < len.
     unsafe {
         let n = GetModuleFileNameW(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32);
         // n == the buffer's length: the path was cut short.
@@ -86,6 +87,7 @@ pub fn open_folder(path: &Path) -> Result<(), String> {
     let _com = crate::win::ffi::ComInit::sta();
     let p = to_wide(path);
     let open = wide("open");
+    // SAFETY: `open` and `p` are NUL-terminated UTF-16 locals; COM is initialised (`ComInit::sta`).
     unsafe {
         let r = ShellExecuteW(std::ptr::null_mut(), open.as_ptr(), p.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL);
         if (r as usize) <= 32 { Err(format!("ShellExecuteW failed for {}", path.display())) } else { Ok(()) }
@@ -230,6 +232,7 @@ pub fn no_window(why: &str, mixer_url: &str) {
 pub fn error_dialog(text: &str) {
     let cap = wide("BananaSplit");
     let t = to_wide(text);
+    // SAFETY: `t` and `cap` are NUL-terminated UTF-16 strings held in locals.
     unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR | MB_SETFOREGROUND); }
 }
 

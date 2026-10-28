@@ -135,6 +135,7 @@ pub fn local_ipv4() -> Vec<LocalIp> {
     if !filled {
         return Vec::new();
     }
+    // SAFETY: `filled`: GetAdaptersAddresses wrote its list into `buf` (8-byte aligned u64s), and every next/unicast/name/sockaddr pointer in it is NULL or points into `buf`, which outlives this block.
     unsafe {
         let addrs = buf.as_mut_ptr() as *mut IpAdapterAddresses;
         let mut out = Vec::new();
@@ -323,6 +324,7 @@ pub fn same_user(peer: SocketAddr, us: SocketAddr) -> bool {
 
 pub fn local_timestamp() -> String {
     let mut t = SystemTime { year: 0, month: 0, day_of_week: 0, day: 0, hour: 0, minute: 0, second: 0, milliseconds: 0 };
+    // SAFETY: `t` is a local SYSTEMTIME with the SDK layout.
     unsafe { GetLocalTime(&mut t); }
     format!("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", t.year, t.month, t.day, t.hour, t.minute, t.second)
 }
@@ -338,6 +340,7 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
         let mut free_avail: u64 = 0;
         let mut total: u64 = 0;
         let mut total_free: u64 = 0;
+        // SAFETY: `w` is a NUL-terminated UTF-16 path held in a local; the out-pointers are local u64s.
         let ok = unsafe { GetDiskFreeSpaceExW(w.as_ptr(), &mut free_avail, &mut total, &mut total_free) };
         if ok != 0 {
             return Some((total_free, free_avail));
@@ -419,9 +422,11 @@ mod tests {
         let _c = std::net::TcpStream::connect(l.local_addr().unwrap()).unwrap();
         let (srv, _) = l.accept().unwrap();
         let t = tcp_table(AF_INET).expect("the IPv4 TCP table");
+        // SAFETY: plain call, no arguments.
         let pid = unsafe { GetCurrentProcessId() };
         assert_eq!(owner_pid(&t, false, srv.peer_addr().unwrap(), srv.local_addr().unwrap()), Some(pid));
         assert!(same_user(srv.peer_addr().unwrap(), srv.local_addr().unwrap()));
+        // SAFETY: the current-process pseudo-handle is always valid and needs no CloseHandle.
         assert!(process_user(unsafe { GetCurrentProcess() }).is_some_and(|s| s.len() >= 12));
     }
 

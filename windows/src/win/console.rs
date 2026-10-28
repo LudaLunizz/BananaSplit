@@ -32,15 +32,18 @@ unsafe extern "system" fn on_ctrl(kind: u32) -> BOOL {
 }
 
 pub fn install_signal_handlers() {
+    // SAFETY: `on_ctrl` is a `extern "system"` HandlerRoutine that lives for the whole program.
     unsafe { SetConsoleCtrlHandler(Some(on_ctrl), 1) };
 }
 
 fn handle(which: u32) -> HANDLE {
+    // SAFETY: GetStdHandle takes a plain constant; the handle is only passed to console calls.
     unsafe { GetStdHandle(which) }
 }
 
 pub fn stdin_is_tty() -> bool {
     let mut m = 0u32;
+    // SAFETY: `m` is a local u32 out-pointer; a non-console handle just makes GetConsoleMode fail.
     unsafe {
         GetConsoleMode(handle(STD_INPUT_HANDLE), &mut m) != 0
             && GetConsoleMode(handle(STD_OUTPUT_HANDLE), &mut m) != 0
@@ -56,6 +59,7 @@ static ORIGINAL: OnceLock<Saved> = OnceLock::new();
 
 fn restore() {
     if let Some(s) = ORIGINAL.get() {
+        // SAFETY: plain console calls with the modes `enter` saved from these same handles.
         unsafe {
             SetConsoleMode(handle(STD_INPUT_HANDLE), s.input);
             SetConsoleOutputCP(s.cp);
@@ -63,6 +67,7 @@ fn restore() {
         print!("\x1b[0m\x1b[?25h\x1b[?1049l");
         use std::io::Write;
         let _ = std::io::stdout().flush();
+        // SAFETY: plain console call with the mode `enter` saved from this handle.
         unsafe { SetConsoleMode(handle(STD_OUTPUT_HANDLE), s.output) };
     }
 }
@@ -74,7 +79,9 @@ impl RawTerminal {
     pub fn enter() -> Result<RawTerminal, String> {
         let (hin, hout) = (handle(STD_INPUT_HANDLE), handle(STD_OUTPUT_HANDLE));
         let (mut min, mut mout) = (0u32, 0u32);
+        // SAFETY: `min` is a local u32 out-pointer; a non-console handle just fails.
         if unsafe { GetConsoleMode(hin, &mut min) } == 0
+            // SAFETY: `mout` is a local u32 out-pointer; a non-console handle just fails.
             || unsafe { GetConsoleMode(hout, &mut mout) } == 0
         {
             return Err("not running in a console window (use --headless)".into());
@@ -82,6 +89,7 @@ impl RawTerminal {
         let _ = ORIGINAL.set(Saved {
             input: min,
             output: mout,
+            // SAFETY: plain call, no arguments.
             cp: unsafe { GetConsoleOutputCP() },
         });
 
@@ -96,6 +104,7 @@ impl RawTerminal {
             | ENABLE_EXTENDED_FLAGS;
         // Output: interpret ANSI escape codes (Windows 10 1511+).
         let vt_out = mout | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        // SAFETY: plain console calls on our std handles; `title` is a NUL-terminated UTF-16 local.
         unsafe {
             SetConsoleMode(hin, raw_in);
             if SetConsoleMode(hout, vt_out) == 0 {
@@ -158,6 +167,7 @@ pub fn spawn_input_thread(tx: std::sync::mpsc::Sender<Vec<u8>>) {
         let mut recs = [INPUT_RECORD::default(); 32];
         loop {
             let mut n = 0u32;
+            // SAFETY: `recs` and its length are passed together; `n` is a local out-pointer (at most the length).
             if unsafe { ReadConsoleInputW(h, recs.as_mut_ptr(), recs.len() as u32, &mut n) } == 0 {
                 break;
             }
