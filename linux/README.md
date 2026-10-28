@@ -13,6 +13,10 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.10
+
+* **A quieter silence warning.** When a take records only silence, the recorder's label still turns orange and says **Recording silence**, but the long notice below the recorder is gone (#22).
+
 ## What's new in 2.8.9
 
 * **Every app keeps its strip, also apps that don't choose a device themselves.** Since 2.8.7 BananaSplit put an app back on its strip after a restart, but it only learned that strip from apps that choose their own output device (Discord does). An app like Strawberry plays wherever it is put and says nothing about it, so ticking it in a strip's menu was forgotten at the next restart. Now ticking an app in a strip's menu writes it into `app-strips` at once, and moving it back to a device of the computer in the menu takes it out.
@@ -29,7 +33,7 @@ Nothing to change on your side. Recordings you already have stay where they are 
 ## What's new in 2.8.7
 
 * **Apps go back to their strip when BananaSplit starts again.** Quitting removes the virtual cables, and an app that opens a new stream when its cable comes back (Discord does) used to land on the default output, often another strip's cable: after an update or a restart, Discord played into the Desktop strip, and a recording of the Discord strip's bus stayed silent. BananaSplit now remembers which strip you put an app on (in a channel's menu, in the sound settings or in the app's own device setting) in `app-strips` next to the config, and puts it back there once when it sees the app again, and says so in the status line. An app you put somewhere else on purpose (untick it in the menu) is forgotten, and an app you move afterwards is left where you put it.
-* **The recorder warns when a take records silence.** After 10 seconds in which the armed tracks got no sound (nothing above −80 dBFS reached the file), the recorder panel says "Recording silence", names the armed tracks and what to check.
+* **The recorder warns when a take records silence.** After 10 seconds in which the armed tracks got no sound (nothing above −80 dBFS reached the file), the recorder panel says "Recording silence" (since 2.8.10 only in its orange label, without the notice below).
 * **Clearer recorder labels:** PLAY TO is now **Play back on** and ARMED TRACKS is **Armed tracks · recorded**, with tooltips: Play back on only chooses where recordings are played, never what is recorded.
 * **The open window needs much less CPU.** The time code and the levels change on every frame; each change made WebKit lay out the whole console again. They now sit in boxes of a fixed size, the level bars move without a layout, and names, tooltips and panels follow 10 times a second (meters, knobs and faders 30 times). Measured on a recording mixer: about a third of one core instead of nearly all of it. A window in the tray needs almost none, as before.
 

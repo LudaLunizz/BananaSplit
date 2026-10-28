@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.10" date="2026-10-28">
+      <description>
+        <p>A silent take is shown only by the recorder's orange "Recording silence" label; the long notice below the recorder is gone.</p>
+      </description>
+    </release>
     <release version="2.8.9" date="2026-10-28">
       <description>
         <p>An app ticked in a strip's menu keeps that strip after a restart, also apps that don't choose their own device (such as Strawberry); the list of apps and strips can be edited by hand.</p>
