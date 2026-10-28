@@ -56,7 +56,12 @@ unsafe extern "C" {
         size: u32,
         data: *const c_void,
     ) -> OSStatus;
-    pub fn AudioDeviceCreateIOProcID(device: AudioObjectID, proc_: IoProcId, client: *mut c_void, out_id: *mut IoProcId) -> OSStatus;
+    pub fn AudioDeviceCreateIOProcID(
+        device: AudioObjectID,
+        proc_: IoProcId,
+        client: *mut c_void,
+        out_id: *mut IoProcId,
+    ) -> OSStatus;
     pub fn AudioDeviceDestroyIOProcID(device: AudioObjectID, id: IoProcId) -> OSStatus;
     pub fn AudioDeviceStart(device: AudioObjectID, id: IoProcId) -> OSStatus;
     pub fn AudioDeviceStop(device: AudioObjectID, id: IoProcId) -> OSStatus;
@@ -180,13 +185,18 @@ pub fn hal_on_its_own_thread() {
 /// Every device (hidden ones left out), or None if the HAL can't be asked.
 pub fn device_ids() -> Option<Vec<AudioObjectID>> {
     get_vec::<AudioObjectID>(kAudioObjectSystemObject, kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal)
-        .map(|v| v.into_iter().filter(|&d| get::<u32>(d, kAudioDevicePropertyIsHidden, kAudioObjectPropertyScopeGlobal) != Some(1)).collect())
+        .map(|v| {
+            v.into_iter()
+                .filter(|&d| get::<u32>(d, kAudioDevicePropertyIsHidden, kAudioObjectPropertyScopeGlobal) != Some(1))
+                .collect()
+        })
 }
 
 /// The default input (or output) device, if there is one.
 pub fn default_device(input: bool) -> Option<AudioObjectID> {
     let sel = if input { kAudioHardwarePropertyDefaultInputDevice } else { kAudioHardwarePropertyDefaultOutputDevice };
-    get::<AudioObjectID>(kAudioObjectSystemObject, sel, kAudioObjectPropertyScopeGlobal).filter(|&d| d != kAudioObjectUnknown)
+    get::<AudioObjectID>(kAudioObjectSystemObject, sel, kAudioObjectPropertyScopeGlobal)
+        .filter(|&d| d != kAudioObjectUnknown)
 }
 
 pub fn name(device: AudioObjectID) -> Option<String> {
@@ -221,7 +231,9 @@ pub fn channel_count(device: AudioObjectID, input: bool) -> u32 {
     // counts are checked to lie within it before they are read.
     unsafe {
         let n = (*list).mNumberBuffers as usize;
-        if got as usize >= size_of::<u32>() && std::mem::offset_of!(AudioBufferList, mBuffers) + n * size_of::<AudioBuffer>() <= got as usize {
+        if got as usize >= size_of::<u32>()
+            && std::mem::offset_of!(AudioBufferList, mBuffers) + n * size_of::<AudioBuffer>() <= got as usize
+        {
             channels(list)
         } else {
             0
@@ -231,12 +243,15 @@ pub fn channel_count(device: AudioObjectID, input: bool) -> u32 {
 
 /// The rate the device runs at (0 if unknown).
 pub fn nominal_rate(device: AudioObjectID) -> f64 {
-    get::<f64>(device, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal).filter(|r| r.is_finite() && *r > 0.0).unwrap_or(0.0)
+    get::<f64>(device, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal)
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .unwrap_or(0.0)
 }
 
 /// A software device (transport type "virtual").
 pub fn is_virtual(device: AudioObjectID) -> bool {
-    get::<u32>(device, kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal) == Some(kAudioDeviceTransportTypeVirtual)
+    get::<u32>(device, kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal)
+        == Some(kAudioDeviceTransportTypeVirtual)
 }
 
 /// Every input (or output) stream of the device hands its samples to an
@@ -245,7 +260,8 @@ pub fn float32(device: AudioObjectID, input: bool) -> bool {
     let streams = get_vec::<AudioObjectID>(device, kAudioDevicePropertyStreams, scope(input)).unwrap_or_default();
     !streams.is_empty()
         && streams.iter().all(|&s| {
-            get::<AudioStreamBasicDescription>(s, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal).is_some_and(|f| is_float32(&f))
+            get::<AudioStreamBasicDescription>(s, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal)
+                .is_some_and(|f| is_float32(&f))
         })
 }
 
@@ -254,14 +270,17 @@ pub fn float32(device: AudioObjectID, input: bool) -> bool {
 pub fn buffer_frames(device: AudioObjectID, frames: u32) -> u32 {
     if frames > 0 {
         // (a range that makes no sense is not used: clamp would panic)
-        let range = get::<AudioValueRange>(device, kAudioDevicePropertyBufferFrameSizeRange, kAudioObjectPropertyScopeGlobal)
-            .filter(|r| r.mMinimum.is_finite() && r.mMaximum.is_finite() && r.mMinimum <= r.mMaximum);
+        let range =
+            get::<AudioValueRange>(device, kAudioDevicePropertyBufferFrameSizeRange, kAudioObjectPropertyScopeGlobal)
+                .filter(|r| r.mMinimum.is_finite() && r.mMaximum.is_finite() && r.mMinimum <= r.mMaximum);
         if let Some(r) = range {
             let want = f64::from(frames).clamp(r.mMinimum.max(1.0), r.mMaximum.max(1.0)).round() as u32;
             let _ = set(device, kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeGlobal, want);
         }
     }
-    get::<u32>(device, kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeGlobal).filter(|&f| f > 0).unwrap_or(512)
+    get::<u32>(device, kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeGlobal)
+        .filter(|&f| f > 0)
+        .unwrap_or(512)
 }
 
 /// The channels of the device's stereo, zero-based (see

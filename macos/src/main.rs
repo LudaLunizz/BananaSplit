@@ -11,15 +11,15 @@
 mod gui;
 // The terminal UI of the Linux version: the app uses its meters and the
 // numbers it shows.
+#[path = "mac/app.rs"]
+mod app;
+#[path = "mac/mod.rs"]
+mod mac;
 #[path = "tui.rs"]
 #[allow(dead_code)]
 mod tui;
 #[path = "update.rs"]
 mod update;
-#[path = "mac/mod.rs"]
-mod mac;
-#[path = "mac/app.rs"]
-mod app;
 
 #[path = "mac/desktop.rs"]
 pub mod desktop;
@@ -232,7 +232,12 @@ impl Window<'_> {
     /// Make the window; `hidden` (started in the background): only the menu
     /// bar icon shows.
     fn start(&mut self, cfg: &Config, hidden: bool) {
-        self.ui.send(ToUi::Start(StartOpts { url: self.url.clone(), hidden, close_to_tray: cfg.gui.close_to_tray, size: cfg.gui.window }));
+        self.ui.send(ToUi::Start(StartOpts {
+            url: self.url.clone(),
+            hidden,
+            close_to_tray: cfg.gui.close_to_tray,
+            size: cfg.gui.window,
+        }));
         self.started = true;
         if self.recording {
             self.ui.send(ToUi::Rec(true));
@@ -259,7 +264,8 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
     if !cfg.gui.scene.is_empty() && !scenes.exists(&cfg.gui.scene) {
         cfg.gui.scene.clear();
     }
-    let hub = gui::Hub::new(ctx.shared.clone(), rec.clone(), ctx.vban.clone(), ctx.player.clone(), takes.clone(), scenes);
+    let hub =
+        gui::Hub::new(ctx.shared.clone(), rec.clone(), ctx.vban.clone(), ctx.player.clone(), takes.clone(), scenes);
     hub.set_names(channel_names(cfg));
     hub.set_look(cfg.gui.theme, cfg.gui.zoom);
     hub.autostart.store(desktop::autostart_enabled(), SeqCst);
@@ -316,7 +322,8 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
                 Request::Quit => quit = true,
                 Request::Reconnect => {
                     let (_, errs) = ctx.session.connect(cfg, true);
-                    status = if errs.is_empty() { "all configured connections made".to_string() } else { errs.join(" | ") };
+                    status =
+                        if errs.is_empty() { "all configured connections made".to_string() } else { errs.join(" | ") };
                     dev_rev += 1;
                 }
                 Request::Save => {
@@ -357,7 +364,9 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
                     capture_all(cfg, &ctx.shared, &rec, &ctx.vban);
                     cfg.recorder.play_to = ctx.player.routes();
                     status = match cfg.save(&ctx.path) {
-                        Ok(()) if on => "BananaSplit looks for new versions once a day and tells you when there is one".to_string(),
+                        Ok(()) if on => {
+                            "BananaSplit looks for new versions once a day and tells you when there is one".to_string()
+                        }
                         Ok(()) => "automatic update checks are off: BananaSplit checks only when you ask".to_string(),
                         Err(e) => format!("save failed: {e}"),
                     };
@@ -485,6 +494,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
             installed: hub.installed.load(SeqCst),
             window: if window.started && !window.failed { "app" } else { "none" },
             tray: window.tray,
+            welcome: hub.cable_welcome.load(SeqCst),
             update: &update_json,
         };
         hub.publish(gui::state_json(
@@ -604,7 +614,9 @@ fn main() -> ExitCode {
     };
     if args.update {
         // A running app would go on with the old version.
-        let client = Config::load_or_default(&args.path).map(|c| c.client_name).unwrap_or_else(|_| Config::default().client_name);
+        let client = Config::load_or_default(&args.path)
+            .map(|c| c.client_name)
+            .unwrap_or_else(|_| Config::default().client_name);
         let running = gui::find_running(&client, args.explicit_port.then_some(args.port)).is_some();
         return match update::cli(running) {
             Ok(()) => ExitCode::SUCCESS,
@@ -632,18 +644,17 @@ fn main() -> ExitCode {
     }
     if args.quit {
         let defq = Config::default();
-        if let Some(p) = gui::find_running(&defq.client_name, args.explicit_port.then_some(args.port)) {
-            if let Some((code, _)) = gui::request_quit(p) {
-                if code == 200 {
-                    return ExitCode::SUCCESS;
-                }
-            }
+        if let Some(p) = gui::find_running(&defq.client_name, args.explicit_port.then_some(args.port))
+            && let Some((code, _)) = gui::request_quit(p)
+            && code == 200
+        {
+            return ExitCode::SUCCESS;
         }
-        if let Ok(c) = Config::load_or_default(&args.path) {
-            if let Some(p) = gui::find_running(&c.client_name, args.explicit_port.then_some(args.port)) {
-                let _ = gui::request_quit(p);
-                return ExitCode::SUCCESS;
-            }
+        if let Ok(c) = Config::load_or_default(&args.path)
+            && let Some(p) = gui::find_running(&c.client_name, args.explicit_port.then_some(args.port))
+        {
+            let _ = gui::request_quit(p);
+            return ExitCode::SUCCESS;
         }
         eprintln!("no running BananaSplit found");
         return ExitCode::SUCCESS;
@@ -662,10 +673,10 @@ fn main() -> ExitCode {
     // a second audio engine. (Finder and the Dock don't start a second one:
     // they bring the running app to the front.)
     let running = || gui::find_running(&cfg.client_name, args.explicit_port.then_some(args.port));
-    if !args.headless {
-        if let Some(port) = running() {
-            return show_running(port, args.no_open);
-        }
+    if !args.headless
+        && let Some(port) = running()
+    {
+        return show_running(port, args.no_open);
     }
     // One mixer per config file, also when two starts overlap (the login
     // item, and macOS reopening the apps that ran at log out, can start it
@@ -704,16 +715,18 @@ fn main() -> ExitCode {
     let rec_tap = RecTap::new();
     let vban_tap = VbanTap::new();
     let play_tap = PlayTap::new();
-    let recorder = Arc::new(Recorder::new(rec_tap.clone(), rate, cfg.recorder.settings()));
+    let recorder =
+        Arc::new(Recorder::new(rec_tap.clone(), rate, cfg.recorder.settings()).with_clock(sys::local_timestamp));
     let vban = Arc::new(Vban::start(vban_tap.clone(), rate, cfg.vban.clone()));
     let player = Arc::new(Player::new(play_tap.clone(), rate));
     player.set_routes(cfg.recorder.play_to);
 
     let no_cables = mac::first_run(args.headless, &mut notes);
-    let session = match Session::open(&cfg, shared.clone(), rec_tap.clone(), vban_tap.clone(), play_tap.clone(), &mut notes) {
-        Ok(s) => s,
-        Err(e) => return fail(&e, args.headless),
-    };
+    let session =
+        match Session::open(&cfg, shared.clone(), rec_tap.clone(), vban_tap.clone(), play_tap.clone(), &mut notes) {
+            Ok(s) => s,
+            Err(e) => return fail(&e, args.headless),
+        };
 
     let mut ctx = Ctx { path: args.path.clone(), shared: shared.clone(), rec: recorder, vban, player, session };
     // The graph Session::open built (opening every device again would only
@@ -744,7 +757,8 @@ fn main() -> ExitCode {
     let spawned = std::thread::Builder::new().name("bs-main".into()).spawn(move || {
         // A panic ends the app too, rather than leaving a window with no
         // mixer behind it.
-        let code = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mixer_thread(ctx, cfg, notes, opts, &ui))).unwrap_or(101);
+        let code = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mixer_thread(ctx, cfg, notes, opts, &ui)))
+            .unwrap_or(101);
         mixer_done.store(true, SeqCst);
         ui.send(ToUi::Exit(code));
     });

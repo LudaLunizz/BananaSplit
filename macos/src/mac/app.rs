@@ -118,14 +118,16 @@ pub fn event_loop(hidden: bool) -> (EventLoop<ToUi>, Ui, mpsc::Sender<FromUi>) {
 pub fn fit_size(want: Option<(u32, u32)>, screen: Option<(u32, u32)>) -> (u32, u32) {
     let (w, h) = want.unwrap_or(DEFAULT_SIZE);
     match screen {
-        Some((sw, sh)) if sw > 0 && sh > 0 => (w.min(sw.saturating_sub(48)).max(640), h.min(sh.saturating_sub(120)).max(480)),
+        Some((sw, sh)) if sw > 0 && sh > 0 => {
+            (w.min(sw.saturating_sub(48)).max(640), h.min(sh.saturating_sub(120)).max(480))
+        }
         _ => (w, h),
     }
 }
 
 /// ARGB32 (big-endian) pixels as RGBA.
 pub fn rgba(argb: &[u8]) -> Vec<u8> {
-    argb.chunks_exact(4).flat_map(|p| [p[1], p[2], p[3], p[0]]).collect()
+    argb.as_chunks::<4>().0.iter().flat_map(|p| [p[1], p[2], p[3], p[0]]).collect()
 }
 
 fn icon(argb: &[u8]) -> Option<Icon> {
@@ -137,8 +139,17 @@ fn icon(argb: &[u8]) -> Option<Icon> {
 /// once the menu bar is the app's).
 fn app_menu() -> Result<(Menu, Submenu), String> {
     let e = |e: tray_icon::menu::Error| format!("menu: {e}");
-    let about = AboutMetadata { name: Some("BananaSplit".into()), version: Some(crate::update::VERSION.into()), ..Default::default() };
-    let quit = MenuItem::with_id(MENU_QUIT, "Quit BananaSplit", true, Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyQ)));
+    let about = AboutMetadata {
+        name: Some("BananaSplit".into()),
+        version: Some(crate::update::VERSION.into()),
+        ..Default::default()
+    };
+    let quit = MenuItem::with_id(
+        MENU_QUIT,
+        "Quit BananaSplit",
+        true,
+        Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyQ)),
+    );
     let app = Submenu::with_items(
         "BananaSplit",
         true,
@@ -167,7 +178,12 @@ fn app_menu() -> Result<(Menu, Submenu), String> {
         ],
     )
     .map_err(e)?;
-    let window = Submenu::with_items("Window", true, &[&PredefinedMenuItem::minimize(None), &PredefinedMenuItem::close_window(None)]).map_err(e)?;
+    let window = Submenu::with_items(
+        "Window",
+        true,
+        &[&PredefinedMenuItem::minimize(None), &PredefinedMenuItem::close_window(None)],
+    )
+    .map_err(e)?;
     let menu = Menu::with_items(&[&app, &edit, &window]).map_err(e)?;
     Ok((menu, window))
 }
@@ -309,10 +325,10 @@ pub fn run(event_loop: EventLoop<ToUi>, tx: mpsc::Sender<FromUi>, mixer_done: Ar
                             let _ = tx.send(FromUi::NoWindow(e));
                         }
                     }
-                } else if !o.hidden {
-                    if let Some(s) = &shown {
-                        show(s, target);
-                    }
+                } else if !o.hidden
+                    && let Some(s) = &shown
+                {
+                    show(s, target);
                 }
             }
             Event::UserEvent(ToUi::Show) => {
@@ -397,10 +413,10 @@ pub fn run(event_loop: EventLoop<ToUi>, tx: mpsc::Sender<FromUi>, mixer_done: Ar
             }
             _ => {}
         }
-        if let Some(t) = resized_at {
-            if !matches!(*control_flow, ControlFlow::ExitWithCode(_)) {
-                *control_flow = ControlFlow::WaitUntil(t + SIZE_SETTLE);
-            }
+        if let Some(t) = resized_at
+            && !matches!(*control_flow, ControlFlow::ExitWithCode(_))
+        {
+            *control_flow = ControlFlow::WaitUntil(t + SIZE_SETTLE);
         }
     })
 }

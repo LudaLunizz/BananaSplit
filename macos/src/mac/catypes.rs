@@ -152,7 +152,9 @@ pub fn is_float32(f: &AudioStreamBasicDescription) -> bool {
 /// they are two different channels it has; otherwise its first two.
 pub fn stereo_pair(preferred: Option<[u32; 2]>, channels: u32) -> (usize, usize) {
     match preferred {
-        Some([l, r]) if l != r && (1..=channels).contains(&l) && (1..=channels).contains(&r) => (l as usize - 1, r as usize - 1),
+        Some([l, r]) if l != r && (1..=channels).contains(&l) && (1..=channels).contains(&r) => {
+            (l as usize - 1, r as usize - 1)
+        }
         _ => (0, 1),
     }
 }
@@ -251,6 +253,7 @@ pub unsafe fn output_frames(list: *const AudioBufferList) -> usize {
 pub unsafe fn take_input(list: *const AudioBufferList, pair: (usize, usize), prod: &mut Producer) -> usize {
     // SAFETY: the caller's promise.
     let Some(l) = (unsafe { channel(list, pair.0) }) else { return 0 };
+    // SAFETY: the caller's promise, as above.
     let r = unsafe { channel(list, pair.1) }.unwrap_or(l);
     let n = l.frames.min(r.frames);
     for i in 0..n {
@@ -309,7 +312,11 @@ mod tests {
     }
 
     fn buf(channels: u32, data: &mut [f32]) -> AudioBuffer {
-        AudioBuffer { mNumberChannels: channels, mDataByteSize: (data.len() * 4) as u32, mData: data.as_mut_ptr().cast() }
+        AudioBuffer {
+            mNumberChannels: channels,
+            mDataByteSize: (data.len() * 4) as u32,
+            mData: data.as_mut_ptr().cast(),
+        }
     }
 
     #[test]
@@ -389,10 +396,13 @@ mod tests {
     #[test]
     fn stereo_from_one_interleaved_buffer() {
         // three channels, interleaved: frame i is [10i, 10i+1, 10i+2]
-        let mut d: Vec<f32> = (0..4).flat_map(|i| [10.0 * i as f32, 10.0 * i as f32 + 1.0, 10.0 * i as f32 + 2.0]).collect();
+        let mut d: Vec<f32> =
+            (0..4).flat_map(|i| [10.0 * i as f32, 10.0 * i as f32 + 1.0, 10.0 * i as f32 + 2.0]).collect();
         let list = AudioBufferList { mNumberBuffers: 1, mBuffers: [buf(3, &mut d)] };
         let (mut p, mut c) = ring(16);
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         assert_eq!(unsafe { channels(&list) }, 3);
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         assert_eq!(unsafe { take_input(&list, (0, 1), &mut p) }, 4);
         for i in 0..4 {
             assert_eq!(c.pop(), Some([10.0 * i as f32, 10.0 * i as f32 + 1.0]));
@@ -405,6 +415,7 @@ mod tests {
         let mut d = [0.5f32, -0.5, 0.25];
         let list = AudioBufferList { mNumberBuffers: 1, mBuffers: [buf(1, &mut d)] };
         let (mut p, mut c) = ring(8);
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         assert_eq!(unsafe { take_input(&list, (0, 1), &mut p) }, 3);
         assert_eq!(c.pop(), Some([0.5, 0.5]));
         assert_eq!(c.pop(), Some([-0.5, -0.5]));
@@ -417,15 +428,23 @@ mod tests {
         let list = List2 { n: 2, b: [buf(1, &mut a), buf(1, &mut b)] };
         let ptr = (&list as *const List2).cast::<AudioBufferList>();
         let (mut p, mut c) = ring(8);
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         assert_eq!(unsafe { take_input(ptr, (0, 1), &mut p) }, 2);
         assert_eq!(c.pop(), Some([1.0, -1.0]));
         assert_eq!(c.pop(), Some([2.0, -2.0]));
         // a stream that is switched off has no data
-        let off = List2 { n: 2, b: [buf(1, &mut a), AudioBuffer { mNumberChannels: 1, mDataByteSize: 8, mData: std::ptr::null_mut() }] };
+        let off = List2 {
+            n: 2,
+            b: [buf(1, &mut a), AudioBuffer { mNumberChannels: 1, mDataByteSize: 8, mData: std::ptr::null_mut() }],
+        };
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         assert!(unsafe { channel((&off as *const List2).cast(), 1) }.is_none());
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         assert!(unsafe { channel((&off as *const List2).cast(), 2) }.is_none());
         // nothing at all
+        // SAFETY: a null list is allowed: it has no buffers.
         assert_eq!(unsafe { take_input(std::ptr::null(), (0, 1), &mut p) }, 0);
+        // SAFETY: a null list is allowed: it has no buffers.
         assert_eq!(unsafe { channels(std::ptr::null()) }, 0);
     }
 
@@ -435,22 +454,27 @@ mod tests {
         // stereo, interleaved, written from frame 1 on
         let mut d = [0.0f32; 6];
         let mut list = AudioBufferList { mNumberBuffers: 1, mBuffers: [buf(2, &mut d)] };
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         assert_eq!(unsafe { output_frames(&list) }, 3);
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         unsafe { put_output(&mut list, (0, 1), 1, &l, &r) };
         assert_eq!(d, [0.0, 0.0, 0.5, -0.5, 0.25, 1.0]);
         // mono: the average
         let mut m = [0.0f32; 2];
         let mut list = AudioBufferList { mNumberBuffers: 1, mBuffers: [buf(1, &mut m)] };
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         unsafe { put_output(&mut list, (0, 1), 0, &l, &r) };
         assert_eq!(m, [0.0, 0.625]);
         // four channels: the others stay as the HAL left them (zeroed)
         let mut w = [0.0f32; 8];
         let mut list = AudioBufferList { mNumberBuffers: 1, mBuffers: [buf(4, &mut w)] };
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         unsafe { put_output(&mut list, (0, 1), 0, &l, &r) };
         assert_eq!(w, [0.5, -0.5, 0.0, 0.0, 0.25, 1.0, 0.0, 0.0]);
         // never past the end of the buffer
         let mut s = [0.0f32; 2];
         let mut list = AudioBufferList { mNumberBuffers: 1, mBuffers: [buf(2, &mut s)] };
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         unsafe { put_output(&mut list, (0, 1), 0, &l, &r) };
         assert_eq!(s, [0.5, -0.5]);
     }
@@ -472,6 +496,7 @@ mod tests {
         let mut d: Vec<f32> = (0..2).flat_map(|i| (0..4).map(move |c| 10.0 * i as f32 + c as f32)).collect();
         let list = AudioBufferList { mNumberBuffers: 1, mBuffers: [buf(4, &mut d)] };
         let (mut p, mut c) = ring(8);
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         assert_eq!(unsafe { take_input(&list, (2, 3), &mut p) }, 2);
         assert_eq!(c.pop(), Some([2.0, 3.0]));
         assert_eq!(c.pop(), Some([12.0, 13.0]));
@@ -479,11 +504,13 @@ mod tests {
         let (l, r) = ([0.5f32, 0.25], [-0.5f32, 1.0]);
         let mut w = [0.0f32; 8];
         let mut list = AudioBufferList { mNumberBuffers: 1, mBuffers: [buf(4, &mut w)] };
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         unsafe { put_output(&mut list, (2, 3), 0, &l, &r) };
         assert_eq!(w, [0.0, 0.0, 0.5, -0.5, 0.0, 0.0, 0.25, 1.0]);
         // a pair in the second of two stereo streams
         let (mut s1, mut s2) = ([0.0f32; 4], [0.0f32; 4]);
         let mut list = List2 { n: 2, b: [buf(2, &mut s1), buf(2, &mut s2)] };
+        // SAFETY: the list and its buffers are live locals of the sizes it states.
         unsafe { put_output((&mut list as *mut List2).cast(), (3, 2), 0, &l, &r) };
         assert_eq!((s1, s2), ([0.0; 4], [-0.5, 0.5, 1.0, 0.25]), "R on channel 3, L on channel 4");
     }

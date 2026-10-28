@@ -3,10 +3,10 @@
 //! zero frees across thousands of process() cycles with parameters changing
 //! underneath (as the UI thread does).
 
+use bananasplit::engine::{Engine, NUM_BUSES, NUM_STRIPS, Shared};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-use bananasplit::engine::{Engine, NUM_BUSES, NUM_STRIPS, Shared};
 
 struct Counting;
 thread_local! {
@@ -19,23 +19,27 @@ fn armed() -> bool {
 }
 static EVENTS: AtomicUsize = AtomicUsize::new(0);
 
+// SAFETY: every method forwards unchanged to `System`, a correct allocator; counting does not allocate.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
         if armed() {
             EVENTS.fetch_add(1, SeqCst);
         }
+        // SAFETY: forwards the caller's layout unchanged to the system allocator.
         unsafe { System.alloc(l) }
     }
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
         if armed() {
             EVENTS.fetch_add(1, SeqCst);
         }
+        // SAFETY: `p` was allocated by `System` (alloc/realloc forward there) with layout `l`.
         unsafe { System.dealloc(p, l) }
     }
     unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
         if armed() {
             EVENTS.fetch_add(1, SeqCst);
         }
+        // SAFETY: `p` was allocated by `System` with layout `l`; the arguments are forwarded unchanged.
         unsafe { System.realloc(p, l, n) }
     }
 }
@@ -81,7 +85,10 @@ fn process_never_allocates() {
         });
         eng.process(&mut outs);
         let _ = (sh.strips[s].peak[0].take(), sh.strips[s].input_peak[1].take());
-        assert!(outs.iter().flatten().all(|ch| ch.iter().all(|x| x.is_finite() && x.abs() < 1e6)), "bounded at cycle {cycle}");
+        assert!(
+            outs.iter().flatten().all(|ch| ch.iter().all(|x| x.is_finite() && x.abs() < 1e6)),
+            "bounded at cycle {cycle}"
+        );
     }
     ARMED.set(false);
     assert_eq!(EVENTS.load(SeqCst), 0, "heap was touched in the real-time path");

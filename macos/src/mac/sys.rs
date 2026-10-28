@@ -18,6 +18,7 @@ unsafe extern "C" {
     fn getuid() -> u32;
     fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
     fn flock(fd: c_int, operation: c_int) -> c_int;
+    fn kill(pid: c_int, sig: c_int) -> c_int;
 }
 
 /// Set by SIGINT/SIGTERM/SIGHUP (and by the app's Quit). macOS sends
@@ -47,6 +48,15 @@ pub fn stdin_is_tty() -> bool {
 pub fn uid() -> u32 {
     // SAFETY: getuid cannot fail.
     unsafe { getuid() }
+}
+
+/// Whether a process with this id exists (EPERM: it does, another user's).
+/// Signal 0 is never delivered; it only asks.
+pub fn process_exists(pid: u32) -> bool {
+    const EPERM: c_int = 1;
+    let Ok(pid) = c_int::try_from(pid) else { return false };
+    // SAFETY: signal 0 is never delivered; pid > 0 names one process.
+    pid > 0 && (unsafe { kill(pid, 0) } == 0 || std::io::Error::last_os_error().raw_os_error() == Some(EPERM))
 }
 
 /// Mark every file descriptor above stderr close-on-exec, before starting
@@ -130,6 +140,7 @@ pub fn disk_space(path: &std::path::Path) -> Option<(u64, u64)> {
             let c = CString::new(p.as_os_str().as_encoded_bytes()).ok()?;
             // SAFETY: plain-old-data out-parameter of the right size.
             let mut st: StatFs = unsafe { std::mem::zeroed() };
+            // SAFETY: `c` is a NUL-terminated path and `st` a writable `struct statfs`.
             if unsafe { statfs(c.as_ptr(), &mut st) } != 0 {
                 return None;
             }
@@ -154,39 +165,43 @@ pub struct LocalIp {
 /// Interfaces that are usually not the LAN (VPNs, VMs, Apple's peer-to-peer
 /// links, the Personal Hotspot): listed last.
 fn virtual_iface(name: &str) -> bool {
-    ["utun", "bridge", "vmenet", "vmnet", "vnic", "awdl", "llw", "anpi", "ap", "gif", "stf", "ipsec", "ppp", "feth", "tap", "tun"]
-        .iter()
-        .any(|p| name.starts_with(p))
+    [
+        "utun", "bridge", "vmenet", "vmnet", "vnic", "awdl", "llw", "anpi", "ap", "gif", "stf", "ipsec", "ppp", "feth",
+        "tap", "tun",
+    ]
+    .iter()
+    .any(|p| name.starts_with(p))
+}
+
+#[repr(C)]
+struct IfAddrs {
+    next: *mut IfAddrs,
+    name: *const c_char,
+    flags: c_uint,
+    addr: *const SockAddrIn,
+    netmask: *const SockAddrIn,
+    /// `ifa_dstaddr`, which is `ifa_broadaddr` on a broadcast interface.
+    broadaddr: *const SockAddrIn,
+    data: *mut c_void,
+}
+/// BSD's `struct sockaddr_in`: a length byte, then a one-byte family.
+#[repr(C)]
+struct SockAddrIn {
+    len: u8,
+    family: u8,
+    port: u16,
+    addr: [u8; 4],
+    zero: [u8; 8],
+}
+unsafe extern "C" {
+    fn getifaddrs(ifap: *mut *mut IfAddrs) -> c_int;
+    fn freeifaddrs(ifa: *mut IfAddrs);
 }
 
 /// This computer's IPv4 addresses that are up and running, without
 /// loopback: the LAN ones first (`en*`: Ethernet and Wi-Fi), then VPNs and
 /// virtual machines' networks.
 pub fn local_ipv4() -> Vec<LocalIp> {
-    #[repr(C)]
-    struct IfAddrs {
-        next: *mut IfAddrs,
-        name: *const c_char,
-        flags: c_uint,
-        addr: *const SockAddrIn,
-        netmask: *const SockAddrIn,
-        /// `ifa_dstaddr`, which is `ifa_broadaddr` on a broadcast interface.
-        broadaddr: *const SockAddrIn,
-        data: *mut c_void,
-    }
-    /// BSD's `struct sockaddr_in`: a length byte, then a one-byte family.
-    #[repr(C)]
-    struct SockAddrIn {
-        len: u8,
-        family: u8,
-        port: u16,
-        addr: [u8; 4],
-        zero: [u8; 8],
-    }
-    unsafe extern "C" {
-        fn getifaddrs(ifap: *mut *mut IfAddrs) -> c_int;
-        fn freeifaddrs(ifa: *mut IfAddrs);
-    }
     const AF_INET: u8 = 2;
     const IFF_UP: c_uint = 0x1;
     const IFF_BROADCAST: c_uint = 0x2;
@@ -204,14 +219,23 @@ pub fn local_ipv4() -> Vec<LocalIp> {
         while !p.is_null() {
             let i = &*p;
             p = i.next;
-            if i.addr.is_null() || (*i.addr).family != AF_INET || i.flags & (IFF_UP | IFF_RUNNING) != IFF_UP | IFF_RUNNING || i.flags & IFF_LOOPBACK != 0 {
+            if i.addr.is_null()
+                || (*i.addr).family != AF_INET
+                || i.flags & (IFF_UP | IFF_RUNNING) != IFF_UP | IFF_RUNNING
+                || i.flags & IFF_LOOPBACK != 0
+            {
                 continue;
             }
-            let name = if i.name.is_null() { String::new() } else { std::ffi::CStr::from_ptr(i.name).to_string_lossy().into_owned() };
+            let name = if i.name.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(i.name).to_string_lossy().into_owned()
+            };
             let ip = std::net::Ipv4Addr::from((*i.addr).addr);
-            let broadcast = (i.flags & IFF_BROADCAST != 0 && !i.broadaddr.is_null() && (*i.broadaddr).family == AF_INET)
-                .then(|| std::net::Ipv4Addr::from((*i.broadaddr).addr))
-                .filter(|b| !b.is_unspecified());
+            let broadcast =
+                (i.flags & IFF_BROADCAST != 0 && !i.broadaddr.is_null() && (*i.broadaddr).family == AF_INET)
+                    .then(|| std::net::Ipv4Addr::from((*i.broadaddr).addr))
+                    .filter(|b| !b.is_unspecified());
             if !out.iter().any(|x: &LocalIp| x.ip == ip) {
                 out.push(LocalIp { iface: name, ip, broadcast });
             }
@@ -223,29 +247,40 @@ pub fn local_ipv4() -> Vec<LocalIp> {
     out
 }
 
+// The leading fields of `struct tm`; `_rest` covers the remaining ints,
+// tm_gmtoff and tm_zone with room to spare, aligned as they are (8).
+// `time_t` is 64-bit.
+#[repr(C, align(8))]
+struct Tm {
+    sec: c_int,
+    min: c_int,
+    hour: c_int,
+    mday: c_int,
+    mon: c_int,
+    year: c_int,
+    _rest: [u8; 128],
+}
+unsafe extern "C" {
+    fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
+}
+
 /// Current local time as `YYYY-MM-DD_HH-MM-SS` (for recording file names).
 pub fn local_timestamp() -> String {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    // The leading fields of `struct tm`; `_rest` covers the remaining ints,
-    // tm_gmtoff and tm_zone with room to spare, aligned as they are (8).
-    // `time_t` is 64-bit.
-    #[repr(C, align(8))]
-    struct Tm {
-        sec: c_int,
-        min: c_int,
-        hour: c_int,
-        mday: c_int,
-        mon: c_int,
-        year: c_int,
-        _rest: [u8; 128],
-    }
-    unsafe extern "C" {
-        fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
-    }
+    let secs =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     // SAFETY: plain-old-data out-parameter large enough for struct tm.
     let mut tm: Tm = unsafe { std::mem::zeroed() };
+    // SAFETY: both pointers are to live locals; localtime_r writes only `tm`.
     if !unsafe { localtime_r(&secs, &mut tm) }.is_null() {
-        return format!("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", tm.year + 1900, tm.mon + 1, tm.mday, tm.hour, tm.min, tm.sec);
+        return format!(
+            "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
+            tm.year + 1900,
+            tm.mon + 1,
+            tm.mday,
+            tm.hour,
+            tm.min,
+            tm.sec
+        );
     }
     utc_timestamp(secs)
 }
@@ -273,7 +308,13 @@ mod tests {
     fn local_addresses() {
         let ips = local_ipv4();
         assert!(ips.iter().all(|x| !x.ip.is_loopback() && !x.iface.is_empty()), "{ips:?}");
-        assert!(virtual_iface("utun3") && virtual_iface("bridge100") && virtual_iface("awdl0") && !virtual_iface("en0") && !virtual_iface("en7"));
+        assert!(
+            virtual_iface("utun3")
+                && virtual_iface("bridge100")
+                && virtual_iface("awdl0")
+                && !virtual_iface("en0")
+                && !virtual_iface("en7")
+        );
     }
 
     #[test]
@@ -292,9 +333,12 @@ mod tests {
         // SAFETY: F_DUPFD (0) makes a copy without close-on-exec, closed below.
         let fd = unsafe { fcntl(f.as_raw_fd(), 0, 3) };
         assert!(fd > 2);
+        // SAFETY: F_GETFD (1) on a descriptor this test owns.
         assert_eq!(unsafe { fcntl(fd, 1) } & 1, 0);
         cloexec_all();
+        // SAFETY: as above.
         assert_eq!(unsafe { fcntl(fd, 1) } & 1, 1);
+        // SAFETY: closes the copy made above, which nothing else uses.
         unsafe { close(fd) };
     }
 
