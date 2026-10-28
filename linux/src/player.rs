@@ -33,7 +33,7 @@
 
 use crate::engine::{MAX_FRAMES, NUM_BUSES};
 use crate::mp3;
-use crate::recorder::{NUM_SOURCES, source_id};
+use crate::recorder::{NUM_SOURCES, source_id, stamp_day};
 use crate::vban::resample::{MAX_DOWN, Resampler};
 use crate::vban::ring::Ring;
 use std::collections::HashMap;
@@ -661,16 +661,28 @@ pub struct ScanCache {
 /// header), total bytes, newest modification time.
 type Group = (Option<String>, HashMap<String, Vec<(u32, PathBuf, FileInfo)>>, u64, u64);
 
-/// The takes in `folder`, oldest first (TAKE 1 is the first): other MP3 and
-/// WAV files by date, then BananaSplit's recordings by their time stamp.
-/// Files whose header cannot be read are skipped. `cache` avoids re-reading
+/// The takes in `folder` and its day folders (`YYYY-MM-DD`), oldest first
+/// (TAKE 1 is the first): other MP3 and WAV files by date, then
+/// BananaSplit's recordings by their time stamp. A take that ran past
+/// midnight has parts in two day folders and is still one take. Files
+/// whose header cannot be read are skipped. `cache` avoids re-reading
 /// headers of files that did not change.
 pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
     let Ok(dir) = std::fs::read_dir(folder) else { return Vec::new() };
+    let mut entries = Vec::new();
+    for e in dir.flatten() {
+        let name = e.file_name();
+        let day = name.to_str().is_some_and(|n| n.len() == 10 && stamp_day(n).is_some());
+        if day && e.file_type().is_ok_and(|t| t.is_dir()) {
+            entries.extend(std::fs::read_dir(e.path()).into_iter().flat_map(|d| d.flatten()));
+        } else {
+            entries.push(e);
+        }
+    }
     // grouped by key and extension: `x.wav` and `x.mp3` are two takes
     let mut groups: HashMap<(String, &'static str), Group> = HashMap::new();
     let mut seen = Vec::new();
-    for e in dir.flatten() {
+    for e in entries {
         let path = e.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
         // (bytes: the last four of a name in another script can start
@@ -1522,6 +1534,28 @@ mod tests {
         std::fs::remove_file(d.join("Song.WAV")).unwrap();
         assert_eq!(scan(&d, &mut cache).len(), 2);
         assert!(scan(&d.join("missing"), &mut cache).is_empty());
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn scan_reads_the_day_folders() {
+        let d = tmpdir("days");
+        let w = |name: &str, frames: usize| {
+            let p = d.join(name);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            write_wav(&p, Format::Wav16, 48000, frames, |_| (0.1, 0.1));
+        };
+        w("2026-10-20_12-00-00_mix.wav", 10); // from before the day folders
+        w("2026-10-28/2026-10-28_23-30-00_mix.wav", 100);
+        w("2026-10-29/2026-10-28_23-30-00_mix_part2.wav", 50);
+        w("2026-10-29/2026-10-29_08-00-00_mix.wav", 20);
+        w("other/2026-10-29_09-00-00_mix.wav", 20); // not a day folder
+        let t = scan(&d, &mut ScanCache::default());
+        let keys: Vec<&str> = t.iter().map(|t| t.key.as_str()).collect();
+        assert_eq!(keys, ["2026-10-20_12-00-00", "2026-10-28_23-30-00", "2026-10-29_08-00-00"], "{t:?}");
+        let parts: Vec<&Path> = t[1].tracks[0].parts.iter().map(|(p, _)| p.strip_prefix(&d).unwrap()).collect();
+        assert_eq!(parts, [Path::new("2026-10-28/2026-10-28_23-30-00_mix.wav"), Path::new("2026-10-29/2026-10-28_23-30-00_mix_part2.wav")]);
+        assert_eq!(t[1].frames, 150);
         let _ = std::fs::remove_dir_all(d);
     }
 
