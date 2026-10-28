@@ -42,11 +42,11 @@
 use crate::devices::Devices;
 use crate::jack::regex_escape;
 use crate::sys;
+use bananasplit::config::Config;
+use bananasplit::engine::{BUS_IDS, NUM_BUSES, NUM_STRIPS};
 use std::io::{BufRead, Write};
 use std::process::{Child, ChildStdin, Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
-use bananasplit::config::Config;
-use bananasplit::engine::{BUS_IDS, NUM_BUSES, NUM_STRIPS};
 
 /// Hidden command line flag of the watchdog process.
 pub const REAPER_FLAG: &str = "--reap-cables";
@@ -78,10 +78,8 @@ impl CableSpec {
 }
 
 fn sanitize(s: &str) -> String {
-    let t: String = s
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
-        .collect();
+    let t: String =
+        s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).collect();
     let t = t.trim_matches('-').to_string();
     t.chars().take(24).collect()
 }
@@ -228,7 +226,8 @@ fn quoted_list(names: &[&str]) -> String {
 /// if anything (`menus`: the channels have menus to switch a cable on).
 pub fn summary(events: &[CableEvent], menus: bool) -> Option<String> {
     let mut parts = Vec::new();
-    let remade: Vec<&str> = events.iter().filter_map(|e| if let CableEvent::Remade(_, n) = e { Some(n.as_str()) } else { None }).collect();
+    let remade: Vec<&str> =
+        events.iter().filter_map(|e| if let CableEvent::Remade(_, n) = e { Some(n.as_str()) } else { None }).collect();
     match remade.as_slice() {
         [] => {}
         [one] => parts.push(format!(
@@ -239,13 +238,19 @@ pub fn summary(events: &[CableEvent], menus: bool) -> Option<String> {
             quoted_list(many)
         )),
     }
-    let again: Vec<(usize, &str)> =
-        events.iter().filter_map(|e| if let CableEvent::Lost(ch, n, None) = e { Some((*ch, n.as_str())) } else { None }).collect();
+    let again: Vec<(usize, &str)> = events
+        .iter()
+        .filter_map(|e| if let CableEvent::Lost(ch, n, None) = e { Some((*ch, n.as_str())) } else { None })
+        .collect();
     match again.as_slice() {
         [] => {}
         [(ch, one)] => parts.push(format!(
             "the virtual cable \"{one}\" was removed again, so BananaSplit leaves it off ({})",
-            if menus { format!("switch it on in {}'s menu", channel_id(*ch)) } else { "restart BananaSplit to make it again".into() }
+            if menus {
+                format!("switch it on in {}'s menu", channel_id(*ch))
+            } else {
+                "restart BananaSplit to make it again".into()
+            }
         )),
         many => parts.push(format!(
             "the virtual cables {} were removed again, so BananaSplit leaves them off ({})",
@@ -257,7 +262,11 @@ pub fn summary(events: &[CableEvent], menus: bool) -> Option<String> {
         if let CableEvent::Lost(ch, n, Some(err)) = e {
             parts.push(format!(
                 "the virtual cable \"{n}\" disappeared and could not be made again ({err}); {}",
-                if menus { format!("switch it on in {}'s menu", channel_id(*ch)) } else { "restart BananaSplit to make it again".into() }
+                if menus {
+                    format!("switch it on in {}'s menu", channel_id(*ch))
+                } else {
+                    "restart BananaSplit to make it again".into()
+                }
             ));
         }
     }
@@ -348,7 +357,9 @@ pub fn reaper_main(client: &str) -> ExitCode {
     }
     match sweep(&names) {
         Ok(0) => {}
-        Ok(n) => eprintln!("bananasplit: removed {n} virtual cables of \"{client}\" (BananaSplit did not exit cleanly)"),
+        Ok(n) => {
+            eprintln!("bananasplit: removed {n} virtual cables of \"{client}\" (BananaSplit did not exit cleanly)")
+        }
         Err(e) => eprintln!("bananasplit: could not remove the virtual cables of \"{client}\": {e}"),
     }
     ExitCode::SUCCESS
@@ -425,7 +436,8 @@ impl Cables {
             Ok(info) if info.contains("PipeWire") => {}
             Ok(_) => {
                 warnings.push(
-                    "virtual cables need PipeWire (pipewire-pulse); the sound server is not PipeWire, skipping cables".into(),
+                    "virtual cables need PipeWire (pipewire-pulse); the sound server is not PipeWire, skipping cables"
+                        .into(),
                 );
                 me.off = Some("virtual cables need PipeWire".into());
                 return (me, warnings);
@@ -539,7 +551,10 @@ impl Cables {
         }
         let Some(d) = devices.filter(|_| self.off.is_none()) else { return Vec::new() };
         let gone: Vec<usize> = (0..NUM_CHANNELS)
-            .filter(|&ch| self.live(ch).is_some_and(|c| !d.list.iter().any(|x| x.name == c.node_name && x.is_source == c.is_source)))
+            .filter(|&ch| {
+                self.live(ch)
+                    .is_some_and(|c| !d.list.iter().any(|x| x.name == c.node_name && x.is_source == c.is_source))
+            })
             .collect();
         // the cables that are there (again) need no more tries
         for ch in (0..NUM_CHANNELS).filter(|ch| !gone.contains(ch)) {
@@ -664,15 +679,31 @@ mod tests {
         use CableEvent::*;
         assert_eq!(summary(&[], true), None);
         let one = summary(&[Remade(2, "BananaSplit-In3-Desktop".into())], true).unwrap();
-        assert!(one.starts_with("the virtual cable \"BananaSplit-In3-Desktop\" had disappeared") && one.ends_with("made it again"), "{one}");
+        assert!(
+            one.starts_with("the virtual cable \"BananaSplit-In3-Desktop\" had disappeared")
+                && one.ends_with("made it again"),
+            "{one}"
+        );
         let all = summary(&[Remade(0, "A".into()), Remade(1, "B".into()), Remade(9, "C".into())], true).unwrap();
-        assert!(all.starts_with("the virtual cables \"A\", \"B\" and \"C\" had disappeared") && all.ends_with("made them again"), "{all}");
+        assert!(
+            all.starts_with("the virtual cables \"A\", \"B\" and \"C\" had disappeared")
+                && all.ends_with("made them again"),
+            "{all}"
+        );
         let off = summary(&[Lost(9, "BananaSplit-Out-B1".into(), None)], true).unwrap();
         assert!(off.ends_with("(switch it on in B1's menu)"), "{off}");
-        let two = summary(&[Lost(3, "D".into(), None), Lost(4, "E".into(), None), Remade(0, "A".into())], false).unwrap();
-        assert!(two.contains("made it again; the virtual cables \"D\" and \"E\" were removed again") && two.ends_with("(restart BananaSplit to make them again)"), "{two}");
+        let two =
+            summary(&[Lost(3, "D".into(), None), Lost(4, "E".into(), None), Remade(0, "A".into())], false).unwrap();
+        assert!(
+            two.contains("made it again; the virtual cables \"D\" and \"E\" were removed again")
+                && two.ends_with("(restart BananaSplit to make them again)"),
+            "{two}"
+        );
         let err = summary(&[Lost(2, "F".into(), Some("pactl: Connection refused".into()))], true).unwrap();
-        assert!(err.contains("could not be made again (pactl: Connection refused); switch it on in strip 3's menu"), "{err}");
+        assert!(
+            err.contains("could not be made again (pactl: Connection refused); switch it on in strip 3's menu"),
+            "{err}"
+        );
     }
 
     #[test]

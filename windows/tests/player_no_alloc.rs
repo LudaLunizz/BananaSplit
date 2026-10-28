@@ -7,11 +7,11 @@
 //! (Separate test binary. Only the test's own thread is counted: the test
 //! harness's main thread may allocate while it waits.)
 
+use bananasplit::engine::{Engine, NUM_BUSES, NUM_STRIPS, Shared};
+use bananasplit::player::PlayTap;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-use bananasplit::engine::{Engine, NUM_BUSES, NUM_STRIPS, Shared};
-use bananasplit::player::PlayTap;
 
 struct Counting;
 static EVENTS: AtomicUsize = AtomicUsize::new(0);

@@ -153,7 +153,9 @@ pub fn list_json(backend: &Backend, cfg: &Config, cables: &Cables, info: &PulseI
     // On PipeWire every app that plays or records is a JACK client as well:
     // it is listed with the apps (moved into the cable), not again as a
     // JACK program (connecting that would play it twice).
-    let programs = |v: Vec<Candidate>| -> Vec<Candidate> { v.into_iter().filter(|c| c.kind != Kind::App || !info.is_stream(&c.client)).collect() };
+    let programs = |v: Vec<Candidate>| -> Vec<Candidate> {
+        v.into_iter().filter(|c| c.kind != Kind::App || !info.is_stream(&c.client)).collect()
+    };
     let _ = write!(o, ",\"pulse\":{pulse},\"strip\":");
     cands_json(&mut o, &programs(backend.candidates(cfg, cables, devs.clone(), Side::Strip)));
     o.push_str(",\"bus\":");
@@ -208,7 +210,15 @@ pub fn list_json(backend: &Backend, cfg: &Config, cables: &Cables, info: &PulseI
 }
 
 /// The JACK clients a `connect` value reaches on channel `ch` now.
-fn reached(backend: &Backend, cfg: &Config, cables: &Cables, info: &PulseInfo, ch: usize, pattern: &str, among: &[String]) -> Vec<String> {
+fn reached(
+    backend: &Backend,
+    cfg: &Config,
+    cables: &Cables,
+    info: &PulseInfo,
+    ch: usize,
+    pattern: &str,
+    among: &[String],
+) -> Vec<String> {
     among
         .iter()
         .filter(|c| backend.pattern_reaches(cfg, cables, info.devices.clone(), ch, pattern, c))
@@ -218,7 +228,15 @@ fn reached(backend: &Backend, cfg: &Config, cables: &Cables, info: &PulseInfo, c
 
 /// Like [`reached`], plus the device a `@default` / `@physical` line
 /// connected last (the desktop's default may have changed since).
-fn reached_now(backend: &Backend, cfg: &Config, cables: &Cables, info: &PulseInfo, ch: usize, pattern: &str, among: &[String]) -> Vec<String> {
+fn reached_now(
+    backend: &Backend,
+    cfg: &Config,
+    cables: &Cables,
+    info: &PulseInfo,
+    ch: usize,
+    pattern: &str,
+    among: &[String],
+) -> Vec<String> {
     let mut v = reached(backend, cfg, cables, info, ch, pattern, among);
     if let Some(c) = backend.followed_client(ch, pattern).filter(|c| among.contains(c) && !v.contains(c)) {
         v.push(c);
@@ -237,7 +255,13 @@ fn cable_on(cfg: &mut Config, cables: &mut Cables, ch: usize) -> Result<String, 
 
 /// Carry out one menu action. `cables` and `cfg` change with it; the
 /// caller saves nothing (the config is saved like every other control).
-pub fn handle(op: DevOp, backend: &Backend, cfg: &mut Config, cables: &mut Cables, info: &PulseInfo) -> Result<String, String> {
+pub fn handle(
+    op: DevOp,
+    backend: &Backend,
+    cfg: &mut Config,
+    cables: &mut Cables,
+    info: &PulseInfo,
+) -> Result<String, String> {
     let check = |ch: usize| if ch < NUM_CHANNELS { Ok(ch) } else { Err("bad channel".to_string()) };
     // "strip 3", "A1"
     let id = |ch: usize| if ch < NUM_STRIPS { format!("strip {}", ch + 1) } else { source_id(ch).to_string() };
@@ -255,7 +279,11 @@ pub fn handle(op: DevOp, backend: &Backend, cfg: &mut Config, cables: &mut Cable
                 if !list.contains(&pat) {
                     list.push(pat);
                 }
-                Ok(if ch < NUM_STRIPS { format!("{} takes in {client}", id(ch)) } else { format!("{} plays on {client}", id(ch)) })
+                Ok(if ch < NUM_STRIPS {
+                    format!("{} takes in {client}", id(ch))
+                } else {
+                    format!("{} plays on {client}", id(ch))
+                })
             } else {
                 // every line that brings this client in goes, so it stays away
                 // (a `@default` line staying with it too)
@@ -321,7 +349,11 @@ pub fn handle(op: DevOp, backend: &Backend, cfg: &mut Config, cables: &mut Cable
                     backend.disconnect_client(ch, &c)?;
                 }
             }
-            Ok(format!("{} is not connected to anything{}", id(ch), if cables.live(ch).is_some() { " but its virtual cable" } else { "" }))
+            Ok(format!(
+                "{} is not connected to anything{}",
+                id(ch),
+                if cables.live(ch).is_some() { " but its virtual cable" } else { "" }
+            ))
         }
         DevOp::Cable { ch, on } => {
             let ch = check(ch)?;
@@ -346,7 +378,11 @@ pub fn handle(op: DevOp, backend: &Backend, cfg: &mut Config, cables: &mut Cable
                 Some(ch) => {
                     let ch = check(ch)?;
                     if rec != (ch >= NUM_STRIPS) {
-                        return Err(if rec { "a recording app takes a bus's mix".into() } else { "a playing app goes into a strip".into() });
+                        return Err(if rec {
+                            "a recording app takes a bus's mix".into()
+                        } else {
+                            "a playing app goes into a strip".into()
+                        });
                     }
                     if cables.live(ch).is_none() {
                         cable_on(cfg, cables, ch)?;
@@ -364,11 +400,15 @@ pub fn handle(op: DevOp, backend: &Backend, cfg: &mut Config, cables: &mut Cable
                         .filter(|n| !ours(n))
                         .map(str::to_string)
                         .or_else(|| {
-                            d.list.iter().find(|x| x.is_source == rec && !x.is_monitor && !set.owns(&x.name, &x.description)).map(|x| x.name.clone())
+                            d.list
+                                .iter()
+                                .find(|x| x.is_source == rec && !x.is_monitor && !set.owns(&x.name, &x.description))
+                                .map(|x| x.name.clone())
                         })
                         .ok_or("there is no other device to move it to")?;
                     pactl(&[cmd, &sid.to_string(), &target])?;
-                    let desc = d.list.iter().find(|x| x.name == target).map_or(target.clone(), |x| x.description.clone());
+                    let desc =
+                        d.list.iter().find(|x| x.name == target).map_or(target.clone(), |x| x.description.clone());
                     Ok(format!("{app} now {} {desc}", if rec { "records" } else { "plays on" }))
                 }
             }
@@ -378,10 +418,18 @@ pub fn handle(op: DevOp, backend: &Backend, cfg: &mut Config, cables: &mut Cable
 
 /// Disconnect the clients in `was` that no remaining `connect` line of
 /// channel `ch` brings in.
-fn unhook(backend: &Backend, cfg: &Config, cables: &Cables, info: &PulseInfo, ch: usize, was: &[String]) -> Result<(), String> {
+fn unhook(
+    backend: &Backend,
+    cfg: &Config,
+    cables: &Cables,
+    info: &PulseInfo,
+    ch: usize,
+    was: &[String],
+) -> Result<(), String> {
     let list = if ch < NUM_STRIPS { &cfg.strips[ch].connect } else { &cfg.buses[ch - NUM_STRIPS].connect };
     for c in was {
-        let still = list.iter().any(|p| !reached(backend, cfg, cables, info, ch, p, std::slice::from_ref(c)).is_empty());
+        let still =
+            list.iter().any(|p| !reached(backend, cfg, cables, info, ch, p, std::slice::from_ref(c)).is_empty());
         if !still {
             backend.disconnect_client(ch, c)?;
         }
@@ -411,15 +459,51 @@ mod tests {
                 list: vec![
                     dev(50, "alsa_output.speakers", "Speakers Analog Stereo", Some("Speakers"), false),
                     dev(51, "bananasplit_in2", "BananaSplit-In2-Discord", None, false),
-                    dev(52, "alsa_input.yeti", "Yeti Stereo Microphone Analog Stereo", Some("Yeti Stereo Microphone"), true),
+                    dev(
+                        52,
+                        "alsa_input.yeti",
+                        "Yeti Stereo Microphone Analog Stereo",
+                        Some("Yeti Stereo Microphone"),
+                        true,
+                    ),
                     dev(53, "bananasplit_out_b1", "BananaSplit-Out-B1", None, true),
                 ],
             }),
             playing: vec![
-                Stream { id: 7, app: "Discord".into(), media: "Playback".into(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 51, pinned: String::new() },
-                Stream { id: 8, app: "Firefox".into(), media: "YouTube".into(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 50, pinned: String::new() },
+                Stream {
+                    id: 7,
+                    app: "Discord".into(),
+                    media: "Playback".into(),
+                    binary: String::new(),
+                    node: String::new(),
+                    desc: String::new(),
+                    nick: String::new(),
+                    target: 51,
+                    pinned: String::new(),
+                },
+                Stream {
+                    id: 8,
+                    app: "Firefox".into(),
+                    media: "YouTube".into(),
+                    binary: String::new(),
+                    node: String::new(),
+                    desc: String::new(),
+                    nick: String::new(),
+                    target: 50,
+                    pinned: String::new(),
+                },
             ],
-            recording: vec![Stream { id: 9, app: "OBS".into(), media: String::new(), binary: String::new(), node: String::new(), desc: String::new(), nick: String::new(), target: 53, pinned: String::new() }],
+            recording: vec![Stream {
+                id: 9,
+                app: "OBS".into(),
+                media: String::new(),
+                binary: String::new(),
+                node: String::new(),
+                desc: String::new(),
+                nick: String::new(),
+                target: 53,
+                pinned: String::new(),
+            }],
             other: Vec::new(),
         }
     }

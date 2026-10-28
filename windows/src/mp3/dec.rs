@@ -11,7 +11,9 @@
 //! whose bit reservoir is missing (the first frames after a seek) decodes as
 //! silence of the right length.
 
-use super::tables::{ALIAS_C, COUNT1, HUFF, INTWIN, KBPS, LINBITS, NR_OF_SFB, PRETAB, RATES, SFB_LONG, SFB_SHORT, SLEN};
+use super::tables::{
+    ALIAS_C, COUNT1, HUFF, INTWIN, KBPS, LINBITS, NR_OF_SFB, PRETAB, RATES, SFB_LONG, SFB_SHORT, SLEN,
+};
 use std::f64::consts::PI;
 use std::sync::OnceLock;
 
@@ -230,7 +232,9 @@ fn consts() -> &'static Consts {
                 .collect(),
             synth_d: (0..512).map(|i| window(i) as f32).collect(),
             huff: (0..32)
-                .map(|t| (t < 16 && !HUFF[t].1.is_empty() || t == 16 || t == 24).then(|| Huffman::new(HUFF[t].1, HUFF[t].0)))
+                .map(|t| {
+                    (t < 16 && !HUFF[t].1.is_empty() || t == 16 || t == 24).then(|| Huffman::new(HUFF[t].1, HUFF[t].0))
+                })
                 .collect(),
             count1: [Huffman::new(&COUNT1[0], 0), Huffman::new(&COUNT1[1], 0)],
         }

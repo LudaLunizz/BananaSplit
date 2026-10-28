@@ -103,7 +103,9 @@ pub const DEFAULT_DEVICE: &str = "@default";
 /// A `connect` value: one of the `@` keywords, or a device-name fragment.
 fn check_connect(v: &str) -> Result<(), String> {
     if v.starts_with('@') && v != PHYSICAL && v != DEFAULT_DEVICE {
-        return Err(format!("unknown connect keyword {v:?} (expected {DEFAULT_DEVICE}, {PHYSICAL} or part of a device name)"));
+        return Err(format!(
+            "unknown connect keyword {v:?} (expected {DEFAULT_DEVICE}, {PHYSICAL} or part of a device name)"
+        ));
     }
     Ok(())
 }
@@ -267,7 +269,14 @@ pub struct GuiConfig {
 
 impl Default for GuiConfig {
     fn default() -> Self {
-        GuiConfig { theme: Theme::Dark, close_to_tray: true, zoom: 1.0, window: None, scene: String::new(), auto_update: false }
+        GuiConfig {
+            theme: Theme::Dark,
+            close_to_tray: true,
+            zoom: 1.0,
+            window: None,
+            scene: String::new(),
+            auto_update: false,
+        }
     }
 }
 
@@ -398,8 +407,13 @@ pub(crate) fn write_eq(o: &mut String, eq: &EqSettings) {
 }
 
 fn vban_slot(h: &str, prefix: &str, n: usize) -> Option<Result<usize, String>> {
-    let k: usize = h.get(..prefix.len()).filter(|p| p.eq_ignore_ascii_case(prefix)).and(h.get(prefix.len()..))?.parse().ok()?;
-    Some(if (1..=n).contains(&k) { Ok(k - 1) } else { Err(format!("unknown section [{h}] (VBAN streams are {prefix}1..{prefix}{n})")) })
+    let k: usize =
+        h.get(..prefix.len()).filter(|p| p.eq_ignore_ascii_case(prefix)).and(h.get(prefix.len()..))?.parse().ok()?;
+    Some(if (1..=n).contains(&k) {
+        Ok(k - 1)
+    } else {
+        Err(format!("unknown section [{h}] (VBAN streams are {prefix}1..{prefix}{n})"))
+    })
 }
 
 fn parse_bool(v: &str) -> Result<bool, String> {
@@ -763,7 +777,10 @@ impl Config {
         let r = &self.recorder;
         let _ = writeln!(o, "\n[recorder]");
         let _ = writeln!(o, "# links: 1-6 = strips, A1-A3 / B1-B2 = buses; mode = mix | multi");
-        let _ = writeln!(o, "# format = mp3 | wav16 | wav24 | wav32f; bitrate = kbit/s of MP3: 128 | 160 | 192 | 224 | 256 | 320");
+        let _ = writeln!(
+            o,
+            "# format = mp3 | wav16 | wav24 | wav32f; bitrate = kbit/s of MP3: 128 | 160 | 192 | 224 | 256 | 320"
+        );
         let _ = writeln!(o, "# split = minutes per file: a longer take goes on in _part2, ... (0 = off)");
         let _ = writeln!(o, "folder = {}", r.folder);
         let _ = writeln!(o, "format = {}", r.format.as_str());
@@ -775,9 +792,12 @@ impl Config {
         let v = &self.vban;
         let _ = writeln!(o, "\n[vban]");
         let _ = writeln!(o, "# Network audio, compatible with Voicemeeter's VBAN. Streams (up to 8 each way):");
-        let _ = writeln!(o, "#   [vban.in1] .. [vban.in8]:   on, name, from = <sender IPv4> | any, strip = 1-6, buffer_ms");
-        let _ = writeln!(o, "#   [vban.out1] .. [vban.out8]: on, name, to = <receiver IPv4>, port, source = 1-6 | A1-B2,");
-        let _ = writeln!(o, "#                               format = int16 | int24 | int32 | float32, channels = 1 | 2");
+        let _ =
+            writeln!(o, "#   [vban.in1] .. [vban.in8]:   on, name, from = <sender IPv4> | any, strip = 1-6, buffer_ms");
+        let _ =
+            writeln!(o, "#   [vban.out1] .. [vban.out8]: on, name, to = <receiver IPv4>, port, source = 1-6 | A1-B2,");
+        let _ =
+            writeln!(o, "#                               format = int16 | int24 | int32 | float32, channels = 1 | 2");
         let _ = writeln!(o, "enabled = {}", v.enabled);
         let _ = writeln!(o, "port = {}", v.port);
         for (i, s) in v.ins.iter().enumerate() {
@@ -921,9 +941,10 @@ impl Config {
     /// Atomic save (write temp file, then rename).
     pub fn save(&self, path: &Path) -> Result<(), String> {
         if let Some(dir) = path.parent()
-            && !dir.as_os_str().is_empty() {
-                std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-            }
+            && !dir.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
         write_replacing(path, &self.to_ini())
     }
 }
@@ -959,7 +980,6 @@ fn real_file(path: &Path) -> PathBuf {
     }
     p
 }
-
 
 /// The JACK name vmix (this program before 2.5) used by default.
 pub const LEGACY_CLIENT_NAME: &str = "vmix";
@@ -1070,9 +1090,23 @@ mod tests {
         // VBAN
         c.vban.enabled = true;
         c.vban.port = 6990;
-        c.vban.ins[0] = vban::InStream { on: true, name: "Voicemeeter Out".into(), from: FromAddr::Ip([192, 168, 1, 20].into()), strip: 3, buffer_ms: 0 };
+        c.vban.ins[0] = vban::InStream {
+            on: true,
+            name: "Voicemeeter Out".into(),
+            from: FromAddr::Ip([192, 168, 1, 20].into()),
+            strip: 3,
+            buffer_ms: 0,
+        };
         c.vban.ins[7].from = FromAddr::Any;
-        c.vban.outs[2] = vban::OutStream { on: true, name: "Mix".into(), to: Some([192, 168, 1, 255].into()), port: 6981, source: 0, format: SampleFormat::F32, channels: 1 };
+        c.vban.outs[2] = vban::OutStream {
+            on: true,
+            name: "Mix".into(),
+            to: Some([192, 168, 1, 255].into()),
+            port: 6981,
+            source: 0,
+            format: SampleFormat::F32,
+            channels: 1,
+        };
         c.vban.outs[3].to = Some([10, 0, 0, 1].into());
         let text = c.to_ini();
         assert_eq!(Config::parse(&text).unwrap(), c);
@@ -1087,10 +1121,19 @@ mod tests {
         c.buses[4].trim_db = -24.0;
         c.buses[4].pan = 1.0;
         c.recorder.play_to = 0b01001;
-        c.gui = GuiConfig { theme: Theme::Auto, close_to_tray: false, zoom: 1.25, window: Some((1600, 900)), scene: "Live Room 06".into(), auto_update: false };
+        c.gui = GuiConfig {
+            theme: Theme::Auto,
+            close_to_tray: false,
+            zoom: 1.25,
+            window: Some((1600, 900)),
+            scene: "Live Room 06".into(),
+            auto_update: false,
+        };
         let text = c.to_ini();
         assert_eq!(Config::parse(&text).unwrap(), c);
-        assert!(text.contains("\n[gui]\ntheme = auto\nclose_to_tray = false\nzoom = 1.25\nwindow = 1600x900\nscene = Live Room 06\n"));
+        assert!(text.contains(
+            "\n[gui]\ntheme = auto\nclose_to_tray = false\nzoom = 1.25\nwindow = 1600x900\nscene = Live Room 06\n"
+        ));
         assert!(!text.contains("auto_update"), "off (the default) is not written: an older BananaSplit reads the file");
         assert_eq!(Config::parse("[gui]\nwindow =\n").unwrap().gui.window, None);
         assert!(Config::parse("[gui]\nwindow = 10x10\n").is_err());
@@ -1099,8 +1142,16 @@ mod tests {
         let c = Config::parse("[strip1]\ntrim_db = 99\npan = -3\n[bus.A2]\ntrim_db = 3.04\npan = 0.123\n").unwrap();
         assert_eq!((c.strips[0].trim_db, c.strips[0].pan), (crate::engine::MAX_TRIM_DB, -1.0));
         assert_eq!((c.buses[1].trim_db, c.buses[1].pan), (3.0, 0.12));
-        for bad in ["[strip1]\npan = left\n", "[strip1]\ntrim_db = nan\n", "[gui]\ntheme = blue\n", "[gui]\nzoom = 3\n",
-                    "[gui]\nzoom = x\n", "[gui]\nscene = ../x\n", "[gui]\nwidth = 3\n", "[recorder]\nplay_to = C1\n"] {
+        for bad in [
+            "[strip1]\npan = left\n",
+            "[strip1]\ntrim_db = nan\n",
+            "[gui]\ntheme = blue\n",
+            "[gui]\nzoom = 3\n",
+            "[gui]\nzoom = x\n",
+            "[gui]\nscene = ../x\n",
+            "[gui]\nwidth = 3\n",
+            "[recorder]\nplay_to = C1\n",
+        ] {
             assert!(Config::parse(bad).is_err(), "{bad}");
         }
         // a 2.5 config (none of these keys) loads with the defaults
@@ -1141,7 +1192,10 @@ mod tests {
         assert!(Config::parse("[vban.out1]\nchannels = 8\n").is_err());
         assert!(Config::parse("[vban.out1]\nto = any\n").is_err());
         assert!(Config::parse("[vban.out1]\nvolume = 1\n").unwrap_err().msg.contains("volume"));
-        let c = Config::parse("[VBAN]\nenabled = yes\n[vban.IN2]\non = 1\nfrom = any\n[vban.out8]\nsource = a2\nformat = 24\n").unwrap();
+        let c = Config::parse(
+            "[VBAN]\nenabled = yes\n[vban.IN2]\non = 1\nfrom = any\n[vban.out8]\nsource = a2\nformat = 24\n",
+        )
+        .unwrap();
         assert!(c.vban.enabled && c.vban.ins[1].on && c.vban.ins[1].from == FromAddr::Any);
         assert_eq!((c.vban.outs[7].source, c.vban.outs[7].format), (7, SampleFormat::I24));
         // older files (no EQ, no [vban]) load with the defaults
@@ -1219,7 +1273,8 @@ mod tests {
 
     #[test]
     fn connect_keywords() {
-        let c = Config::parse("[strip1]\nconnect = @physical\nconnect = @default\n[bus.A1]\nconnect = @physical\n").unwrap();
+        let c = Config::parse("[strip1]\nconnect = @physical\nconnect = @default\n[bus.A1]\nconnect = @physical\n")
+            .unwrap();
         assert_eq!(c.strips[0].connect, [PHYSICAL, DEFAULT_DEVICE]);
         assert_eq!(c.buses[0].connect, [PHYSICAL]);
         // the default config picks the desktop's default devices
@@ -1230,7 +1285,9 @@ mod tests {
 
     #[test]
     fn load_or_default_never_writes() {
-        let path = std::env::temp_dir().join(format!("bananasplit-test-nowrite-{}", std::process::id())).join("bananasplit.ini");
+        let path = std::env::temp_dir()
+            .join(format!("bananasplit-test-nowrite-{}", std::process::id()))
+            .join("bananasplit.ini");
         assert_eq!(Config::load_or_default(&path).unwrap(), Config::default());
         assert!(!path.exists() && !path.parent().unwrap().exists());
     }
@@ -1241,8 +1298,13 @@ mod tests {
         assert_eq!(c.buses.iter().map(|b| b.cable).collect::<Vec<_>>(), [false, false, false, true, true]);
         assert!(c.strips.iter().all(|s| s.cable));
         let text = c.to_ini();
-        assert!(!text.contains("\ncable =") && !text.contains("[bus.A1]\nname = Speakers\ngain_db = 0\ntrim_db = 0\npan = 0\nmute = false\nmono = false\nroutes"),
-            "defaults are not written (2.6 can read the file)");
+        assert!(
+            !text.contains("\ncable =")
+                && !text.contains(
+                    "[bus.A1]\nname = Speakers\ngain_db = 0\ntrim_db = 0\npan = 0\nmute = false\nmono = false\nroutes"
+                ),
+            "defaults are not written (2.6 can read the file)"
+        );
         c.buses[3].routes = 0b00001; // B1 -> A1
         c.buses[4].routes = 0b01000; // B2 -> B1
         c.buses[0].cable = true;

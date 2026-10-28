@@ -41,7 +41,13 @@ pub fn rate_for(rate: u32) -> u32 {
     if let Some(r) = [32000, 44100, 48000].into_iter().find(|r| r % rate.max(1) == 0) {
         return r;
     }
-    if rate > 44100 { 48000 } else if rate > 32000 { 44100 } else { 32000 }
+    if rate > 44100 {
+        48000
+    } else if rate > 32000 {
+        44100
+    } else {
+        32000
+    }
 }
 
 /// The MPEG-1 bitrates BananaSplit records at (kbit/s, stereo).
@@ -195,11 +201,12 @@ pub fn probe(path: &Path) -> Result<Info, String> {
         // LAME tag: delay and padding, read when the encoder says it is one
         // (as ffmpeg does)
         if let Some(v) = fr.get(p..p + 24)
-            && [&b"LAME"[..], b"Lavf", b"Lavc"].contains(&&v[..4]) {
-                let delay = (u64::from(v[21]) << 4) | u64::from(v[22] >> 4);
-                let padding = (u64::from(v[22] & 15) << 8) | u64::from(v[23]);
-                gapless = Some((delay, padding));
-            }
+            && [&b"LAME"[..], b"Lavf", b"Lavc"].contains(&&v[..4])
+        {
+            let delay = (u64::from(v[21]) << 4) | u64::from(v[22] >> 4);
+            let padding = (u64::from(v[22] & 15) << 8) | u64::from(v[23]);
+            gapless = Some((delay, padding));
+        }
         info.audio_start = first + h.frame_len as u64;
     } else if fr.len() >= 36 + 18 && &fr[36..40] == b"VBRI" {
         info.vbr = true;
@@ -350,7 +357,8 @@ impl Reader {
             return Ok(None);
         }
         let b = self.bytes_at(at, 4)?;
-        Ok(Header::parse(b).filter(|h| h.sample_rate == self.info.sample_rate && h.channels() == usize::from(self.info.channels)))
+        Ok(Header::parse(b)
+            .filter(|h| h.sample_rate == self.info.sample_rate && h.channels() == usize::from(self.info.channels)))
     }
 
     /// Look for a frame at or after `at` (within 64 KiB), confirmed by the one after it.
@@ -569,9 +577,22 @@ mod tests {
             assert_eq!(rate_for(r), r);
         }
         for (r, want) in [
-            (96000, 48000), (192000, 48000), (384000, 48000), (88200, 44100), (176400, 44100), (64000, 32000),
-            (16000, 32000), (8000, 32000), (22050, 44100), (11025, 44100), (24000, 48000), (12000, 48000),
-            (50000, 48000), (46000, 48000), (40000, 44100), (30000, 32000),
+            (96000, 48000),
+            (192000, 48000),
+            (384000, 48000),
+            (88200, 44100),
+            (176400, 44100),
+            (64000, 32000),
+            (16000, 32000),
+            (8000, 32000),
+            (22050, 44100),
+            (11025, 44100),
+            (24000, 48000),
+            (12000, 48000),
+            (50000, 48000),
+            (46000, 48000),
+            (40000, 44100),
+            (30000, 32000),
         ] {
             assert!(!supported_rate(r));
             assert_eq!(rate_for(r), want, "{r}");
@@ -626,7 +647,10 @@ mod tests {
             // padding leaves room for the decoder's delay, and fits its field
             let frames = info.frames;
             let padding = frames * FRAME as u64 - (u64::from(CODEC_DELAY - DECODER_DELAY) + n as u64);
-            assert!((u64::from(DECODER_DELAY)..u64::from(DECODER_DELAY) + FRAME as u64).contains(&padding), "{n}: {padding}");
+            assert!(
+                (u64::from(DECODER_DELAY)..u64::from(DECODER_DELAY) + FRAME as u64).contains(&padding),
+                "{n}: {padding}"
+            );
         }
         let _ = std::fs::remove_dir_all(d);
     }
@@ -711,7 +735,12 @@ mod tests {
         ape.extend_from_slice(&[0; 12]);
         let mut v1 = b"TAG".to_vec();
         v1.resize(128, b'x');
-        for (name, pre, post) in [("id3v2", id3.clone(), vec![]), ("id3v1", vec![], v1.clone()), ("ape", vec![], ape.clone()), ("all", id3.clone(), [ape, v1].concat())] {
+        for (name, pre, post) in [
+            ("id3v2", id3.clone(), vec![]),
+            ("id3v1", vec![], v1.clone()),
+            ("ape", vec![], ape.clone()),
+            ("all", id3.clone(), [ape, v1].concat()),
+        ] {
             let p = d.join(format!("{name}.mp3"));
             std::fs::write(&p, [pre, body.clone(), post].concat()).unwrap();
             let (info, out) = read_all(&p);
@@ -774,13 +803,14 @@ mod tests {
             }
             assert!(pcm.iter().all(|v| v.is_finite()));
             if let Ok(info) = probe(&p)
-                && let Ok(mut r) = Reader::open(&p, &info) {
-                    let mut out = Vec::new();
-                    let _ = r.read(100_000, &mut out);
-                    let _ = r.seek(u64::from(rnd() % 50_000));
-                    let _ = r.read(5000, &mut out);
-                    assert!(out.iter().all(|v| v.is_finite()));
-                }
+                && let Ok(mut r) = Reader::open(&p, &info)
+            {
+                let mut out = Vec::new();
+                let _ = r.read(100_000, &mut out);
+                let _ = r.seek(u64::from(rnd() % 50_000));
+                let _ = r.read(5000, &mut out);
+                assert!(out.iter().all(|v| v.is_finite()));
+            }
         }
         let _ = std::fs::remove_dir_all(d);
     }
@@ -855,7 +885,8 @@ mod tests {
     #[test]
     fn samples_beyond_full_scale_are_clipped_and_nan_is_silence() {
         let d = tmpdir("clip");
-        let lr: Vec<f32> = (0..10_000).flat_map(|i| if i % 100 == 0 { [f32::NAN, f32::INFINITY] } else { [3.0, -3.0] }).collect();
+        let lr: Vec<f32> =
+            (0..10_000).flat_map(|i| if i % 100 == 0 { [f32::NAN, f32::INFINITY] } else { [3.0, -3.0] }).collect();
         let p = d.join("x.mp3");
         std::fs::write(&p, encode(48000, 320, &lr)).unwrap();
         let (_, out) = read_all(&p);

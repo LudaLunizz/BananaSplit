@@ -76,11 +76,7 @@ pub fn is_splitter(name: &str) -> bool {
 /// use: "Splitter 3" for strip 3 (channel 2), "Splitter B1" for bus B1.
 /// Channels are strips 1-6, then buses A1..B2.
 pub fn splitter_name(ch: usize) -> String {
-    if ch < NUM_STRIPS {
-        format!("Splitter {}", ch + 1)
-    } else {
-        format!("Splitter {}", BUS_IDS[ch - NUM_STRIPS])
-    }
+    if ch < NUM_STRIPS { format!("Splitter {}", ch + 1) } else { format!("Splitter {}", BUS_IDS[ch - NUM_STRIPS]) }
 }
 
 /// Which channel's Splitter cable an endpoint belongs to, and which half,
@@ -130,10 +126,16 @@ pub fn splitter_endpoint(devs: &[DevInfo], ch: usize, end: SplitterEnd) -> Optio
 /// mixer into itself as soon as that strip goes to that bus: a warning for
 /// each such pair. `strip_devs[s]` are the indices in `caps` that strip `s`
 /// records, `bus_devs[b]` the ones in `rens` that bus `b` plays on.
-pub fn splitter_feedback(caps: &[DevInfo], rens: &[DevInfo], strip_devs: &[Vec<usize>], bus_devs: &[Vec<usize>]) -> Vec<String> {
+pub fn splitter_feedback(
+    caps: &[DevInfo],
+    rens: &[DevInfo],
+    strip_devs: &[Vec<usize>],
+    bus_devs: &[Vec<usize>],
+) -> Vec<String> {
     let mut warnings = Vec::new();
     for ch in 0..NUM_STRIPS + NUM_BUSES {
-        let at = |devs: &[DevInfo], end: SplitterEnd| devs.iter().position(|d| splitter_cable(&d.name) == Some((ch, end)));
+        let at =
+            |devs: &[DevInfo], end: SplitterEnd| devs.iter().position(|d| splitter_cable(&d.name) == Some((ch, end)));
         let (Some(input), Some(output)) = (at(rens, SplitterEnd::Input), at(caps, SplitterEnd::Output)) else {
             continue;
         };
@@ -182,11 +184,7 @@ pub fn default_cable<'a>(devs: &'a [DevInfo], default_id: Option<&str>) -> Optio
 }
 
 /// Find the device for one `connect` entry.
-pub fn resolve<'a>(
-    pattern: &str,
-    devs: &'a [DevInfo],
-    default_id: Option<&str>,
-) -> Option<&'a DevInfo> {
+pub fn resolve<'a>(pattern: &str, devs: &'a [DevInfo], default_id: Option<&str>) -> Option<&'a DevInfo> {
     if pattern == DEFAULT_DEVICE {
         // Whatever Windows uses by default, unless that is a virtual cable
         // (see `default_cable`): then the real device `@physical` picks.
@@ -232,23 +230,13 @@ mod tests {
     use super::*;
 
     fn devs(names: &[&str]) -> Vec<DevInfo> {
-        names
-            .iter()
-            .enumerate()
-            .map(|(i, n)| DevInfo {
-                name: n.to_string(),
-                id: format!("id{i}"),
-            })
-            .collect()
+        names.iter().enumerate().map(|(i, n)| DevInfo { name: n.to_string(), id: format!("id{i}") }).collect()
     }
 
     #[test]
     fn default_never_follows_windows_into_a_cable() {
-        let outs = devs(&[
-            "CABLE Input (VB-Audio Virtual Cable)",
-            "Speakers (Realtek(R) Audio)",
-            "Headphones (USB Headset)",
-        ]);
+        let outs =
+            devs(&["CABLE Input (VB-Audio Virtual Cable)", "Speakers (Realtek(R) Audio)", "Headphones (USB Headset)"]);
         // default output "CABLE Input" (desktop sound through the mixer):
         // A1 plays on the speakers, not into the cable a strip records
         assert_eq!(resolve(DEFAULT_DEVICE, &outs, Some("id0")).unwrap().id, "id1");
@@ -268,25 +256,15 @@ mod tests {
 
     #[test]
     fn physical_skips_virtual_default() {
-        let d = devs(&[
-            "CABLE Input (VB-Audio Virtual Cable)",
-            "Speakers (Realtek(R) Audio)",
-            "Headphones (USB Headset)",
-        ]);
+        let d =
+            devs(&["CABLE Input (VB-Audio Virtual Cable)", "Speakers (Realtek(R) Audio)", "Headphones (USB Headset)"]);
         // default is the cable -> pick the first real device instead
         assert_eq!(resolve(PHYSICAL, &d, Some("id0")).unwrap().id, "id1");
         // default is a real device -> use it
         assert_eq!(resolve(PHYSICAL, &d, Some("id2")).unwrap().id, "id2");
         // no default at all
         assert_eq!(resolve(PHYSICAL, &d, None).unwrap().id, "id1");
-        assert!(
-            resolve(
-                PHYSICAL,
-                &devs(&["CABLE Input (VB-Audio Virtual Cable)"]),
-                Some("id0")
-            )
-            .is_none()
-        );
+        assert!(resolve(PHYSICAL, &devs(&["CABLE Input (VB-Audio Virtual Cable)"]), Some("id0")).is_none());
     }
 
     #[test]
@@ -319,10 +297,7 @@ mod tests {
         assert!(is_virtual("VoiceMeeter Input (VB-Audio VoiceMeeter VAIO)"));
         assert!(!is_virtual("Microphone (HD Pro Webcam C920)"));
         assert!(names_cable("CABLE-D Output"));
-        assert_eq!(
-            short_name("CABLE Output (VB-Audio Virtual Cable)"),
-            "CABLE Output"
-        );
+        assert_eq!(short_name("CABLE Output (VB-Audio Virtual Cable)"), "CABLE Output");
         assert_eq!(short_name("Mic"), "Mic");
     }
 
@@ -361,7 +336,13 @@ mod tests {
         assert_eq!(splitter_cable("Splitter B1 (13- Splitter Cables)"), Some((9, Output)));
         assert!(is_cable("Splitter 1 (2- Splitter Cables)") && is_virtual("Splitter 1 (2- Splitter Cables)"));
         assert_eq!(short_name("Splitter 1 (2- Splitter Cables)"), "Splitter 1");
-        for name in ["Splitter 1 (x- Splitter Cables)", "Splitter 1 (- Splitter Cables)", "Splitter 1 (2- 3- Splitter Cables)", "Splitter 1 (Splitter Cables) x", "Splitter 1 Splitter Cables)"] {
+        for name in [
+            "Splitter 1 (x- Splitter Cables)",
+            "Splitter 1 (- Splitter Cables)",
+            "Splitter 1 (2- 3- Splitter Cables)",
+            "Splitter 1 (Splitter Cables) x",
+            "Splitter 1 Splitter Cables)",
+        ] {
             assert!(!is_splitter(name), "{name}");
         }
         // an endpoint renamed with parentheses of its own
@@ -397,11 +378,8 @@ mod tests {
     #[test]
     fn splitter_endpoints_are_found_by_channel() {
         use SplitterEnd::{Input, Output};
-        let caps = devs(&[
-            "Microphone (USB Mic)",
-            "Splitter 1 Output (Splitter Cables)",
-            "Splitter B1 (Splitter Cables)",
-        ]);
+        let caps =
+            devs(&["Microphone (USB Mic)", "Splitter 1 Output (Splitter Cables)", "Splitter B1 (Splitter Cables)"]);
         let rens = devs(&["Splitter 1 (Splitter Cables)", "Splitter B1 Input (Splitter Cables)"]);
         assert_eq!(splitter_endpoint(&caps, 0, Output).unwrap().id, "id1");
         assert_eq!(splitter_endpoint(&rens, 0, Input).unwrap().id, "id0");
@@ -416,11 +394,8 @@ mod tests {
 
     #[test]
     fn splitter_feedback_is_found() {
-        let caps = devs(&[
-            "Microphone (USB Mic)",
-            "Splitter 1 Output (Splitter Cables)",
-            "Splitter B1 (Splitter Cables)",
-        ]);
+        let caps =
+            devs(&["Microphone (USB Mic)", "Splitter 1 Output (Splitter Cables)", "Splitter B1 (Splitter Cables)"]);
         let rens = devs(&[
             "Speakers (Realtek(R) Audio)",
             "Splitter 1 (Splitter Cables)",
@@ -441,14 +416,18 @@ mod tests {
         buses[0] = vec![0, 1];
         assert_eq!(
             splitter_feedback(&caps, &rens, &strips, &buses),
-            ["bus A1 plays into Splitter 1 and strip 1 records that cable: if strip 1 goes to A1 (directly or through a send), it feeds back"]
+            [
+                "bus A1 plays into Splitter 1 and strip 1 records that cable: if strip 1 goes to A1 (directly or through a send), it feeds back"
+            ]
         );
         // strip 2 records B1's microphone as well
         buses[0] = vec![0];
         strips[1] = vec![0, 2];
         assert_eq!(
             splitter_feedback(&caps, &rens, &strips, &buses),
-            ["bus B1 plays into Splitter B1 Input and strip 2 records that cable: if strip 2 goes to B1 (directly or through a send), it feeds back"]
+            [
+                "bus B1 plays into Splitter B1 Input and strip 2 records that cable: if strip 2 goes to B1 (directly or through a send), it feeds back"
+            ]
         );
         // nobody plays into B1's cable: its microphone is silent, no loop
         buses[3] = vec![];
@@ -487,4 +466,3 @@ mod tests {
         assert_eq!(resolve("splitter 1", &all, None).unwrap().id, "id0");
     }
 }
-

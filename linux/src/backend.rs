@@ -10,16 +10,16 @@
 use crate::cables::{CableSet, Cables};
 use crate::devices::{self, Resolver, Side, client_of};
 use crate::jack::{JackClient, LATENCY_CAPTURE, LATENCY_PLAYBACK, Port, regex_escape};
-use std::cell::{Cell, RefCell};
-use std::ffi::{c_int, c_void};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::time::{Duration, Instant};
 use bananasplit::config::{Config, DEFAULT_DEVICE, PHYSICAL};
 use bananasplit::engine::{BUS_IDS, Engine, MAX_FRAMES, NUM_BUSES, NUM_STRIPS, Shared};
 use bananasplit::player::PlayTap;
 use bananasplit::recorder::RecTap;
 use bananasplit::vban::VbanTap;
+use std::cell::{Cell, RefCell};
+use std::ffi::{c_int, c_void};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::time::{Duration, Instant};
 
 struct RtCtx {
     lib: &'static crate::jack::Lib,
@@ -323,12 +323,7 @@ impl Backend {
     pub fn io_latency(&self) -> (u32, u32) {
         let c = self.client();
         let cap = self.in_ports.iter().flatten().map(|&p| c.latency(p, LATENCY_CAPTURE).max).max().unwrap_or(0);
-        let play = self.out_ports
-            .iter()
-            .flatten()
-            .map(|&p| c.latency(p, LATENCY_PLAYBACK).max)
-            .max()
-            .unwrap_or(0);
+        let play = self.out_ports.iter().flatten().map(|&p| c.latency(p, LATENCY_PLAYBACK).max).max().unwrap_or(0);
         (cap, play)
     }
 
@@ -396,7 +391,9 @@ impl Backend {
                                 f.home = Some(now);
                             }
                         }
-                        (None, Some(now)) => followed.push(Followed { row, keyword: kw, client: now.clone(), home: real.then_some(now) }),
+                        (None, Some(now)) => {
+                            followed.push(Followed { row, keyword: kw, client: now.clone(), home: real.then_some(now) })
+                        }
                         // nothing to connect now: what it had stays
                         (_, None) => {}
                     }
@@ -404,7 +401,8 @@ impl Backend {
                 targets.push((r.ports, r.note, pat.as_str()));
             }
             // ... and what still has to stay connected
-            let wanted: Vec<String> = targets.iter().flat_map(|(ports, _, _)| ports.iter().take(2).map(|p| client_of(p))).collect();
+            let wanted: Vec<String> =
+                targets.iter().flat_map(|(ports, _, _)| ports.iter().take(2).map(|p| client_of(p))).collect();
 
             let mut seen = Vec::new();
             for (ports, note, pat) in targets {
@@ -442,7 +440,15 @@ impl Backend {
     /// Does channel `ch`'s `@default` / `@physical` line stay with `client`
     /// right now: the desktop's default can't be used, and `client` is the
     /// device it pointed to last? `devs`: what pactl said.
-    pub fn stays_with(&self, cfg: &Config, cables: &Cables, devs: Option<devices::Devices>, ch: usize, pattern: &str, client: &str) -> bool {
+    pub fn stays_with(
+        &self,
+        cfg: &Config,
+        cables: &Cables,
+        devs: Option<devices::Devices>,
+        ch: usize,
+        pattern: &str,
+        client: &str,
+    ) -> bool {
         let (Some(kw), Some((_, _, side))) = (keyword(pattern), self.channel(ch)) else { return false };
         let home = self.followed.borrow().iter().find(|f| f.row == ch && f.keyword == kw).and_then(|f| f.home.clone());
         home.as_deref() == Some(client)
@@ -510,7 +516,8 @@ impl Backend {
         // a device's capture ports, not the monitor ports of its other side
         // (PipeWire lists a device's input and output as one JACK client
         // when they have the same name)
-        let ports = devices::prefer_non_monitor(self.client().ports(Some(&format!("^{}:", regex_escape(client))), side.flag()));
+        let ports =
+            devices::prefer_non_monitor(self.client().ports(Some(&format!("^{}:", regex_escape(client))), side.flag()));
         if ports.is_empty() {
             return Err(format!("\"{client}\" is gone"));
         }
@@ -541,15 +548,33 @@ impl Backend {
 
     /// Everything channel side `side` can be connected to (see
     /// [`Resolver::candidates`]); `devs`: what pactl said (None: unknown).
-    pub fn candidates(&self, cfg: &Config, cables: &Cables, devs: Option<devices::Devices>, side: Side) -> Vec<devices::Candidate> {
-        Resolver::new(self.client(), &self.client_name, CableSet::for_config(cfg).with_live(cables)).with_devices(devs).candidates(side)
+    pub fn candidates(
+        &self,
+        cfg: &Config,
+        cables: &Cables,
+        devs: Option<devices::Devices>,
+        side: Side,
+    ) -> Vec<devices::Candidate> {
+        Resolver::new(self.client(), &self.client_name, CableSet::for_config(cfg).with_live(cables))
+            .with_devices(devs)
+            .candidates(side)
     }
 
     /// Does `pattern` (a `connect` value) take in JACK client `client` on
     /// channel `ch`'s side right now? `devs`: what pactl said.
-    pub fn pattern_reaches(&self, cfg: &Config, cables: &Cables, devs: Option<devices::Devices>, ch: usize, pattern: &str, client: &str) -> bool {
+    pub fn pattern_reaches(
+        &self,
+        cfg: &Config,
+        cables: &Cables,
+        devs: Option<devices::Devices>,
+        ch: usize,
+        pattern: &str,
+        client: &str,
+    ) -> bool {
         let Some((_, _, side)) = self.channel(ch) else { return false };
-        let rs = Resolver::new(self.client(), &self.client_name, CableSet::for_config(cfg).with_live(cables)).with_devices(devs).with_lines(cfg);
+        let rs = Resolver::new(self.client(), &self.client_name, CableSet::for_config(cfg).with_live(cables))
+            .with_devices(devs)
+            .with_lines(cfg);
         rs.resolve(pattern, side).ports.iter().take(2).any(|p| client_of(p) == client)
     }
 }

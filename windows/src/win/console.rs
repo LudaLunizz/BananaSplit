@@ -14,10 +14,7 @@ pub static CLEAN_EXIT: AtomicBool = AtomicBool::new(false);
 
 unsafe extern "system" fn on_ctrl(kind: u32) -> BOOL {
     QUIT.store(true, SeqCst);
-    if matches!(
-        kind,
-        CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT
-    ) {
+    if matches!(kind, CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT) {
         // Windows kills the process as soon as this handler returns, so
         // give the main loop (which polls every ~33 ms) time to save the
         // config and stop the devices. Windows allows up to 5 s.
@@ -45,8 +42,7 @@ pub fn stdin_is_tty() -> bool {
     let mut m = 0u32;
     // SAFETY: `m` is a local u32 out-pointer; a non-console handle just makes GetConsoleMode fail.
     unsafe {
-        GetConsoleMode(handle(STD_INPUT_HANDLE), &mut m) != 0
-            && GetConsoleMode(handle(STD_OUTPUT_HANDLE), &mut m) != 0
+        GetConsoleMode(handle(STD_INPUT_HANDLE), &mut m) != 0 && GetConsoleMode(handle(STD_OUTPUT_HANDLE), &mut m) != 0
     }
 }
 
@@ -109,10 +105,7 @@ impl RawTerminal {
             SetConsoleMode(hin, raw_in);
             if SetConsoleMode(hout, vt_out) == 0 {
                 SetConsoleMode(hin, min);
-                return Err(
-                    "this console cannot show colours/escape codes (needs Windows 10 or newer)"
-                        .into(),
-                );
+                return Err("this console cannot show colours/escape codes (needs Windows 10 or newer)".into());
             }
             SetConsoleOutputCP(CP_UTF8);
             let title = wide("BananaSplit mixer");
@@ -152,10 +145,11 @@ pub fn key_bytes(rec: &INPUT_RECORD, out: &mut Vec<u8>) {
         if !seq.is_empty() {
             out.extend_from_slice(seq);
         } else if rec.UnicodeChar != 0
-            && let Some(c) = char::from_u32(rec.UnicodeChar as u32) {
-                let mut b = [0u8; 4];
-                out.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
-            }
+            && let Some(c) = char::from_u32(rec.UnicodeChar as u32)
+        {
+            let mut b = [0u8; 4];
+            out.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
+        }
     }
 }
 
@@ -230,7 +224,9 @@ pub fn attach_parent() -> bool {
         if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
             return false;
         }
-        for (which, name) in [(STD_INPUT_HANDLE, "CONIN$"), (STD_OUTPUT_HANDLE, "CONOUT$"), (STD_ERROR_HANDLE, "CONOUT$")] {
+        for (which, name) in
+            [(STD_INPUT_HANDLE, "CONIN$"), (STD_OUTPUT_HANDLE, "CONOUT$"), (STD_ERROR_HANDLE, "CONOUT$")]
+        {
             if usable(which) {
                 continue;
             }
@@ -282,51 +278,17 @@ mod tests {
     #[test]
     fn console_keys_decode_like_a_vt_terminal() {
         let mut b = Vec::new();
-        for r in [
-            key(VK_UP, 0),
-            key(VK_LEFT, 0),
-            key(0x51, b'q' as u16),
-            key(0x43, 3),
-            key(0xBE, b'.' as u16),
-        ] {
+        for r in [key(VK_UP, 0), key(VK_LEFT, 0), key(0x51, b'q' as u16), key(0x43, 3), key(0xBE, b'.' as u16)] {
             key_bytes(&r, &mut b);
         }
         // key-up events and non-key events are ignored
-        key_bytes(
-            &INPUT_RECORD {
-                bKeyDown: 0,
-                ..key(VK_DOWN, 0)
-            },
-            &mut b,
-        );
-        key_bytes(
-            &INPUT_RECORD {
-                EventType: 2,
-                ..key(VK_DOWN, 0)
-            },
-            &mut b,
-        );
+        key_bytes(&INPUT_RECORD { bKeyDown: 0, ..key(VK_DOWN, 0) }, &mut b);
+        key_bytes(&INPUT_RECORD { EventType: 2, ..key(VK_DOWN, 0) }, &mut b);
         // shift/ctrl alone produce no character
         key_bytes(&key(0x10, 0), &mut b);
-        assert_eq!(
-            decode(&mut b),
-            vec![
-                Key::Up,
-                Key::Left,
-                Key::Char(b'q'),
-                Key::Char(3),
-                Key::Char(b'.')
-            ]
-        );
+        assert_eq!(decode(&mut b), vec![Key::Up, Key::Left, Key::Char(b'q'), Key::Char(3), Key::Char(b'.')]);
         let mut rep = Vec::new();
-        key_bytes(
-            &INPUT_RECORD {
-                wRepeatCount: 3,
-                ..key(VK_RIGHT, 0)
-            },
-            &mut rep,
-        );
+        key_bytes(&INPUT_RECORD { wRepeatCount: 3, ..key(VK_RIGHT, 0) }, &mut rep);
         assert_eq!(decode(&mut rep), vec![Key::Right; 3]);
     }
 }
-

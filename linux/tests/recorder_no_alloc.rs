@@ -6,11 +6,11 @@
 //! (Separate test binary with its own counting allocator, which counts
 //! the test's own thread.)
 
+use bananasplit::engine::{Engine, NUM_BUSES, NUM_STRIPS, Shared};
+use bananasplit::recorder::{ALL_LINKS, HEADER_WORDS, RecTap};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-use bananasplit::engine::{Engine, NUM_BUSES, NUM_STRIPS, Shared};
-use bananasplit::recorder::{ALL_LINKS, HEADER_WORDS, RecTap};
 
 struct Counting;
 thread_local! {

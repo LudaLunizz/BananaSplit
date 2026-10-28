@@ -150,7 +150,8 @@ impl SceneStore {
             .filter_map(|e| {
                 let n = e.file_name().into_string().ok()?;
                 let stem = n.strip_suffix(".ini")?;
-                (validate_name(stem).ok() == Some(stem) && e.path().is_file() && is_scene(&e.path())).then(|| stem.to_string())
+                (validate_name(stem).ok() == Some(stem) && e.path().is_file() && is_scene(&e.path()))
+                    .then(|| stem.to_string())
             })
             .collect();
         v.sort_by_key(|n| n.to_lowercase());
@@ -261,7 +262,9 @@ mod tests {
         assert_eq!(sh2.buses[4].routes.load(Relaxed), 0b00010);
         // a scene never touches names, connections or cables
         let text = std::fs::read_to_string(dir.join("Live Room.ini")).unwrap();
-        assert!(!text.contains("name") && !text.contains("connect") && !text.contains("vban") && !text.contains("cable"));
+        assert!(
+            !text.contains("name") && !text.contains("connect") && !text.contains("vban") && !text.contains("cable")
+        );
         // a bus without sends writes none (2.6 can load the scene)
         assert_eq!(text.matches("routes = ").count(), 6 + 1);
         store.delete("Live Room").unwrap();

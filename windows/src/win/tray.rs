@@ -11,8 +11,8 @@
 //! window then stays, and the icon is added when Explorer says the taskbar
 //! is there ("TaskbarCreated"), or by a retry every two seconds.
 
-use std::cell::RefCell;
 use crate::win::ffi::*;
+use std::cell::RefCell;
 
 const WM_APP: u32 = 0x8000;
 const WM_TRAY: u32 = WM_APP + 1;
@@ -125,7 +125,15 @@ fn make_icon(set: &[(u32, &[u8])]) -> HANDLE {
     let and_mask = vec![0u8; (size.div_ceil(32) * 4 * size) as usize];
     // SAFETY: `bgra` is size*size*4 bytes (32 bpp), `and_mask` size DWORD-padded 1-bpp rows (at least the WORD-aligned rows CreateIcon reads).
     unsafe {
-        CreateIcon(GetModuleHandleW(std::ptr::null()), size as i32, size as i32, 1, 32, and_mask.as_ptr(), bgra.as_ptr())
+        CreateIcon(
+            GetModuleHandleW(std::ptr::null()),
+            size as i32,
+            size as i32,
+            1,
+            32,
+            and_mask.as_ptr(),
+            bgra.as_ptr(),
+        )
     }
 }
 
@@ -224,7 +232,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: usize, l: isize) -> i
         }
         return 0;
     }
-    let readd = STATE.with(|s| s.borrow().as_ref().is_some_and(|st| st.taskbar_created != 0 && msg == st.taskbar_created));
+    let readd =
+        STATE.with(|s| s.borrow().as_ref().is_some_and(|st| st.taskbar_created != 0 && msg == st.taskbar_created));
     if readd || (msg == WM_TIMER && w == RETRY_TIMER) {
         // The taskbar is (back) there: Explorer started late, or restarted
         // and lost the icon. Or the retry timer: try again.
@@ -306,13 +315,14 @@ impl Tray {
     pub fn set_recording(&self, on: bool) {
         STATE.with(|s| {
             if let Some(st) = s.borrow_mut().as_mut()
-                && st.recording != on {
-                    st.recording = on;
-                    // Not shown yet: it is added with the right icon later.
-                    if st.shown {
-                        notify(st, NIM_MODIFY);
-                    }
+                && st.recording != on
+            {
+                st.recording = on;
+                // Not shown yet: it is added with the right icon later.
+                if st.shown {
+                    notify(st, NIM_MODIFY);
                 }
+            }
         });
     }
 
