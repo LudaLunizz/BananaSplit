@@ -115,16 +115,31 @@ const GAA_FLAG_SKIP_MULTICAST: u32 = 0x4;
 const GAA_FLAG_SKIP_DNS_SERVER: u32 = 0x8;
 
 pub fn local_ipv4() -> Vec<LocalIp> {
+    const FLAGS: u32 = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    const ERROR_BUFFER_OVERFLOW: u32 = 111;
+    // u64 elements: the list is read as IP_ADAPTER_ADDRESSES (8-byte aligned).
+    let mut buf: Vec<u64> = Vec::new();
     let mut size: u32 = 0;
-    unsafe {
-        let r = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, std::ptr::null_mut(), std::ptr::null_mut(), &mut size);
-        if r != 111 && r != 0 { return Vec::new(); }
-        if size == 0 { return Vec::new(); }
-        let mut buf = vec![0u8; size as usize];
-        let addrs = buf.as_mut_ptr() as *mut IpAdapterAddresses;
-        if GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, std::ptr::null_mut(), addrs, &mut size) != 0 {
+    let mut filled = false;
+    // Adapters can change between asking for the size and filling it in.
+    for _ in 0..5 {
+        buf = vec![0u64; (size as usize).div_ceil(8)];
+        let p = if buf.is_empty() { std::ptr::null_mut() } else { buf.as_mut_ptr().cast() };
+        // SAFETY: `size` is the buffer's size in bytes (0 with no buffer).
+        let r = unsafe { GetAdaptersAddresses(AF_INET, FLAGS, std::ptr::null_mut(), p, &mut size) };
+        if r == 0 && !buf.is_empty() {
+            filled = true;
+            break;
+        }
+        if (r != ERROR_BUFFER_OVERFLOW && r != 0) || size == 0 {
             return Vec::new();
         }
+    }
+    if !filled {
+        return Vec::new();
+    }
+    unsafe {
+        let addrs = buf.as_mut_ptr() as *mut IpAdapterAddresses;
         let mut out = Vec::new();
         let mut cur = addrs;
         while !cur.is_null() {

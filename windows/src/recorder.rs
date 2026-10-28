@@ -795,14 +795,14 @@ struct Sink {
 
 enum SinkKind {
     Wav(WavWriter),
-    Mp3(Mp3Writer),
+    Mp3(Box<Mp3Writer>),
 }
 
 impl Sink {
     /// Write the header of a new file (`rate`: the file's sample rate).
     fn new(path: PathBuf, file: File, format: Format, kbps: u32, rate: u32) -> io::Result<Sink> {
         let kind = match format {
-            Format::Mp3 => SinkKind::Mp3(Mp3Writer::new(file, rate, kbps)?),
+            Format::Mp3 => SinkKind::Mp3(Box::new(Mp3Writer::new(file, rate, kbps)?)),
             f => SinkKind::Wav(WavWriter::new(file, f, rate)?),
         };
         Ok(Sink { path, kind })
