@@ -16,14 +16,22 @@
 //! else on purpose (unticked in the menu, say) is forgotten, and a stream
 //! that someone moves afterwards is left alone.
 //!
+//! An app ticked in a strip's menu is noted at once, also an app that does
+//! not choose its own device (Strawberry: moving its stream sets no
+//! `target.object`); moving it back to a device of the computer in the menu
+//! forgets it. The file can be edited by hand too, one `<strip> <app>` per
+//! line (`5 strawberry`); a change applies while BananaSplit runs.
+//!
 //! Apps are known by their program's file name (`Discord`), else their
-//! application.name. The file is separate from the config, so older
-//! versions still read the config.
+//! application.name, else their stream's node.name; case does not matter.
+//! The file is separate from the config, so older versions still read the
+//! config.
 
 use crate::cables;
 use crate::devices::{PulseInfo, Stream};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use bananasplit::engine::NUM_STRIPS;
 
 const FILE: &str = "app-strips";
@@ -31,6 +39,11 @@ const FILE: &str = "app-strips";
 /// The name an app is remembered by.
 pub fn key(s: &Stream) -> &str {
     if s.binary.is_empty() { &s.app } else { &s.binary }
+}
+
+/// The strip `app` is noted on (the name in any case).
+fn home_of(homes: &BTreeMap<String, usize>, app: &str) -> Option<usize> {
+    homes.get(app).or_else(|| homes.iter().find(|(a, _)| a.eq_ignore_ascii_case(app)).map(|(_, k)| k)).copied()
 }
 
 /// What to do after one look at the apps' streams.
@@ -67,18 +80,18 @@ pub fn plan(
             // playing where someone put it
             match strip_of(&s.pinned) {
                 Some(k) => {
-                    if homes.get(app) != Some(&k) && !p.learn.iter().any(|(a, _)| a == app) {
+                    if home_of(homes, app) != Some(k) && !p.learn.iter().any(|(a, _)| a == app) {
                         p.learn.push((app.to_string(), k));
                     }
                 }
-                None if !ours(&s.pinned) && homes.contains_key(app) && !p.forget.iter().any(|a| a == app) => p.forget.push(app.to_string()),
+                None if !ours(&s.pinned) && home_of(homes, app).is_some() && !p.forget.iter().any(|a| a == app) => p.forget.push(app.to_string()),
                 None => {}
             }
         }
         if done.contains(&s.id) {
             continue;
         }
-        let Some(&k) = homes.get(app) else {
+        let Some(k) = home_of(homes, app) else {
             p.done.push(s.id);
             continue;
         };
@@ -113,7 +126,11 @@ pub fn parse(text: &str) -> BTreeMap<String, usize> {
 }
 
 pub fn render(m: &BTreeMap<String, usize>) -> String {
-    let mut o = String::from("# Apps BananaSplit puts back on their strip when it starts (strip number, app).\n# Written by BananaSplit; untick an app in a strip's menu to remove it.\n");
+    let mut o = String::from(
+        "# Apps BananaSplit puts on their strip whenever they start playing (strip number, app).\n\
+         # Ticking an app in a strip's menu adds it; moving it back to a device of the computer removes it.\n\
+         # You can edit this file: one \"<strip 1-6> <app>\" per line, e.g. \"5 strawberry\".\n",
+    );
     for (app, k) in m {
         o.push_str(&format!("{} {app}\n", k + 1));
     }
@@ -123,7 +140,13 @@ pub fn render(m: &BTreeMap<String, usize>) -> String {
 pub struct AppHomes {
     path: PathBuf,
     homes: BTreeMap<String, usize>,
+    /// The file's modification time when it was last read or written.
+    stamp: Option<SystemTime>,
     done: HashSet<u32>,
+}
+
+fn mtime(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 impl AppHomes {
@@ -131,13 +154,43 @@ impl AppHomes {
     pub fn load(config: &Path) -> AppHomes {
         let path = config.parent().map_or_else(|| PathBuf::from(FILE), |d| d.join(FILE));
         let homes = std::fs::read_to_string(&path).map(|t| parse(&t)).unwrap_or_default();
-        AppHomes { path, homes, done: HashSet::new() }
+        let stamp = mtime(&path);
+        AppHomes { path, homes, stamp, done: HashSet::new() }
+    }
+
+    /// Read the file again if someone edited it.
+    fn reload(&mut self) {
+        let now = mtime(&self.path);
+        if now != self.stamp {
+            self.homes = std::fs::read_to_string(&self.path).map(|t| parse(&t)).unwrap_or_default();
+            self.stamp = now;
+            self.done.clear(); // apply the new list to the streams that play now
+        }
+    }
+
+    fn save(&mut self) -> Result<(), String> {
+        std::fs::write(&self.path, render(&self.homes)).map_err(|e| format!("cannot save {}: {e}", self.path.display()))?;
+        self.stamp = mtime(&self.path);
+        Ok(())
+    }
+
+    /// The menu put `app` on strip `strip` (`None`: on a device of the
+    /// computer): note it, or forget it.
+    pub fn set(&mut self, app: &str, strip: Option<usize>) -> Result<(), String> {
+        self.reload();
+        let before = self.homes.clone();
+        self.homes.retain(|a, _| !a.eq_ignore_ascii_case(app));
+        if let Some(k) = strip.filter(|k| *k < NUM_STRIPS) {
+            self.homes.insert(app.to_string(), k);
+        }
+        if self.homes == before { Ok(()) } else { self.save() }
     }
 
     /// Look at the latest report; move apps back to their strips. Returns
     /// a line for the user per app moved.
     pub fn poll(&mut self, info: &PulseInfo, set: &cables::CableSet, live: &cables::Cables, names: &[String]) -> Vec<String> {
         let Some(d) = info.devices.as_ref() else { return Vec::new() };
+        self.reload();
         let present = |n: &str| d.list.iter().any(|x| !x.is_source && x.name == n);
         let strips: Vec<Option<String>> =
             (0..NUM_STRIPS).map(|k| live.live(k).map(|c| c.node_name.clone()).filter(|n| present(n))).collect();
@@ -146,10 +199,11 @@ impl AppHomes {
         let p = plan(&self.homes, &info.playing, sink, &strips, ours, &self.done);
         let before = self.homes.clone();
         for (app, k) in p.learn {
+            self.homes.retain(|a, _| !a.eq_ignore_ascii_case(&app));
             self.homes.insert(app, k);
         }
         for app in p.forget {
-            self.homes.remove(&app);
+            self.homes.retain(|a, _| !a.eq_ignore_ascii_case(&app));
         }
         let mut notes = Vec::new();
         for (id, k) in p.moves {
@@ -164,8 +218,8 @@ impl AppHomes {
         // forget streams that ended, so the set stays small
         self.done.retain(|id| info.playing.iter().any(|s| s.id == *id));
         if self.homes != before {
-            if let Err(e) = std::fs::write(&self.path, render(&self.homes)) {
-                notes.push(format!("cannot save {}: {e}", self.path.display()));
+            if let Err(e) = self.save() {
+                notes.push(e);
             }
         }
         notes
@@ -253,6 +307,50 @@ mod tests {
         let p = plan(&h, &[st(9, "Discord", 55, "bananasplit_in5")], sink, &cables(), ours, &HashSet::new());
         assert!(p.moves.is_empty());
         assert_eq!(p.learn, [("Discord".to_string(), 4)]);
+    }
+
+    /// Strawberry names no device of its own: its stream has no
+    /// `target.object`, and only its node.name says who it is.
+    fn strawberry(id: u32, target: u32) -> Stream {
+        Stream { app: "strawberry".into(), node: "strawberry".into(), ..st(id, "", target, "") }
+    }
+
+    #[test]
+    fn an_app_written_by_hand_goes_to_its_strip_in_any_case() {
+        let h = homes(&[("Strawberry", 4)]);
+        let p = plan(&h, &[strawberry(5, 53)], sink, &cables(), ours, &HashSet::new());
+        assert_eq!(p.moves, [(5, 4)]);
+        assert!(p.learn.is_empty() && p.forget.is_empty());
+        // already there: nothing to do
+        assert!(plan(&h, &[strawberry(5, 55)], sink, &cables(), ours, &HashSet::new()).moves.is_empty());
+    }
+
+    #[test]
+    fn the_menu_notes_and_forgets_apps_and_hand_edits_apply() {
+        let d = std::env::temp_dir().join(format!("bs-apphome-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let file = d.join(FILE);
+        std::fs::write(&file, "2 Discord\n").unwrap();
+        let mut a = AppHomes::load(&d.join("bananasplit.ini"));
+        a.set("strawberry", Some(4)).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(parse(&text), homes(&[("Discord", 1), ("strawberry", 4)]), "{text}");
+        assert!(text.starts_with('#'), "explains itself: {text}");
+        // moved to another strip, then back to the computer's device
+        a.set("Strawberry", Some(2)).unwrap();
+        assert_eq!(parse(&std::fs::read_to_string(&file).unwrap()), homes(&[("Discord", 1), ("Strawberry", 2)]));
+        a.set("strawberry", None).unwrap();
+        assert_eq!(parse(&std::fs::read_to_string(&file).unwrap()), homes(&[("Discord", 1)]));
+        // edited by hand while it runs (a later modification time)
+        std::fs::write(&file, "# mine\n5 strawberry\n2 Discord\nnot a line\n7 too high\n").unwrap();
+        let later = SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options().write(true).open(&file).unwrap().set_modified(later).unwrap();
+        a.done.insert(99);
+        a.reload();
+        assert_eq!(a.homes, homes(&[("Discord", 1), ("strawberry", 4)]));
+        assert!(a.done.is_empty(), "the new list applies to the streams playing now");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

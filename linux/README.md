@@ -13,6 +13,13 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.9
+
+* **Every app keeps its strip, also apps that don't choose a device themselves.** Since 2.8.7 BananaSplit put an app back on its strip after a restart, but it only learned that strip from apps that choose their own output device (Discord does). An app like Strawberry plays wherever it is put and says nothing about it, so ticking it in a strip's menu was forgotten at the next restart. Now ticking an app in a strip's menu writes it into `app-strips` at once, and moving it back to a device of the computer in the menu takes it out.
+* **`app-strips` is yours to edit.** It sits next to the config: one `<strip> <app>` per line, for example `5 strawberry` (the name is the program's, as the strip's menu shows it; case doesn't matter). A change applies while BananaSplit runs: the apps that play now go to their strip at once.
+
+Nothing to change on your side. Apps you put on a strip before stay remembered.
+
 ## What's new in 2.8.8
 
 * **A folder per day for your recordings.** New takes go into a folder named after the day, inside the recordings folder: `BananaSplit/2026-10-28/2026-10-28_14-03-05_mix.mp3`. A take that runs past midnight continues with its next part (the next hourly file) in the next day's folder, so every day's folder holds the files that started on that day. The player lists the takes of every day folder, and a take whose parts are in two folders is still one take that plays straight through.
