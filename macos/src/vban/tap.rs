@@ -337,9 +337,20 @@ impl VbanRt {
     /// Hand this cycle's sources to the outgoing streams. `strips` is the
     /// engine scratch with the post-fader strips (valid where `strip_live`),
     /// `buses` the finished bus outputs.
-    pub fn push(&mut self, tap: &VbanTap, n: usize, strips: &[f32], strip_live: &[bool; NUM_STRIPS], buses: &[[&mut [f32]; 2]; NUM_BUSES]) {
+    pub fn push(
+        &mut self,
+        tap: &VbanTap,
+        n: usize,
+        strips: &[f32],
+        strip_live: &[bool; NUM_STRIPS],
+        buses: &[[&mut [f32]; 2]; NUM_BUSES],
+    ) {
         tap.cycles.fetch_add(1, Relaxed);
-        if n == 0 || n > MAX_FRAMES || strips.len() < NUM_STRIPS * 2 * MAX_FRAMES || buses.iter().any(|b| b[0].len() < n || b[1].len() < n) {
+        if n == 0
+            || n > MAX_FRAMES
+            || strips.len() < NUM_STRIPS * 2 * MAX_FRAMES
+            || buses.iter().any(|b| b[0].len() < n || b[1].len() < n)
+        {
             return;
         }
         for slot in &tap.outs {
@@ -532,7 +543,8 @@ mod tests {
         store[6].fill(0.7);
         store[7].fill(-0.7);
         let mut it = store.iter_mut();
-        let buses: [[&mut [f32]; 2]; NUM_BUSES] = std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
+        let buses: [[&mut [f32]; 2]; NUM_BUSES] =
+            std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
         let mut live = [true; NUM_STRIPS];
         live[4] = false;
         rt.push(&tap, 32, &sc, &live, &buses);

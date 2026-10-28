@@ -82,7 +82,11 @@ pub fn list_devices() -> Result<String, String> {
     let all = coreaudio::devices()?;
     let mut o = String::new();
     for input in [true, false] {
-        o.push_str(if input { "Input devices (use in [stripN] connect =)\n" } else { "Output devices (use in [bus.XX] connect =)\n" });
+        o.push_str(if input {
+            "Input devices (use in [stripN] connect =)\n"
+        } else {
+            "Output devices (use in [bus.XX] connect =)\n"
+        });
         let def = coreaudio::default_uid(input);
         for d in all.iter().filter(|d| if input { d.inputs > 0 } else { d.outputs > 0 }) {
             let n = if input { d.inputs } else { d.outputs };
@@ -90,7 +94,13 @@ pub fn list_devices() -> Result<String, String> {
                 "    {}{}{}  {n} ch, {} kHz\n",
                 d.info.name,
                 if def.as_deref() == Some(d.info.id.as_str()) { "  [default]" } else { "" },
-                if route::is_cable(&d.info.name) { "  (virtual cable)" } else if d.info.virt { "  (virtual)" } else { "" },
+                if route::is_cable(&d.info.name) {
+                    "  (virtual cable)"
+                } else if d.info.virt {
+                    "  (virtual)"
+                } else {
+                    ""
+                },
                 d.rate / 1000.0,
             ));
         }
@@ -137,13 +147,14 @@ impl Session {
         let stats = Arc::new(Stats::default());
         shared.sample_rate.store(RATE, SeqCst);
         // Start audio right away; the first connect() reuses this graph.
-        let graph = match Graph::build(cfg, &shared, &stats, rec_tap.clone(), vban_tap.clone(), Some(play_tap.clone()), None) {
-            Ok(g) => Some(g),
-            Err(e) => {
-                notes.push(e);
-                None
-            }
-        };
+        let graph =
+            match Graph::build(cfg, &shared, &stats, rec_tap.clone(), vban_tap.clone(), Some(play_tap.clone()), None) {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    notes.push(e);
+                    None
+                }
+            };
         Ok(Session {
             shared,
             stats,
@@ -197,7 +208,8 @@ impl Session {
             Some(s) if s.master && self.bench.is_none() => {
                 self.bench = Some(s.uid);
                 self.dirty = true;
-                self.note = Some(format!("{} still delivers no audio: the mixer goes on without waiting for it", s.name));
+                self.note =
+                    Some(format!("{} still delivers no audio: the mixer goes on without waiting for it", s.name));
                 return true;
             }
             Some(_) => {}
@@ -219,7 +231,15 @@ impl Session {
             self.signature = coreaudio::signature();
             self.last_scan = Instant::now();
             self.shared.sample_rate.store(RATE, SeqCst);
-            match Graph::build(cfg, &self.shared, &self.stats, self.rec_tap.clone(), self.vban_tap.clone(), self.play_tap.clone(), self.bench.as_deref()) {
+            match Graph::build(
+                cfg,
+                &self.shared,
+                &self.stats,
+                self.rec_tap.clone(),
+                self.vban_tap.clone(),
+                self.play_tap.clone(),
+                self.bench.as_deref(),
+            ) {
                 Ok(g) => self.graph = Some(g),
                 Err(e) => return (Vec::new(), vec![e]),
             }

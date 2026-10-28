@@ -136,7 +136,9 @@ pub fn set_autostart(enable: bool) -> Result<String, String> {
     } else {
         match std::fs::remove_file(&f) {
             Ok(()) => Ok("BananaSplit will not start when you log in.".into()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("BananaSplit will not start when you log in.".into()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Ok("BananaSplit will not start when you log in.".into())
+            }
             Err(e) => Err(format!("{}: {e}", f.display())),
         }
     }
@@ -192,7 +194,13 @@ fn dialog(text: &str, critical: bool) {
     if critical {
         script.push_str(" as critical");
     }
-    let _ = Command::new("/usr/bin/osascript").arg("-e").arg(&script).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let _ = Command::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(&script)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 pub fn error_dialog(text: &str) {
@@ -202,7 +210,10 @@ pub fn error_dialog(text: &str) {
 /// The app window could not open. The mixer runs anyway, so its page opens
 /// in the browser.
 pub fn no_window(why: &str, mixer_url: &str) {
-    dialog(&format!("BananaSplit's window could not open:\n{why}\n\nThe mixer is running, and opens in your web browser."), false);
+    dialog(
+        &format!("BananaSplit's window could not open:\n{why}\n\nThe mixer is running, and opens in your web browser."),
+        false,
+    );
     let _ = open_page(mixer_url);
 }
 
@@ -214,7 +225,10 @@ mod tests {
     fn launch_agent_round_trip() {
         let exe = Path::new("/Applications/Banana & Split <2>.app/Contents/MacOS/bananasplit");
         let p = agent_plist(exe);
-        assert!(p.contains("<string>/Applications/Banana &amp; Split &lt;2&gt;.app/Contents/MacOS/bananasplit</string>"), "{p}");
+        assert!(
+            p.contains("<string>/Applications/Banana &amp; Split &lt;2&gt;.app/Contents/MacOS/bananasplit</string>"),
+            "{p}"
+        );
         assert!(p.contains(&format!("<string>{APP_ID}</string>")) && p.contains("<string>--no-open</string>"));
         assert_eq!(agent_program(&p).as_deref(), Some(exe.to_str().unwrap()));
         assert_eq!(agent_program("<plist><dict></dict></plist>"), None);
@@ -222,7 +236,9 @@ mod tests {
 
     #[test]
     fn translocated_copies() {
-        assert!(translocated(Path::new("/private/var/folders/x1/abc/T/AppTranslocation/0F3A-11/d/BananaSplit.app/Contents/MacOS/bananasplit")));
+        assert!(translocated(Path::new(
+            "/private/var/folders/x1/abc/T/AppTranslocation/0F3A-11/d/BananaSplit.app/Contents/MacOS/bananasplit"
+        )));
         assert!(!translocated(Path::new("/Applications/BananaSplit.app/Contents/MacOS/bananasplit")));
         assert!(!translocated(Path::new("/Users/me/AppTranslocationNotes/BananaSplit.app/Contents/MacOS/bananasplit")));
     }

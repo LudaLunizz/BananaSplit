@@ -1,15 +1,15 @@
 //! Player: plays a recording back into the buses.
 //!
-//! A *take* is what one press of record produced: one stereo WAV file in
-//! `mix` mode, one per linked channel in `multi` mode, each possibly split
-//! into `_part2`, `_part3` … files. [`scan`] groups the WAV files of the
-//! recorder folder into takes; files that were not made by BananaSplit are
-//! takes of their own. Playing a multi-track take plays the sum of its
-//! tracks, like the `mix` recording would have been.
+//! A *take* is what one press of record produced: one stereo MP3 or WAV
+//! file in `mix` mode, one per linked channel in `multi` mode, each possibly
+//! split into `_part2`, `_part3` … files. [`scan`] groups the MP3 and WAV
+//! files of the recorder folder into takes; files that were not made by
+//! BananaSplit are takes of their own. Playing a multi-track take plays the
+//! sum of its tracks, like the `mix` recording would have been.
 //!
 //! ```text
 //!  player thread                                  audio thread (Engine::process)
-//!  read WAV ─► decode ─► sum tracks ─► resample ─► SPSC ring ─► PlayRt::mix ─► buses (routes)
+//!  read MP3/WAV ─► decode ─► sum tracks ─► resample ─► SPSC ring ─► PlayRt::mix ─► buses (routes)
 //! ```
 //!
 //! The audio thread only reads the preallocated ring and atomics: no
@@ -24,9 +24,16 @@
 //! plays on both sides), any sample rate up to four times the mixer's
 //! (resampled with the VBAN receiver's windowed-sinc resampler; at the
 //! mixer's own rate the samples are played unchanged).
+//!
+//! MP3 support: MPEG-1, 2 and 2.5 Layer III, constant or variable bitrate,
+//! after an ID3v2 tag and before ID3v1 or APE tags (see [`crate::mp3`]). A
+//! file with a LAME tag (BananaSplit's own, LAME's, ffmpeg's) plays exactly
+//! the samples that were encoded, so the parts of a take join without a gap
+//! and the tracks of a multi-track take stay on the same sample.
 
 use crate::engine::{MAX_FRAMES, NUM_BUSES};
-use crate::recorder::{NUM_SOURCES, source_id};
+use crate::mp3;
+use crate::recorder::{NUM_SOURCES, source_id, stamp_day};
 use crate::vban::resample::{MAX_DOWN, Resampler};
 use crate::vban::ring::Ring;
 use std::collections::HashMap;
@@ -373,36 +380,98 @@ pub fn read_wav_info(path: &Path) -> Result<WavInfo, String> {
     Err(if fmt.is_some() { "WAV file has no audio data".into() } else { "WAV file has no format chunk".into() })
 }
 
+/// What a WAV or MP3 file's headers say.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FileInfo {
+    Wav(WavInfo),
+    Mp3(mp3::Info),
+}
+
+impl FileInfo {
+    /// Read the headers of `path`, by its extension (`.wav` or `.mp3`).
+    pub fn read(path: &Path) -> Result<FileInfo, String> {
+        let mp3 = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("mp3"));
+        if mp3 { mp3::probe(path).map(FileInfo::Mp3) } else { read_wav_info(path).map(FileInfo::Wav) }
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        match self {
+            FileInfo::Wav(w) => w.sample_rate,
+            FileInfo::Mp3(m) => m.sample_rate,
+        }
+    }
+
+    /// Frames (samples per channel) the file plays.
+    pub fn frames(&self) -> u64 {
+        match self {
+            FileInfo::Wav(w) => w.frames(),
+            FileInfo::Mp3(m) => m.samples,
+        }
+    }
+
+    /// `24-bit`, `MP3 320 kbit/s`, `MP3 VBR`.
+    pub fn label(&self) -> String {
+        match self {
+            FileInfo::Wav(w) => w.kind.label().into(),
+            FileInfo::Mp3(m) if m.vbr => "MP3 VBR".into(),
+            FileInfo::Mp3(m) => format!("MP3 {} kbit/s", m.kbps),
+        }
+    }
+}
+
+/// An open part of a track.
+enum Source {
+    Wav(File),
+    Mp3(Box<mp3::Reader>),
+}
+
 /// Reads one track (its parts one after another) as stereo f32 frames.
 struct TrackReader {
-    parts: Vec<(PathBuf, WavInfo)>,
+    parts: Vec<(PathBuf, FileInfo)>,
     part: usize,
-    file: Option<File>,
+    src: Option<Source>,
     /// Frames left in the current part.
     left: u64,
     buf: Vec<u8>,
 }
 
 impl TrackReader {
-    fn open(parts: &[(PathBuf, WavInfo)]) -> TrackReader {
-        TrackReader { parts: parts.to_vec(), part: 0, file: None, left: 0, buf: Vec::new() }
+    fn open(parts: &[(PathBuf, FileInfo)]) -> TrackReader {
+        TrackReader { parts: parts.to_vec(), part: 0, src: None, left: 0, buf: Vec::new() }
+    }
+
+    /// Open part `k` at its frame `frame`.
+    fn open_part(&mut self, k: usize, frame: u64) -> Result<(), String> {
+        let (path, info) = &self.parts[k];
+        let err = |e: String| format!("{}: {e}", path.display());
+        self.src = Some(match info {
+            FileInfo::Wav(w) => {
+                let mut f = File::open(path).map_err(|e| err(e.to_string()))?;
+                f.seek(SeekFrom::Start(w.data_offset + frame * w.block_align() as u64))
+                    .map_err(|e| err(e.to_string()))?;
+                Source::Wav(f)
+            }
+            FileInfo::Mp3(m) => {
+                let mut r = mp3::Reader::open(path, m).map_err(err)?;
+                if frame > 0 {
+                    r.seek(frame).map_err(err)?;
+                }
+                Source::Mp3(Box::new(r))
+            }
+        });
+        self.part = k;
+        self.left = info.frames() - frame;
+        Ok(())
     }
 
     /// Position at `frame` from the start of the track.
     fn seek(&mut self, mut frame: u64) -> Result<(), String> {
-        self.file = None;
+        self.src = None;
         self.left = 0;
-        for (k, (path, info)) in self.parts.iter().enumerate() {
-            let n = info.frames();
+        for k in 0..self.parts.len() {
+            let n = self.parts[k].1.frames();
             if frame < n || k + 1 == self.parts.len() {
-                let frame = frame.min(n);
-                let mut f = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-                f.seek(SeekFrom::Start(info.data_offset + frame * info.block_align() as u64))
-                    .map_err(|e| format!("{}: {e}", path.display()))?;
-                self.file = Some(f);
-                self.part = k;
-                self.left = n - frame;
-                return Ok(());
+                return self.open_part(k, frame.min(n));
             }
             frame -= n;
         }
@@ -415,41 +484,43 @@ impl TrackReader {
         let mut done = 0;
         while done < max {
             if self.left == 0 {
-                if self.part + 1 >= self.parts.len() || self.file.is_none() {
+                if self.part + 1 >= self.parts.len() || self.src.is_none() {
                     break;
                 }
-                let next = self.part + 1;
-                let (path, info) = &self.parts[next];
-                let mut f = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-                f.seek(SeekFrom::Start(info.data_offset)).map_err(|e| format!("{}: {e}", path.display()))?;
-                self.file = Some(f);
-                self.part = next;
-                self.left = info.frames();
+                self.open_part(self.part + 1, 0)?;
                 continue;
             }
-            let info = &self.parts[self.part].1;
-            let align = info.block_align();
             let n = (max - done).min(self.left as usize).min(CHUNK);
-            self.buf.resize(n * align, 0);
-            let f = self.file.as_mut().ok_or("file not open")?;
-            let mut got = 0;
-            while got < self.buf.len() {
-                match f.read(&mut self.buf[got..]) {
-                    Ok(0) => break,
-                    Ok(k) => got += k,
-                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                    Err(e) => return Err(e.to_string()),
+            let frames = match self.src.as_mut().ok_or("file not open")? {
+                Source::Wav(f) => {
+                    let FileInfo::Wav(info) = &self.parts[self.part].1 else { return Err("not a WAV file".into()) };
+                    let align = info.block_align();
+                    self.buf.resize(n * align, 0);
+                    let mut got = 0;
+                    while got < self.buf.len() {
+                        match f.read(&mut self.buf[got..]) {
+                            Ok(0) => break,
+                            Ok(k) => got += k,
+                            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                            Err(e) => return Err(e.to_string()),
+                        }
+                    }
+                    let frames = got / align;
+                    let (kind, bs, stereo) = (info.kind, info.kind.bytes(), info.channels >= 2);
+                    for fr in 0..frames {
+                        let b = &self.buf[fr * align..];
+                        let l = kind.decode(&b[..bs]);
+                        let r = if stereo { kind.decode(&b[bs..2 * bs]) } else { l };
+                        out.push(l);
+                        out.push(r);
+                    }
+                    frames
                 }
-            }
-            let frames = got / align;
-            let (kind, bs, stereo) = (info.kind, info.kind.bytes(), info.channels >= 2);
-            for fr in 0..frames {
-                let b = &self.buf[fr * align..];
-                let l = kind.decode(&b[..bs]);
-                let r = if stereo { kind.decode(&b[bs..2 * bs]) } else { l };
-                out.push(l);
-                out.push(r);
-            }
+                Source::Mp3(r) => {
+                    let path = &self.parts[self.part].0;
+                    r.read(n, out).map_err(|e| format!("{}: {e}", path.display()))?
+                }
+            };
             done += frames;
             if frames < n {
                 // the file is shorter than its header said (still being written)
@@ -471,19 +542,21 @@ impl TrackReader {
 pub struct Track {
     /// `mix`, `1-Mic`, `A1-Speakers`, or the file name for other files.
     pub label: String,
-    pub parts: Vec<(PathBuf, WavInfo)>,
+    pub parts: Vec<(PathBuf, FileInfo)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakeInfo {
     /// Unique within the folder: the time stamp (with `-k`) of a
-    /// BananaSplit recording, else the file name without `.wav`.
+    /// BananaSplit recording, else the file name without `.wav` or `.mp3`
+    /// (with it, if both exist).
     pub key: String,
     /// `YYYY-MM-DD HH:MM:SS` of a BananaSplit recording.
     pub when: Option<String>,
     pub tracks: Vec<Track>,
     pub sample_rate: u32,
-    pub kind: SampleKind,
+    /// `24-bit`, `MP3 320 kbit/s`, … (of the first file).
+    pub fmt: String,
     pub frames: u64,
     pub bytes: u64,
     /// Modification time (seconds since 1970) of the newest file.
@@ -549,12 +622,12 @@ fn split_stamp(base: &str) -> Option<(&str, &str)> {
 
 /// `name_part3` -> (`name`, 3); anything else is part 1.
 fn split_part(stem: &str) -> (&str, u32) {
-    if let Some(p) = stem.rfind("_part") {
-        if let Ok(n) = stem[p + 5..].parse::<u32>() {
-            if n >= 2 && !stem[p + 5..].starts_with('+') {
-                return (&stem[..p], n);
-            }
-        }
+    if let Some(p) = stem.rfind("_part")
+        && let Ok(n) = stem[p + 5..].parse::<u32>()
+        && n >= 2
+        && !stem[p + 5..].starts_with('+')
+    {
+        return (&stem[..p], n);
     }
     (stem, 1)
 }
@@ -582,30 +655,49 @@ fn stamp_text(key: &str) -> Option<String> {
 /// Header cache for [`scan`]: (path, size, mtime) -> header.
 #[derive(Default)]
 pub struct ScanCache {
-    headers: HashMap<PathBuf, (u64, u64, Result<WavInfo, String>)>,
+    headers: HashMap<PathBuf, (u64, u64, Result<FileInfo, String>)>,
 }
 
 /// One take while scanning: its time, label -> parts (part number, file,
 /// header), total bytes, newest modification time.
-type Group = (Option<String>, HashMap<String, Vec<(u32, PathBuf, WavInfo)>>, u64, u64);
+type Group = (Option<String>, HashMap<String, Vec<(u32, PathBuf, FileInfo)>>, u64, u64);
 
-/// The takes in `folder`, oldest first (TAKE 1 is the first): other WAV
-/// files by date, then BananaSplit's recordings by their time stamp. Files
+/// The takes in `folder` and its day folders (`YYYY-MM-DD`), oldest first
+/// (TAKE 1 is the first): other MP3 and WAV files by date, then
+/// BananaSplit's recordings by their time stamp. A take that ran past
+/// midnight has parts in two day folders and is still one take. Files
 /// whose header cannot be read are skipped. `cache` avoids re-reading
 /// headers of files that did not change.
 pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
     let Ok(dir) = std::fs::read_dir(folder) else { return Vec::new() };
-    let mut groups: HashMap<String, Group> = HashMap::new();
-    let mut seen = Vec::new();
+    let mut entries = Vec::new();
     for e in dir.flatten() {
+        let name = e.file_name();
+        let day = name.to_str().is_some_and(|n| n.len() == 10 && stamp_day(n).is_some());
+        if day && e.file_type().is_ok_and(|t| t.is_dir()) {
+            entries.extend(std::fs::read_dir(e.path()).into_iter().flat_map(|d| d.flatten()));
+        } else {
+            entries.push(e);
+        }
+    }
+    // grouped by key and extension: `x.wav` and `x.mp3` are two takes
+    let mut groups: HashMap<(String, &'static str), Group> = HashMap::new();
+    let mut seen = Vec::new();
+    for e in entries {
         let path = e.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
         // (bytes: the last four of a name in another script can start
         // inside a character, and slicing the text there panics)
         let b = name.as_bytes();
-        if b.len() < 5 || !b[b.len() - 4..].eq_ignore_ascii_case(b".wav") || name.starts_with('.') {
+        let ext = if b.len() < 5 || name.starts_with('.') {
             continue;
-        }
+        } else if b[b.len() - 4..].eq_ignore_ascii_case(b".wav") {
+            "wav"
+        } else if b[b.len() - 4..].eq_ignore_ascii_case(b".mp3") {
+            "mp3"
+        } else {
+            continue;
+        };
         let Ok(meta) = e.metadata() else { continue };
         if !meta.is_file() {
             continue;
@@ -615,7 +707,7 @@ pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
         seen.push(path.clone());
         let fresh = cache.headers.get(&path).is_some_and(|(s, m, _)| *s == size && *m == mtime);
         if !fresh {
-            cache.headers.insert(path.clone(), (size, mtime, read_wav_info(&path)));
+            cache.headers.insert(path.clone(), (size, mtime, FileInfo::read(&path)));
         }
         let Some((_, _, Ok(info))) = cache.headers.get(&path) else { continue };
         let stem = &name[..name.len() - 4];
@@ -625,12 +717,31 @@ pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
             None => (base.to_string(), base.to_string()),
         };
         let when = split_stamp(base).and_then(|(k, _)| stamp_text(k));
-        let g = groups.entry(key).or_insert_with(|| (when, HashMap::new(), 0, 0));
+        let g = groups.entry((key, ext)).or_insert_with(|| (when, HashMap::new(), 0, 0));
         g.1.entry(label).or_default().push((part, path, info.clone()));
         g.2 += size;
         g.3 = g.3.max(mtime);
     }
     cache.headers.retain(|p, _| seen.contains(p));
+    // A key that has files of both kinds: the MP3 take is `<key>.mp3`, and
+    // other files are labelled with their extension.
+    let both: Vec<String> = groups
+        .keys()
+        .filter(|(k, e)| *e == "mp3" && groups.contains_key(&(k.clone(), "wav")))
+        .map(|(k, _)| k.clone())
+        .collect();
+    let groups: Vec<(String, Group)> = groups
+        .into_iter()
+        .map(|((key, ext), mut g)| {
+            if !both.contains(&key) {
+                return (key, g);
+            }
+            if g.0.is_none() {
+                g.1 = g.1.into_iter().map(|(l, p)| (format!("{l}.{ext}"), p)).collect();
+            }
+            (if ext == "mp3" { format!("{key}.mp3") } else { key }, g)
+        })
+        .collect();
     let mut takes: Vec<TakeInfo> = groups
         .into_iter()
         .filter_map(|(key, (when, labels, bytes, mtime))| {
@@ -644,7 +755,16 @@ pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
             tracks.sort_by_key(|t| label_rank(&t.label));
             let first = tracks.first()?.parts.first()?.1.clone();
             let frames = tracks.iter().map(|t| t.parts.iter().map(|(_, i)| i.frames()).sum::<u64>()).max().unwrap_or(0);
-            Some(TakeInfo { key, when, tracks, sample_rate: first.sample_rate, kind: first.kind, frames, bytes, mtime })
+            Some(TakeInfo {
+                key,
+                when,
+                tracks,
+                sample_rate: first.sample_rate(),
+                fmt: first.label(),
+                frames,
+                bytes,
+                mtime,
+            })
         })
         .collect();
     order_takes(&mut takes);
@@ -710,9 +830,7 @@ fn order_takes(takes: &mut Vec<TakeInfo>) {
         let mut seen: Vec<i64> = session.iter().map(offset).collect();
         seen.sort_unstable();
         seen.dedup();
-        let clock_change = seen.len() == 2
-            && seen[1] - seen[0] <= 3600
-            && seen.iter().all(|o| o.abs() <= 15 * 3600);
+        let clock_change = seen.len() == 2 && seen[1] - seen[0] <= 3600 && seen.iter().all(|o| o.abs() <= 15 * 3600);
         if clock_change {
             session.sort_by_cached_key(|t| (naive(t) - offset(t), stamp_suffix(&t.key), t.key.clone()));
         }
@@ -853,7 +971,13 @@ impl Player {
         let (t2, s2) = (tap.clone(), shared.clone());
         let thread =
             std::thread::Builder::new().name("bs-player".into()).spawn(move || player_thread(&t2, rate, &s2, &rx)).ok();
-        Player { tap, rate: rate.max(1), shared, tx: Mutex::new(thread.as_ref().map(|_| tx)), thread: Mutex::new(thread) }
+        Player {
+            tap,
+            rate: rate.max(1),
+            shared,
+            tx: Mutex::new(thread.as_ref().map(|_| tx)),
+            thread: Mutex::new(thread),
+        }
     }
 
     pub fn tap(&self) -> &Arc<PlayTap> {
@@ -885,7 +1009,7 @@ impl Player {
         if fs < MIN_RATE {
             return Err(format!("{fs} Hz is below {MIN_RATE} Hz, the lowest sample rate the player plays"));
         }
-        if take.tracks.iter().flat_map(|t| &t.parts).any(|(_, i)| i.sample_rate != fs) {
+        if take.tracks.iter().flat_map(|t| &t.parts).any(|(_, i)| i.sample_rate() != fs) {
             return Err("the tracks of this take have different sample rates".into());
         }
         self.send(Cmd::Load(Box::new(take.clone()), from.max(0.0), start))
@@ -1251,6 +1375,7 @@ mod tests {
             Format::Wav16 => 2,
             Format::Wav24 => 3,
             Format::Wav32f => 4,
+            Format::Mp3 => panic!("write_wav writes WAV"),
         };
         let mut data = Vec::new();
         for i in 0..frames {
@@ -1259,7 +1384,7 @@ mod tests {
                 match format {
                     Format::Wav16 => data.extend_from_slice(&((x * 32767.0).round() as i16).to_le_bytes()),
                     Format::Wav24 => data.extend_from_slice(&((x * 8_388_607.0).round() as i32).to_le_bytes()[..3]),
-                    Format::Wav32f => data.extend_from_slice(&x.to_le_bytes()),
+                    Format::Wav32f | Format::Mp3 => data.extend_from_slice(&x.to_le_bytes()),
                 }
             }
         }
@@ -1298,7 +1423,7 @@ mod tests {
     }
 
     fn read_all(info_path: &Path) -> Vec<f32> {
-        let info = read_wav_info(info_path).unwrap();
+        let info = FileInfo::read(info_path).unwrap();
         let mut r = TrackReader::open(&[(info_path.to_path_buf(), info)]);
         r.seek(0).unwrap();
         let mut out = Vec::new();
@@ -1431,6 +1556,34 @@ mod tests {
     }
 
     #[test]
+    fn scan_reads_the_day_folders() {
+        let d = tmpdir("days");
+        let w = |name: &str, frames: usize| {
+            let p = d.join(name);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            write_wav(&p, Format::Wav16, 48000, frames, |_| (0.1, 0.1));
+        };
+        w("2026-10-20_12-00-00_mix.wav", 10); // from before the day folders
+        w("2026-10-28/2026-10-28_23-30-00_mix.wav", 100);
+        w("2026-10-29/2026-10-28_23-30-00_mix_part2.wav", 50);
+        w("2026-10-29/2026-10-29_08-00-00_mix.wav", 20);
+        w("other/2026-10-29_09-00-00_mix.wav", 20); // not a day folder
+        let t = scan(&d, &mut ScanCache::default());
+        let keys: Vec<&str> = t.iter().map(|t| t.key.as_str()).collect();
+        assert_eq!(keys, ["2026-10-20_12-00-00", "2026-10-28_23-30-00", "2026-10-29_08-00-00"], "{t:?}");
+        let parts: Vec<&Path> = t[1].tracks[0].parts.iter().map(|(p, _)| p.strip_prefix(&d).unwrap()).collect();
+        assert_eq!(
+            parts,
+            [
+                Path::new("2026-10-28/2026-10-28_23-30-00_mix.wav"),
+                Path::new("2026-10-29/2026-10-28_23-30-00_mix_part2.wav")
+            ]
+        );
+        assert_eq!(t[1].frames, 150);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
     fn takes_are_in_the_order_they_were_recorded() {
         assert_eq!(naive_secs("2026-10-25_00-00-00_mix"), Some(1_792_886_400));
         assert_eq!(naive_secs("2024-02-29_23-59-59-2_mix"), Some(1_709_251_199));
@@ -1464,7 +1617,10 @@ mod tests {
         take("2026-10-25_02-50-00", Some("2026-10-25_00-50-01"));
         take("2026-10-25_02-10-00", Some("2026-10-25_01-10-01"));
         take("2026-10-25_04-00-00", Some("2026-10-25_03-00-01"));
-        assert_eq!(keys(), ["2026-10-25_01-30-00", "2026-10-25_02-50-00", "2026-10-25_02-10-00", "2026-10-25_04-00-00"]);
+        assert_eq!(
+            keys(),
+            ["2026-10-25_01-30-00", "2026-10-25_02-50-00", "2026-10-25_02-10-00", "2026-10-25_04-00-00"]
+        );
         // copied without their times (all "now"): the stamps decide
         empty();
         for s in ["2026-10-25_01-30-00", "2026-10-25_02-50-00", "2026-10-25_02-10-00"] {
@@ -1521,6 +1677,141 @@ mod tests {
         let t = scan(&d, &mut ScanCache::default());
         let o = overview(&t[0], 10).unwrap();
         assert_eq!(o, [0, 0, 0, 0, 0, 50, 50, 50, 50, 50]);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// An MP3 file as the recorder writes it, from `f(frame) -> (l, r)`.
+    fn write_mp3(path: &Path, rate: u32, frames: usize, f: impl Fn(usize) -> (f32, f32)) {
+        let mut e = crate::mp3::enc::Encoder::new(rate, 320).unwrap();
+        let lr: Vec<f32> = (0..frames)
+            .flat_map(|i| {
+                let (l, r) = f(i);
+                [l, r]
+            })
+            .collect();
+        let mut body = Vec::new();
+        e.encode(&lr, &mut body);
+        e.finish(&mut body);
+        std::fs::write(path, [e.info_frame(), body].concat()).unwrap();
+    }
+
+    fn tone(i: usize, rate: u32) -> f32 {
+        (0.5 * (2.0 * std::f64::consts::PI * 997.0 * i as f64 / f64::from(rate)).sin()) as f32
+    }
+
+    /// The parts of an MP3 track read as one: every frame of each, in
+    /// order, and a seek lands on the same sample anywhere.
+    #[test]
+    fn reads_mp3_parts_as_one_track() {
+        use crate::mp3::enc::{Encoder, PREROLL, TAIL};
+        let d = tmpdir("mp3-parts");
+        let lens = [30_000usize, 30_000, 12_345];
+        let at: usize = lens.iter().sum();
+        let lr: Vec<f32> = (0..at).flat_map(|i| [tone(i, 48000), -tone(i, 48000)]).collect();
+        // the parts as the recorder writes them: each starts with the end of
+        // the one before and ends with the start of the next
+        let mut parts = Vec::new();
+        let mut start = 0usize;
+        for (k, &n) in lens.iter().enumerate() {
+            let p = d.join(format!(
+                "2026-01-01_00-00-00_mix{}.mp3",
+                if k == 0 { String::new() } else { format!("_part{}", k + 1) }
+            ));
+            let mut e = Encoder::new(48000, 320).unwrap();
+            let mut body = Vec::new();
+            if start > 0 {
+                e.preroll(&lr[2 * start.saturating_sub(PREROLL)..2 * start], &mut body);
+            }
+            e.encode(&lr[2 * start..2 * (start + n)], &mut body);
+            let end = start + n;
+            if end < at {
+                e.encode_tail(&lr[2 * end..2 * (end + TAIL).min(2 * at)], &mut body);
+            }
+            e.finish(&mut body);
+            std::fs::write(&p, [e.info_frame(), body].concat()).unwrap();
+            parts.push((p.clone(), FileInfo::read(&p).unwrap()));
+            start = end;
+        }
+        assert!(matches!(&parts[0].1, FileInfo::Mp3(m) if m.exact && m.samples == 30_000));
+        assert_eq!(parts[0].1.label(), "MP3 320 kbit/s");
+        let mut r = TrackReader::open(&parts);
+        r.seek(0).unwrap();
+        let mut all = Vec::new();
+        while r.read(1000, &mut all).unwrap() > 0 {}
+        assert_eq!(all.len(), 2 * at);
+        // close to the tone everywhere, also where the parts meet
+        for (i, v) in all.chunks(2).enumerate().skip(2000).take(at - 4000) {
+            assert!((v[0] - tone(i, 48000)).abs() < 0.002 && (v[1] + tone(i, 48000)).abs() < 0.002, "frame {i}");
+        }
+        for pos in [0u64, 1, 29_999, 30_000, 30_001, 59_000, 60_500, at as u64 - 1] {
+            r.seek(pos).unwrap();
+            let mut got = Vec::new();
+            while got.len() < 2 * 2000 && r.read(2000 - got.len() / 2, &mut got).unwrap() > 0 {}
+            let want = &all[2 * pos as usize..(2 * (pos as usize + 2000)).min(all.len())];
+            assert_eq!(&got[..], want, "seek to {pos}");
+        }
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn scan_lists_mp3_takes_and_keeps_same_named_files_apart() {
+        let d = tmpdir("scan-mp3");
+        let m = |name: &str, n: usize| write_mp3(&d.join(name), 48000, n, |_| (0.1, 0.1));
+        m("2026-10-21_14-03-05_mix.mp3", 48000);
+        m("2026-10-21_14-03-05_mix_part2.mp3", 4800);
+        m("2026-10-21_15-00-00_1-Mic.mp3", 960);
+        m("2026-10-21_15-00-00_A1-Out.mp3", 960);
+        m("Record at noon.mp3", 1000);
+        write_wav(&d.join("Record at noon.wav"), Format::Wav16, 48000, 2000, |_| (0.1, 0.1));
+        std::fs::write(d.join("broken.mp3"), b"ID3 not really").unwrap();
+        let t = scan(&d, &mut ScanCache::default());
+        let keys: Vec<&str> = t.iter().map(|t| t.key.as_str()).collect();
+        assert_eq!(keys.len(), 4, "{keys:?}");
+        let rec = t.iter().find(|t| t.key == "2026-10-21_14-03-05").unwrap();
+        assert_eq!((rec.frames, rec.tracks[0].parts.len(), rec.fmt.as_str()), (52_800, 2, "MP3 320 kbit/s"));
+        let multi = t.iter().find(|t| t.key == "2026-10-21_15-00-00").unwrap();
+        assert_eq!(multi.label(), "2 tracks");
+        let wav = t.iter().find(|t| t.key == "Record at noon").unwrap();
+        let mp3 = t.iter().find(|t| t.key == "Record at noon.mp3").unwrap();
+        assert_eq!((wav.frames, wav.label()), (2000, "Record at noon.wav".to_string()));
+        assert_eq!((mp3.frames, mp3.label()), (1000, "Record at noon.mp3".to_string()));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// An MP3 take at the mixer's rate plays exactly what its files decode to.
+    #[test]
+    fn plays_an_mp3_take_exactly() {
+        let d = tmpdir("play-mp3");
+        let n = 20_000;
+        write_mp3(&d.join("2026-01-01_00-00-00_mix.mp3"), 48000, n, |i| (tone(i, 48000), 0.25));
+        let takes = scan(&d, &mut ScanCache::default());
+        let want = read_all(&d.join("2026-01-01_00-00-00_mix.mp3"));
+        assert_eq!(want.len(), 2 * n);
+        let o = overview(&takes[0], 10).unwrap();
+        assert!(o.iter().all(|&p| (49..=51).contains(&p)), "{o:?}");
+        let tap = PlayTap::new();
+        let p = Player::new(tap.clone(), 48000);
+        p.play(&takes[0], 0.0, true).unwrap();
+        let mut rt = PlayRt::default();
+        let mut b = Bus::new();
+        let mut got: Vec<f32> = Vec::new();
+        let t0 = Instant::now();
+        loop {
+            b.run(&mut rt, &tap, 256);
+            got.extend_from_slice(&b.out[0]);
+            let first = got.iter().position(|&x| x != 0.0);
+            if first.is_some_and(|f| got.len() >= f + n + 512) || t0.elapsed() > Duration::from_secs(10) {
+                break;
+            }
+            std::thread::sleep(Duration::from_micros(300));
+        }
+        // after the first (faded-in) cycle, sample for sample what the file holds
+        let first = got.iter().position(|&x| x != 0.0).expect("nothing played");
+        for k in 256..n {
+            assert_eq!(got[first + k], want[2 * k], "frame {k}");
+        }
+        assert!(got[first + n..].iter().all(|&x| x == 0.0), "played past the end");
+        p.shutdown();
         let _ = std::fs::remove_dir_all(d);
     }
 
@@ -1677,6 +1968,9 @@ mod tests {
 
     #[test]
     fn plays_a_take_from_disk_bit_exact_and_resampled() {
+        // feed the bus at the audio thread's pace (256 frames at 48 kHz); any
+        // faster and a slow machine's decoder falls behind and underruns
+        const CYCLE: Duration = Duration::from_micros(5333);
         let d = tmpdir("play");
         // 32-bit float at the mixer's rate: what comes out is what is in the file
         write_wav(&d.join("2026-01-01_00-00-00_mix.wav"), Format::Wav32f, 48000, 30_000, |i| {
@@ -1698,7 +1992,7 @@ mod tests {
             if first.is_some_and(|f| got.len() >= f + 30_000 + 512) || t0.elapsed() > Duration::from_secs(10) {
                 break;
             }
-            std::thread::sleep(Duration::from_micros(300));
+            std::thread::sleep(CYCLE);
         }
         // Playback starts on a cycle boundary with file frame 0 (-0.5, faded
         // in); after that first cycle every sample is exactly the file's.
@@ -1733,8 +2027,9 @@ mod tests {
             if b.out[0].iter().any(|&x| x != 0.0) || !got.is_empty() {
                 got.extend_from_slice(&b.out[0]);
             }
-            std::thread::sleep(Duration::from_micros(300));
+            std::thread::sleep(CYCLE);
         }
+        assert_eq!(tap.underruns(), 0, "the player fell behind");
         let mid = &got[4800..4800 + 4800];
         let peak = mid.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
         assert!((peak - 0.5).abs() < 0.01, "peak {peak}");
@@ -1748,7 +2043,7 @@ mod tests {
         let t0 = Instant::now();
         while p.status().pos < 0.9 && t0.elapsed() < Duration::from_secs(5) {
             b.run(&mut rt, &tap, 256);
-            std::thread::sleep(Duration::from_micros(300));
+            std::thread::sleep(CYCLE);
         }
         assert!(p.status().pos >= 0.9);
         p.pause().unwrap();
