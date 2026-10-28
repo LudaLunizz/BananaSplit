@@ -313,6 +313,150 @@ pub struct IAudioCaptureClientVtbl {
     pub GetNextPacketSize: unsafe extern "system" fn(*mut c_void, *mut u32) -> HRESULT,
 }
 
+// ---------------------------------------------------------------- window, tray and network structs
+
+/// `NOTIFYICONDATAW` (Shell_NotifyIconW).
+#[repr(C)]
+pub struct NotifyIconData {
+    pub cb_size: u32,
+    pub hwnd: HWND,
+    pub id: u32,
+    pub flags: u32,
+    pub callback_message: u32,
+    pub icon: HANDLE,
+    pub tip: [u16; 128],
+    pub state: u32,
+    pub state_mask: u32,
+    pub info: [u16; 256],
+    pub version: u32,
+    pub info_title: [u16; 64],
+    pub info_flags: u32,
+    pub guid: GUID,
+    pub balloon_icon: HANDLE,
+}
+
+/// A window procedure.
+pub type WndProc = unsafe extern "system" fn(HWND, u32, usize, isize) -> isize;
+
+/// `WNDCLASSEXW`.
+#[repr(C)]
+pub struct WndClassExW {
+    pub cb_size: u32,
+    pub style: u32,
+    pub wndproc: Option<WndProc>,
+    pub cls_extra: i32,
+    pub wnd_extra: i32,
+    pub instance: HANDLE,
+    pub icon: HANDLE,
+    pub cursor: HANDLE,
+    pub background: HANDLE,
+    pub menu_name: *const u16,
+    pub class_name: *const u16,
+    pub icon_sm: HANDLE,
+}
+
+/// `MSG`.
+#[repr(C)]
+pub struct Msg {
+    pub hwnd: HWND,
+    pub message: u32,
+    pub w: usize,
+    pub l: isize,
+    pub time: u32,
+    pub pt: [i32; 2],
+    pub private: u32,
+}
+
+/// `POINT`.
+#[repr(C)]
+#[derive(Default)]
+pub struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+/// `SYSTEMTIME`.
+#[repr(C)]
+#[derive(Default)]
+pub struct SystemTime {
+    pub year: u16,
+    pub month: u16,
+    pub day_of_week: u16,
+    pub day: u16,
+    pub hour: u16,
+    pub minute: u16,
+    pub second: u16,
+    pub milliseconds: u16,
+}
+
+/// `SOCKADDR` (address family and its data).
+#[repr(C)]
+pub struct RawSockaddr {
+    pub family: u16,
+    pub data: [u8; 14],
+}
+
+/// `SOCKET_ADDRESS`.
+#[repr(C)]
+pub struct SocketAddress {
+    pub sock: *const RawSockaddr,
+    pub len: i32,
+}
+
+/// `IP_ADAPTER_UNICAST_ADDRESS_LH`.
+#[repr(C)]
+pub struct IpAdapterUnicastAddress {
+    pub len: u32,
+    pub flags: u32,
+    pub next: *mut IpAdapterUnicastAddress,
+    pub addr: SocketAddress,
+    // IP_PREFIX_ORIGIN, IP_SUFFIX_ORIGIN and IP_DAD_STATE are C enums: 4 bytes each.
+    pub prefix: u32,
+    pub suffix: u32,
+    pub dad: u32,
+    pub valid_lifetime: u32,
+    pub preferred_lifetime: u32,
+    pub lease_lifetime: u32,
+    pub on_link_prefix_length: u8,
+}
+
+/// `IP_ADAPTER_ADDRESSES_LH`, up to the fields BananaSplit reads.
+#[repr(C)]
+pub struct IpAdapterAddresses {
+    pub len: u32,
+    pub if_index: u32,
+    pub next: *mut IpAdapterAddresses,
+    pub adapter_name: *const i8,
+    pub first_unicast: *mut IpAdapterUnicastAddress,
+    pub first_anycast: *mut c_void,
+    pub first_multicast: *mut c_void,
+    pub first_dns: *mut c_void,
+    pub dns_suffix: *const u16,
+    pub description: *const u16,
+    pub friendly_name: *const u16,
+    pub phys_addr: [u8; 8],
+    pub phys_len: u32,
+    pub flags: u32,
+    pub mtu: u32,
+    pub if_type: u32,
+    pub oper_status: u32,
+    pub ipv6_if_index: u32,
+    pub zone: [u32; 16],
+    pub first_prefix: *mut c_void,
+    pub transmit_link_speed: u64,
+    pub receive_link_speed: u64,
+    pub first_wins: *mut c_void,
+}
+
+/// `SOCKADDR_IN`.
+#[repr(C)]
+pub struct SockaddrIn {
+    pub sin_family: u16,
+    pub sin_port: u16,
+    pub sin_addr: u32,
+    pub sin_zero: [u8; 8],
+}
+
 // ---------------------------------------------------------------- functions
 
 #[cfg_attr(windows, link(name = "ole32"))]
@@ -365,6 +509,19 @@ unsafe extern "system" {
         flags: u32,
         template: HANDLE,
     ) -> HANDLE;
+    pub fn GetModuleHandleW(name: *const u16) -> HANDLE;
+    pub fn GetModuleFileNameW(h: HANDLE, buf: *mut u16, size: u32) -> u32;
+    pub fn GetDiskFreeSpaceExW(
+        dir: *const u16,
+        free_bytes_avail: *mut u64,
+        total_bytes: *mut u64,
+        total_free: *mut u64,
+    ) -> BOOL;
+    pub fn GetCurrentProcessId() -> u32;
+    pub fn GetCurrentProcess() -> HANDLE;
+    pub fn OpenProcess(access: u32, inherit: BOOL, pid: u32) -> HANDLE;
+    pub fn ProcessIdToSessionId(pid: u32, session: *mut u32) -> BOOL;
+    pub fn GetLocalTime(out: *mut SystemTime);
 }
 
 /// `AllowSetForegroundWindow`: any process.
@@ -375,6 +532,39 @@ unsafe extern "system" {
     pub fn MessageBoxW(hwnd: HWND, text: *const u16, caption: *const u16, kind: u32) -> i32;
     pub fn AllowSetForegroundWindow(pid: u32) -> BOOL;
     pub fn SetForegroundWindow(hwnd: HWND) -> BOOL;
+    pub fn RegisterClassExW(class: *const WndClassExW) -> u16;
+    pub fn CreateWindowExW(
+        ex_style: u32,
+        class: *const u16,
+        title: *const u16,
+        style: u32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        parent: HWND,
+        menu: HANDLE,
+        instance: HANDLE,
+        param: *mut c_void,
+    ) -> HWND;
+    pub fn DestroyWindow(hwnd: HWND) -> BOOL;
+    pub fn DefWindowProcW(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize;
+    pub fn RegisterWindowMessageW(name: *const u16) -> u32;
+    pub fn GetMessageW(msg: *mut Msg, hwnd: HWND, min: u32, max: u32) -> BOOL;
+    pub fn TranslateMessage(msg: *const Msg) -> BOOL;
+    pub fn DispatchMessageW(msg: *const Msg) -> isize;
+    pub fn PostMessageW(hwnd: HWND, msg: u32, w: usize, l: isize) -> BOOL;
+    pub fn CreatePopupMenu() -> HANDLE;
+    pub fn AppendMenuW(menu: HANDLE, flags: u32, id: usize, text: *const u16) -> BOOL;
+    pub fn SetMenuDefaultItem(menu: HANDLE, item: u32, by_position: u32) -> BOOL;
+    pub fn TrackPopupMenu(menu: HANDLE, flags: u32, x: i32, y: i32, reserved: i32, hwnd: HWND, rect: *const c_void) -> BOOL;
+    pub fn DestroyMenu(menu: HANDLE) -> BOOL;
+    pub fn GetCursorPos(p: *mut Point) -> BOOL;
+    pub fn CreateIcon(instance: HANDLE, w: i32, h: i32, planes: u8, bits: u8, and: *const u8, xor: *const u8) -> HANDLE;
+    pub fn DestroyIcon(icon: HANDLE) -> BOOL;
+    pub fn GetSystemMetrics(index: i32) -> i32;
+    pub fn SetTimer(hwnd: HWND, id: usize, ms: u32, func: *const c_void) -> usize;
+    pub fn KillTimer(hwnd: HWND, id: usize) -> BOOL;
 }
 
 #[cfg_attr(windows, link(name = "shell32"))]
@@ -387,6 +577,29 @@ unsafe extern "system" {
         dir: *const u16,
         show: i32,
     ) -> *mut c_void;
+    pub fn Shell_NotifyIconW(message: u32, data: *mut NotifyIconData) -> BOOL;
+}
+
+#[cfg_attr(windows, link(name = "iphlpapi"))]
+unsafe extern "system" {
+    pub fn GetAdaptersAddresses(
+        family: u32,
+        flags: u32,
+        reserved: *mut c_void,
+        adapter_addresses: *mut IpAdapterAddresses,
+        size: *mut u32,
+    ) -> u32;
+    pub fn GetExtendedTcpTable(table: *mut c_void, size: *mut u32, order: BOOL, af: u32, class: u32, reserved: u32) -> u32;
+}
+
+#[cfg_attr(windows, link(name = "advapi32"))]
+unsafe extern "system" {
+    pub fn RegGetValueW(key: HANDLE, sub: *const u16, value: *const u16, flags: u32, ty: *mut u32, data: *mut c_void, len: *mut u32) -> i32;
+    pub fn RegSetKeyValueW(key: HANDLE, sub: *const u16, value: *const u16, ty: u32, data: *const c_void, len: u32) -> i32;
+    pub fn RegDeleteKeyValueW(key: HANDLE, sub: *const u16, value: *const u16) -> i32;
+    pub fn OpenProcessToken(process: HANDLE, access: u32, token: *mut HANDLE) -> BOOL;
+    pub fn GetTokenInformation(token: HANDLE, class: u32, info: *mut c_void, len: u32, ret: *mut u32) -> BOOL;
+    pub fn EqualSid(a: *mut c_void, b: *mut c_void) -> BOOL;
 }
 
 #[cfg_attr(windows, link(name = "avrt"))]

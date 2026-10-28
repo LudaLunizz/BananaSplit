@@ -13,6 +13,10 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.13
+
+* **Cleaner code under the hood.** The last part of the Rust code review (#28): every unsafe block says why it is sound, CI now fails on any clippy warning, and the calls into C and Windows libraries are declared in one module per platform instead of five. Nothing changes in how BananaSplit works.
+
 ## What's new in 2.8.12
 
 * **Safer building blocks.** The second part of the Rust code review (#26): JACK ports can no longer be passed around as bare pointers, the compiler now checks what the audio threads share, tray texts are checked before GLib reads them (a bad one is logged instead of crashing the window), and on Windows COM reports when it can't start, its handles can't be closed twice, and a failed audio thread stops the others instead of leaving devices open.

@@ -17,80 +17,18 @@
 //! taken for the app window.
 
 use super::console::{CLEAN_EXIT, QUIT};
-use std::ffi::c_void;
+use super::ffi::*;
 use std::sync::atomic::Ordering::SeqCst;
 use std::time::{Duration, Instant};
-
-type Hwnd = *mut c_void;
-type Handle = *mut c_void;
 
 /// The class of the hidden window (the launch test looks for it).
 pub const CLASS: &str = "BananaSplitMixer";
 /// How long `WM_ENDSESSION` waits for the settings to be saved.
 const SAVE_WAIT: Duration = Duration::from_millis(4500);
 
-#[repr(C)]
-struct WndClassExW {
-    cb_size: u32,
-    style: u32,
-    wndproc: Option<unsafe extern "system" fn(Hwnd, u32, usize, isize) -> isize>,
-    cls_extra: i32,
-    wnd_extra: i32,
-    instance: Handle,
-    icon: Handle,
-    cursor: Handle,
-    background: Handle,
-    menu_name: *const u16,
-    class_name: *const u16,
-    icon_sm: Handle,
-}
-
-#[repr(C)]
-struct Msg {
-    hwnd: Hwnd,
-    message: u32,
-    w: usize,
-    l: isize,
-    time: u32,
-    pt: [i32; 2],
-    private: u32,
-}
-
-#[link(name = "user32")]
-unsafe extern "system" {
-    fn RegisterClassExW(class: *const WndClassExW) -> u16;
-    fn CreateWindowExW(
-        ex_style: u32,
-        class: *const u16,
-        title: *const u16,
-        style: u32,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        parent: Hwnd,
-        menu: Handle,
-        instance: Handle,
-        param: *mut c_void,
-    ) -> Hwnd;
-    fn DefWindowProcW(hwnd: Hwnd, msg: u32, w: usize, l: isize) -> isize;
-    fn GetMessageW(msg: *mut Msg, hwnd: Hwnd, min: u32, max: u32) -> i32;
-    fn TranslateMessage(msg: *const Msg) -> i32;
-    fn DispatchMessageW(msg: *const Msg) -> isize;
-}
-
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn GetModuleHandleW(name: *const u16) -> Handle;
-}
-
 const WM_CLOSE: u32 = 0x0010;
 const WM_QUERYENDSESSION: u32 = 0x0011;
 const WM_ENDSESSION: u32 = 0x0016;
-
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(Some(0)).collect()
-}
 
 /// Ask the main loop to quit and wait (a while) until it has saved and
 /// released the audio devices.
@@ -102,7 +40,7 @@ fn quit_and_wait() {
     }
 }
 
-unsafe extern "system" fn wndproc(hwnd: Hwnd, msg: u32, w: usize, l: isize) -> isize {
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize {
     match msg {
         WM_QUERYENDSESSION => 1,
         WM_ENDSESSION => {

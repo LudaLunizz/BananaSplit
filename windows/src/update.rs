@@ -2433,6 +2433,7 @@ fn pid_alive(pid: &str) -> bool {
     return pid.parse().is_ok_and(alive);
     #[cfg(windows)]
     {
+        use crate::win::ffi::{CloseHandle, OpenProcess, WaitForSingleObject};
         const SYNCHRONIZE: u32 = 0x0010_0000;
         const WAIT_TIMEOUT: u32 = 0x102;
         let Ok(pid) = pid.parse::<u32>() else { return false };
@@ -2456,14 +2457,6 @@ fn alive(pid: u32) -> bool {
         .is_ok_and(|s| s.rsplit_once(')').and_then(|(_, r)| r.trim_start().chars().next()).is_some_and(|c| c != 'Z' && c != 'X'))
 }
 
-#[cfg(windows)]
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
-    fn WaitForSingleObject(h: *mut std::ffi::c_void, ms: u32) -> u32;
-    fn CloseHandle(h: *mut std::ffi::c_void) -> i32;
-}
-
 /// A restarted BananaSplit: wait (20 s at most) for the one it replaces to
 /// end. Call while the program is still single-threaded.
 pub fn wait_for_previous() {
@@ -2480,6 +2473,7 @@ pub fn wait_for_previous() {
     }
     #[cfg(windows)]
     {
+        use crate::win::ffi::{CloseHandle, OpenProcess, WaitForSingleObject};
         const SYNCHRONIZE: u32 = 0x0010_0000;
         // SAFETY: a handle we open and close; WaitForSingleObject only waits.
         unsafe {

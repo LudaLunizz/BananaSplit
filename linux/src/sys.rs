@@ -74,6 +74,75 @@ unsafe extern "C" {
     fn close(fd: c_int) -> c_int;
     fn getuid() -> u32;
     fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
+    fn read(fd: c_int, buf: *mut c_void, n: usize) -> isize;
+}
+
+/// `read(2)`, for the window process's stdin.
+pub fn read_fd(fd: c_int, buf: &mut [u8]) -> isize {
+    // SAFETY: the buffer and its length go together.
+    unsafe { read(fd, buf.as_mut_ptr().cast(), buf.len()) }
+}
+
+/// `struct statvfs`: all 64-bit fields on 64-bit glibc and musl.
+#[cfg(target_pointer_width = "64")]
+#[repr(C)]
+struct StatVfs {
+    bsize: u64,
+    frsize: u64,
+    blocks: u64,
+    bfree: u64,
+    bavail: u64,
+    files: u64,
+    ffree: u64,
+    favail: u64,
+    fsid: u64,
+    flag: u64,
+    namemax: u64,
+    _spare: [u8; 128],
+}
+#[cfg(target_pointer_width = "64")]
+unsafe extern "C" {
+    fn statvfs(path: *const c_char, buf: *mut StatVfs) -> c_int;
+}
+
+#[repr(C)]
+struct IfAddrs {
+    next: *mut IfAddrs,
+    name: *const c_char,
+    flags: std::ffi::c_uint,
+    addr: *const SockAddrIn,
+    netmask: *const SockAddrIn,
+    broadaddr: *const SockAddrIn,
+    data: *mut c_void,
+}
+#[repr(C)]
+struct SockAddrIn {
+    family: u16,
+    port: u16,
+    addr: [u8; 4],
+    zero: [u8; 8],
+}
+unsafe extern "C" {
+    fn getifaddrs(ifap: *mut *mut IfAddrs) -> c_int;
+    fn freeifaddrs(ifa: *mut IfAddrs);
+}
+
+// Leading fields of glibc/musl `struct tm`; `_rest` covers the
+// remaining ints, tm_gmtoff and tm_zone with room to spare.
+#[cfg(target_pointer_width = "64")]
+#[repr(C)]
+struct Tm {
+    sec: c_int,
+    min: c_int,
+    hour: c_int,
+    mday: c_int,
+    mon: c_int,
+    year: c_int,
+    _rest: [u8; 128],
+}
+#[cfg(target_pointer_width = "64")]
+unsafe extern "C" {
+    fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
 }
 
 /// Mark every file descriptor above stderr close-on-exec, before starting
@@ -151,24 +220,6 @@ pub fn ignore_termination_signals() {
 pub fn disk_space(path: &std::path::Path) -> Option<(u64, u64)> {
     #[cfg(target_pointer_width = "64")]
     {
-        #[repr(C)]
-        struct StatVfs {
-            bsize: u64,
-            frsize: u64,
-            blocks: u64,
-            bfree: u64,
-            bavail: u64,
-            files: u64,
-            ffree: u64,
-            favail: u64,
-            fsid: u64,
-            flag: u64,
-            namemax: u64,
-            _spare: [u8; 128],
-        }
-        unsafe extern "C" {
-            fn statvfs(path: *const c_char, buf: *mut StatVfs) -> c_int;
-        }
         let mut p = path;
         loop {
             if p.exists() {
@@ -214,27 +265,6 @@ fn virtual_iface(name: &str) -> bool {
 /// cable or an idle Docker bridge is skipped), without loopback: the LAN
 /// ones first (wired, then the rest), then container, VM and VPN interfaces.
 pub fn local_ipv4() -> Vec<LocalIp> {
-    #[repr(C)]
-    struct IfAddrs {
-        next: *mut IfAddrs,
-        name: *const c_char,
-        flags: std::ffi::c_uint,
-        addr: *const SockAddrIn,
-        netmask: *const SockAddrIn,
-        broadaddr: *const SockAddrIn,
-        data: *mut c_void,
-    }
-    #[repr(C)]
-    struct SockAddrIn {
-        family: u16,
-        port: u16,
-        addr: [u8; 4],
-        zero: [u8; 8],
-    }
-    unsafe extern "C" {
-        fn getifaddrs(ifap: *mut *mut IfAddrs) -> c_int;
-        fn freeifaddrs(ifa: *mut IfAddrs);
-    }
     const AF_INET: u16 = 2;
     const IFF_UP: std::ffi::c_uint = 0x1;
     const IFF_BROADCAST: std::ffi::c_uint = 0x2;
@@ -363,21 +393,6 @@ pub fn local_timestamp() -> String {
         .unwrap_or(0);
     #[cfg(target_pointer_width = "64")]
     {
-        // Leading fields of glibc/musl `struct tm`; `_rest` covers the
-        // remaining ints, tm_gmtoff and tm_zone with room to spare.
-        #[repr(C)]
-        struct Tm {
-            sec: c_int,
-            min: c_int,
-            hour: c_int,
-            mday: c_int,
-            mon: c_int,
-            year: c_int,
-            _rest: [u8; 128],
-        }
-        unsafe extern "C" {
-            fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
-        }
         // SAFETY: plain-old-data out-parameter large enough for struct tm.
         let mut tm: Tm = unsafe { std::mem::zeroed() };
         // SAFETY: `secs` and `tm` are locals; `tm` is larger than struct tm.

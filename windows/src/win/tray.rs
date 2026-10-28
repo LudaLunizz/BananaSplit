@@ -12,106 +12,7 @@
 //! is there ("TaskbarCreated"), or by a retry every two seconds.
 
 use std::cell::RefCell;
-use std::ffi::c_void;
-
-type Hwnd = *mut c_void;
-type Handle = *mut c_void;
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct Guid {
-    a: u32,
-    b: u16,
-    c: u16,
-    d: [u8; 8],
-}
-
-#[repr(C)]
-struct NotifyIconData {
-    cb_size: u32,
-    hwnd: Hwnd,
-    id: u32,
-    flags: u32,
-    callback_message: u32,
-    icon: Handle,
-    tip: [u16; 128],
-    state: u32,
-    state_mask: u32,
-    info: [u16; 256],
-    version: u32,
-    info_title: [u16; 64],
-    info_flags: u32,
-    guid: Guid,
-    balloon_icon: Handle,
-}
-
-#[repr(C)]
-struct WndClassExW {
-    cb_size: u32,
-    style: u32,
-    wndproc: Option<unsafe extern "system" fn(Hwnd, u32, usize, isize) -> isize>,
-    cls_extra: i32,
-    wnd_extra: i32,
-    instance: Handle,
-    icon: Handle,
-    cursor: Handle,
-    background: Handle,
-    menu_name: *const u16,
-    class_name: *const u16,
-    icon_sm: Handle,
-}
-
-#[repr(C)]
-#[derive(Default)]
-struct Point {
-    x: i32,
-    y: i32,
-}
-
-#[link(name = "shell32")]
-unsafe extern "system" {
-    fn Shell_NotifyIconW(message: u32, data: *mut NotifyIconData) -> i32;
-}
-
-#[link(name = "user32")]
-unsafe extern "system" {
-    fn RegisterClassExW(class: *const WndClassExW) -> u16;
-    fn CreateWindowExW(
-        ex_style: u32,
-        class: *const u16,
-        title: *const u16,
-        style: u32,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        parent: Hwnd,
-        menu: Handle,
-        instance: Handle,
-        param: *mut c_void,
-    ) -> Hwnd;
-    fn DestroyWindow(hwnd: Hwnd) -> i32;
-    fn DefWindowProcW(hwnd: Hwnd, msg: u32, w: usize, l: isize) -> isize;
-    fn RegisterWindowMessageW(name: *const u16) -> u32;
-    fn CreatePopupMenu() -> Handle;
-    fn AppendMenuW(menu: Handle, flags: u32, id: usize, text: *const u16) -> i32;
-    fn SetMenuDefaultItem(menu: Handle, item: u32, by_position: u32) -> i32;
-    fn TrackPopupMenu(menu: Handle, flags: u32, x: i32, y: i32, reserved: i32, hwnd: Hwnd, rect: *const c_void) -> i32;
-    fn DestroyMenu(menu: Handle) -> i32;
-    fn GetCursorPos(p: *mut Point) -> i32;
-    fn SetForegroundWindow(hwnd: Hwnd) -> i32;
-    fn PostMessageW(hwnd: Hwnd, msg: u32, w: usize, l: isize) -> i32;
-    fn CreateIcon(instance: Handle, w: i32, h: i32, planes: u8, bits: u8, and: *const u8, xor: *const u8) -> Handle;
-    fn DestroyIcon(icon: Handle) -> i32;
-    fn GetSystemMetrics(index: i32) -> i32;
-    fn SetTimer(hwnd: Hwnd, id: usize, ms: u32, func: *const c_void) -> usize;
-    fn KillTimer(hwnd: Hwnd, id: usize) -> i32;
-}
-
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn GetModuleHandleW(name: *const u16) -> Handle;
-}
+use crate::win::ffi::*;
 
 const WM_APP: u32 = 0x8000;
 const WM_TRAY: u32 = WM_APP + 1;
@@ -151,12 +52,12 @@ pub enum TrayAction {
 }
 
 struct State {
-    hwnd: Hwnd,
+    hwnd: HWND,
     taskbar_created: u32,
     /// The icon is in the notification area (else it is being retried).
     shown: bool,
     recording: bool,
-    icons: [Handle; 2],
+    icons: [HANDLE; 2],
     on_action: Box<dyn Fn(TrayAction)>,
 }
 
@@ -214,7 +115,7 @@ pub fn icon_bgra(set: &[(u32, &[u8])], size: u32) -> Vec<u8> {
     out
 }
 
-fn make_icon(set: &[(u32, &[u8])]) -> Handle {
+fn make_icon(set: &[(u32, &[u8])]) -> HANDLE {
     // SAFETY: plain call with a constant index.
     let size = match unsafe { GetSystemMetrics(SM_CXSMICON) } {
         s if (8..=256).contains(&s) => s as u32,
@@ -262,11 +163,7 @@ fn notify(st: &State, message: u32) -> bool {
     unsafe { Shell_NotifyIconW(message, &mut d) != 0 }
 }
 
-fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(Some(0)).collect()
-}
-
-fn menu(hwnd: Hwnd, recording: bool) -> Option<TrayAction> {
+fn menu(hwnd: HWND, recording: bool) -> Option<TrayAction> {
     // SAFETY: a menu we create and destroy here, our own window; the strings are NUL-terminated locals (AppendMenuW copies them).
     unsafe {
         let m = CreatePopupMenu();
@@ -303,7 +200,7 @@ fn item(id: usize) -> Option<TrayAction> {
     }
 }
 
-unsafe extern "system" fn wndproc(hwnd: Hwnd, msg: u32, w: usize, l: isize) -> isize {
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: usize, l: isize) -> isize {
     if msg == WM_TRAY || msg == WM_COMMAND {
         let action = if msg == WM_COMMAND {
             item(w & 0xFFFF)

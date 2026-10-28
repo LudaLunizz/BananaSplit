@@ -32,58 +32,9 @@ type Ptr = *mut c_void;
 type FdFn = unsafe extern "C" fn(c_int, c_uint, Ptr) -> c_int;
 type SourceFn = unsafe extern "C" fn(Ptr) -> c_int;
 
-unsafe extern "C" {
-    fn dlopen(filename: *const c_char, flag: c_int) -> Ptr;
-    fn dlsym(handle: Ptr, symbol: *const c_char) -> Ptr;
-    fn dlerror() -> *mut c_char;
-    fn read(fd: c_int, buf: *mut c_void, n: usize) -> isize;
-}
-const RTLD_NOW: c_int = 2;
+use crate::dl::{self, dl_api};
 
-fn dl_error() -> String {
-    // SAFETY: dlerror returns NULL or a valid C string.
-    let e = unsafe { dlerror() };
-    // SAFETY: non-null here, a NUL-terminated string from dlerror.
-    if e.is_null() { "unknown error".into() } else { unsafe { CStr::from_ptr(e) }.to_string_lossy().into_owned() }
-}
-
-fn open_lib(names: &[&str]) -> Result<Ptr, String> {
-    let mut errs = Vec::new();
-    for n in names {
-        let c = CString::new(*n).map_err(|e| e.to_string())?;
-        // SAFETY: NUL-terminated library name.
-        let h = unsafe { dlopen(c.as_ptr(), RTLD_NOW) };
-        if !h.is_null() {
-            return Ok(h);
-        }
-        errs.push(dl_error());
-    }
-    Err(errs.join("; "))
-}
-
-macro_rules! api {
-    ($name:ident { $( $f:ident : $ty:ty ),* $(,)? }) => {
-        struct $name { $( $f: $ty, )* }
-        impl $name {
-            /// # Safety
-            /// `h` must be a handle of the library that declares these C functions.
-            unsafe fn load(h: Ptr) -> Result<Self, String> {
-                Ok(Self { $( $f: {
-                    let sym = concat!(stringify!($f), "\0");
-                    // SAFETY: valid handle and NUL-terminated name.
-                    let p = unsafe { dlsym(h, sym.as_ptr().cast()) };
-                    if p.is_null() {
-                        return Err(format!("no symbol {}", stringify!($f)));
-                    }
-                    // SAFETY: the symbol has the C signature declared here (GLib/GTK/WebKit headers).
-                    unsafe { std::mem::transmute::<Ptr, $ty>(p) }
-                }, )* })
-            }
-        }
-    };
-}
-
-api!(Glib {
+dl_api!(struct Glib {
     g_main_loop_new: unsafe extern "C" fn(Ptr, c_int) -> Ptr,
     g_main_loop_run: unsafe extern "C" fn(Ptr),
     g_main_loop_quit: unsafe extern "C" fn(Ptr),
@@ -111,7 +62,7 @@ api!(Glib {
     g_set_application_name: unsafe extern "C" fn(*const c_char),
 });
 
-api!(Gobject {
+dl_api!(struct Gobject {
     g_signal_connect_data: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Ptr, Ptr, c_int) -> c_ulong,
     g_object_set: unsafe extern "C" fn(Ptr, *const c_char, ...),
 });
@@ -126,7 +77,7 @@ struct VTable {
 // SAFETY: plain function pointers and NULLs, never mutated.
 unsafe impl Sync for VTable {}
 
-api!(Gio {
+dl_api!(struct Gio {
     g_bus_get_sync: unsafe extern "C" fn(c_int, Ptr, *mut Ptr) -> Ptr,
     g_dbus_node_info_new_for_xml: unsafe extern "C" fn(*const c_char, *mut Ptr) -> Ptr,
     g_dbus_node_info_lookup_interface: unsafe extern "C" fn(Ptr, *const c_char) -> Ptr,
@@ -154,7 +105,7 @@ api!(Gio {
     ) -> c_uint,
 });
 
-api!(Gtk {
+dl_api!(struct Gtk {
     gtk_init_check: unsafe extern "C" fn(*mut c_int, *mut Ptr) -> c_int,
     gtk_window_new: unsafe extern "C" fn(c_int) -> Ptr,
     gtk_window_set_title: unsafe extern "C" fn(Ptr, *const c_char),
@@ -195,7 +146,7 @@ struct GdkRgba {
     alpha: f64,
 }
 
-api!(Gdk {
+dl_api!(struct Gdk {
     gdk_set_program_class: unsafe extern "C" fn(*const c_char),
     gdk_display_get_default: unsafe extern "C" fn() -> Ptr,
     gdk_display_get_primary_monitor: unsafe extern "C" fn(Ptr) -> Ptr,
@@ -203,7 +154,7 @@ api!(Gdk {
     gdk_monitor_get_workarea: unsafe extern "C" fn(Ptr, *mut GdkRectangle),
 });
 
-api!(WebKit {
+dl_api!(struct WebKit {
     webkit_web_view_new: unsafe extern "C" fn() -> Ptr,
     webkit_web_view_load_uri: unsafe extern "C" fn(Ptr, *const c_char),
     webkit_web_view_reload: unsafe extern "C" fn(Ptr),
@@ -226,16 +177,16 @@ fn load_glib() -> Result<(Glib, Gobject, Gio), String> {
     // SAFETY: each handle is the library declaring the symbols.
     unsafe {
         Ok((
-            Glib::load(open_lib(&["libglib-2.0.so.0"])?)?,
-            Gobject::load(open_lib(&["libgobject-2.0.so.0"])?)?,
-            Gio::load(open_lib(&["libgio-2.0.so.0"])?)?,
+            Glib::load(dl::open(&[c"libglib-2.0.so.0"])?)?,
+            Gobject::load(dl::open(&[c"libgobject-2.0.so.0"])?)?,
+            Gio::load(dl::open(&[c"libgio-2.0.so.0"])?)?,
         ))
     }
 }
 
 fn load_gtk() -> Result<(Gtk, Gdk), String> {
     // SAFETY: as above.
-    unsafe { Ok((Gtk::load(open_lib(&["libgtk-3.so.0"])?)?, Gdk::load(open_lib(&["libgdk-3.so.0"])?)?)) }
+    unsafe { Ok((Gtk::load(dl::open(&[c"libgtk-3.so.0"])?)?, Gdk::load(dl::open(&[c"libgdk-3.so.0"])?)?)) }
 }
 
 /// Whether WebKitGTK's DMA-BUF renderer can be trusted here: every GPU
@@ -269,7 +220,7 @@ fn render_node_drivers() -> Vec<String> {
 }
 
 fn load_webkit() -> Result<WebKit, String> {
-    let h = open_lib(&["libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.0.so.37"])
+    let h = dl::open(&[c"libwebkit2gtk-4.1.so.0", c"libwebkit2gtk-4.0.so.37"])
         .map_err(|_| "WebKitGTK is not installed (libwebkit2gtk-4.1 or 4.0)".to_string())?;
     // SAFETY: as above.
     unsafe { WebKit::load(h) }
@@ -1236,8 +1187,7 @@ unsafe extern "C" fn on_stdin(fd: c_int, cond: c_uint, _d: Ptr) -> c_int {
     const G_IO_IN: c_uint = 1;
     let mut buf = [0u8; 4096];
     let n = if cond & G_IO_IN != 0 {
-        // SAFETY: valid buffer.
-        unsafe { read(fd, buf.as_mut_ptr().cast(), buf.len()) }
+        crate::sys::read_fd(fd, &mut buf)
     } else {
         0
     };
