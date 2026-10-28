@@ -8,7 +8,8 @@ use bananasplit::engine::{NUM_BUSES, NUM_STRIPS};
 
 pub const VBCABLE_PAGE: &str = "https://vb-audio.com/Cable/";
 /// The channel menus and the status line, while none is installed.
-pub const MISSING: &str = "No virtual cables are installed (they are optional): Menu › Virtual cables… explains what they are for";
+pub const MISSING: &str =
+    "No virtual cables are installed (they are optional): Menu › Virtual cables… explains what they are for";
 
 fn infos(en: &Enumerator, capture: bool) -> Result<Vec<DevInfo>, String> {
     Ok(en.devices(capture)?.into_iter().map(|d| d.info).collect())
@@ -125,21 +126,31 @@ mod tests {
 
     #[test]
     fn report_with_voicemeeter_and_no_cables() {
-        let rens = devs(&["Headphones (Headset)", "Voicemeeter Input (VB-Audio Voicemeeter VAIO)", "Voicemeeter AUX Input (VB-Audio Voicemeeter AUX VAIO)"]);
+        let rens = devs(&[
+            "Headphones (Headset)",
+            "Voicemeeter Input (VB-Audio Voicemeeter VAIO)",
+            "Voicemeeter AUX Input (VB-Audio Voicemeeter AUX VAIO)",
+        ]);
         let caps = devs(&["Microphone (Headset)", "Voicemeeter Out B1 (VB-Audio Voicemeeter VAIO)"]);
         assert_eq!(
             report_json(&caps, &rens, Some("id0"), Some("id1")),
-            NO_SPLITTER.to_string() + r#""pairs":[],"voicemeeter":["Voicemeeter Input","Voicemeeter AUX Input","Voicemeeter Out B1"],"output":{"name":"Voicemeeter Input","cable":false},"input":{"name":"Microphone","cable":false}}"#
+            NO_SPLITTER.to_string()
+                + r#""pairs":[],"voicemeeter":["Voicemeeter Input","Voicemeeter AUX Input","Voicemeeter Out B1"],"output":{"name":"Voicemeeter Input","cable":false},"input":{"name":"Microphone","cable":false}}"#
         );
     }
 
     #[test]
     fn report_says_when_a_cable_is_the_default() {
-        let rens = devs(&["CABLE Input (VB-Audio Virtual Cable)", "CABLE-A Input (VB-Audio Cable A)", "Speakers (Realtek(R) Audio)"]);
+        let rens = devs(&[
+            "CABLE Input (VB-Audio Virtual Cable)",
+            "CABLE-A Input (VB-Audio Cable A)",
+            "Speakers (Realtek(R) Audio)",
+        ]);
         let caps = devs(&["CABLE Output (VB-Audio Virtual Cable)", "CABLE-A Output (VB-Audio Cable A)"]);
         assert_eq!(
             report_json(&caps, &rens, None, Some("id0")),
-            NO_SPLITTER.to_string() + r#""pairs":["CABLE","CABLE-A"],"voicemeeter":[],"output":{"name":"CABLE Input","cable":true},"input":null}"#
+            NO_SPLITTER.to_string()
+                + r#""pairs":["CABLE","CABLE-A"],"voicemeeter":[],"output":{"name":"CABLE Input","cable":true},"input":null}"#
         );
     }
 

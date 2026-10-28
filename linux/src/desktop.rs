@@ -54,7 +54,8 @@ pub fn config_home() -> Option<PathBuf> {
 }
 
 fn data_dirs() -> Vec<PathBuf> {
-    let v = std::env::var("XDG_DATA_DIRS").ok().filter(|v| !v.is_empty()).unwrap_or("/usr/local/share:/usr/share".into());
+    let v =
+        std::env::var("XDG_DATA_DIRS").ok().filter(|v| !v.is_empty()).unwrap_or("/usr/local/share:/usr/share".into());
     v.split(':').filter(|d| d.starts_with('/')).map(PathBuf::from).collect()
 }
 
@@ -114,9 +115,10 @@ pub fn exec_quote(path: &str) -> String {
 /// The program to start: the AppImage when running from one, else this file.
 pub fn program_path() -> Option<PathBuf> {
     if let Some(a) = std::env::var_os("APPIMAGE").filter(|a| !a.is_empty()).map(PathBuf::from)
-        && a.is_file() {
-            return Some(a);
-        }
+        && a.is_file()
+    {
+        return Some(a);
+    }
     std::env::current_exe().ok().map(installed_path)
 }
 
@@ -267,7 +269,9 @@ pub fn set_autostart(on: bool) -> Result<String, String> {
         // this one may run from a download folder that goes away.
         let entry = match flatpak_id() {
             Some(id) => flatpak_autostart_entry(&id),
-            None => autostart_entry(&installed_program().or_else(program_path).ok_or("cannot find this program's path")?.to_string_lossy()),
+            None => autostart_entry(
+                &installed_program().or_else(program_path).ok_or("cannot find this program's path")?.to_string_lossy(),
+            ),
         };
         write_atomic(&path, entry.as_bytes())?;
         Ok("BananaSplit starts in the tray when you log in".into())
@@ -322,7 +326,10 @@ pub fn install() -> Result<String, String> {
     }
     let prog = program_path().ok_or("cannot find this program's path")?;
     if is_system_path(&prog) && std::env::var_os("APPIMAGE").is_none() {
-        return Err(format!("{} was installed by a package, which already added BananaSplit to the app menu", prog.display()));
+        return Err(format!(
+            "{} was installed by a package, which already added BananaSplit to the app menu",
+            prog.display()
+        ));
     }
     let data = data_home().ok_or("no home folder")?;
     let menu = menu_entry_path().ok_or("no home folder")?;
@@ -380,9 +387,10 @@ pub fn uninstall() -> Result<String, String> {
             refresh_caches(&data);
         }
         if let Some(bin) = bin
-            && std::fs::remove_file(&bin).is_ok() {
-                removed.push(bin.display().to_string());
-            }
+            && std::fs::remove_file(&bin).is_ok()
+        {
+            removed.push(bin.display().to_string());
+        }
     }
     if let Some(a) = autostart_path().filter(|a| ours(a, AUTOSTART_MARK)) {
         std::fs::remove_file(&a).map_err(|e| format!("{}: {e}", a.display()))?;

@@ -127,7 +127,11 @@ impl Source {
 
     pub fn local(base: &str) -> Option<Source> {
         let port = base.strip_prefix("http://127.0.0.1:").or_else(|| base.strip_prefix("http://localhost:"))?;
-        if port.is_empty() || port.len() > 5 || !port.bytes().all(|b| b.is_ascii_digit()) || port.parse::<u16>().ok()? == 0 {
+        if port.is_empty()
+            || port.len() > 5
+            || !port.bytes().all(|b| b.is_ascii_digit())
+            || port.parse::<u16>().ok()? == 0
+        {
             return None;
         }
         Some(Source {
@@ -292,7 +296,11 @@ impl JsonParser<'_> {
     }
 
     fn hex4(&mut self) -> Result<u32, String> {
-        let h = self.b.get(self.i..self.i + 4).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u32::from_str_radix(h, 16).ok());
+        let h = self
+            .b
+            .get(self.i..self.i + 4)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u32::from_str_radix(h, 16).ok());
         match h {
             Some(v) => {
                 self.i += 4;
@@ -395,12 +403,14 @@ impl JsonParser<'_> {
 // ---------------------------------------------------------------------------
 
 const K256: [u32; 64] = [
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be,
-    0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
-    0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85,
-    0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
-    0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
+    0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+    0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8,
+    0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819,
+    0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+    0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+    0xc67178f2,
 ];
 
 pub struct Sha256 {
@@ -541,25 +551,99 @@ pub fn parse_hex32(s: &str) -> Option<[u8; 32]> {
 // ---------------------------------------------------------------------------
 
 const K512: [u64; 80] = [
-    0x428a2f98d728ae22, 0x7137449123ef65cd, 0xb5c0fbcfec4d3b2f, 0xe9b5dba58189dbbc, 0x3956c25bf348b538, 0x59f111f1b605d019, 0x923f82a4af194f9b,
-    0xab1c5ed5da6d8118, 0xd807aa98a3030242, 0x12835b0145706fbe, 0x243185be4ee4b28c, 0x550c7dc3d5ffb4e2, 0x72be5d74f27b896f, 0x80deb1fe3b1696b1,
-    0x9bdc06a725c71235, 0xc19bf174cf692694, 0xe49b69c19ef14ad2, 0xefbe4786384f25e3, 0x0fc19dc68b8cd5b5, 0x240ca1cc77ac9c65, 0x2de92c6f592b0275,
-    0x4a7484aa6ea6e483, 0x5cb0a9dcbd41fbd4, 0x76f988da831153b5, 0x983e5152ee66dfab, 0xa831c66d2db43210, 0xb00327c898fb213f, 0xbf597fc7beef0ee4,
-    0xc6e00bf33da88fc2, 0xd5a79147930aa725, 0x06ca6351e003826f, 0x142929670a0e6e70, 0x27b70a8546d22ffc, 0x2e1b21385c26c926, 0x4d2c6dfc5ac42aed,
-    0x53380d139d95b3df, 0x650a73548baf63de, 0x766a0abb3c77b2a8, 0x81c2c92e47edaee6, 0x92722c851482353b, 0xa2bfe8a14cf10364, 0xa81a664bbc423001,
-    0xc24b8b70d0f89791, 0xc76c51a30654be30, 0xd192e819d6ef5218, 0xd69906245565a910, 0xf40e35855771202a, 0x106aa07032bbd1b8, 0x19a4c116b8d2d0c8,
-    0x1e376c085141ab53, 0x2748774cdf8eeb99, 0x34b0bcb5e19b48a8, 0x391c0cb3c5c95a63, 0x4ed8aa4ae3418acb, 0x5b9cca4f7763e373, 0x682e6ff3d6b2b8a3,
-    0x748f82ee5defb2fc, 0x78a5636f43172f60, 0x84c87814a1f0ab72, 0x8cc702081a6439ec, 0x90befffa23631e28, 0xa4506cebde82bde9, 0xbef9a3f7b2c67915,
-    0xc67178f2e372532b, 0xca273eceea26619c, 0xd186b8c721c0c207, 0xeada7dd6cde0eb1e, 0xf57d4f7fee6ed178, 0x06f067aa72176fba, 0x0a637dc5a2c898a6,
-    0x113f9804bef90dae, 0x1b710b35131c471b, 0x28db77f523047d84, 0x32caab7b40c72493, 0x3c9ebe0a15c9bebc, 0x431d67c49c100d4c, 0x4cc5d4becb3e42b6,
-    0x597f299cfc657e2a, 0x5fcb6fab3ad6faec, 0x6c44198c4a475817,
+    0x428a2f98d728ae22,
+    0x7137449123ef65cd,
+    0xb5c0fbcfec4d3b2f,
+    0xe9b5dba58189dbbc,
+    0x3956c25bf348b538,
+    0x59f111f1b605d019,
+    0x923f82a4af194f9b,
+    0xab1c5ed5da6d8118,
+    0xd807aa98a3030242,
+    0x12835b0145706fbe,
+    0x243185be4ee4b28c,
+    0x550c7dc3d5ffb4e2,
+    0x72be5d74f27b896f,
+    0x80deb1fe3b1696b1,
+    0x9bdc06a725c71235,
+    0xc19bf174cf692694,
+    0xe49b69c19ef14ad2,
+    0xefbe4786384f25e3,
+    0x0fc19dc68b8cd5b5,
+    0x240ca1cc77ac9c65,
+    0x2de92c6f592b0275,
+    0x4a7484aa6ea6e483,
+    0x5cb0a9dcbd41fbd4,
+    0x76f988da831153b5,
+    0x983e5152ee66dfab,
+    0xa831c66d2db43210,
+    0xb00327c898fb213f,
+    0xbf597fc7beef0ee4,
+    0xc6e00bf33da88fc2,
+    0xd5a79147930aa725,
+    0x06ca6351e003826f,
+    0x142929670a0e6e70,
+    0x27b70a8546d22ffc,
+    0x2e1b21385c26c926,
+    0x4d2c6dfc5ac42aed,
+    0x53380d139d95b3df,
+    0x650a73548baf63de,
+    0x766a0abb3c77b2a8,
+    0x81c2c92e47edaee6,
+    0x92722c851482353b,
+    0xa2bfe8a14cf10364,
+    0xa81a664bbc423001,
+    0xc24b8b70d0f89791,
+    0xc76c51a30654be30,
+    0xd192e819d6ef5218,
+    0xd69906245565a910,
+    0xf40e35855771202a,
+    0x106aa07032bbd1b8,
+    0x19a4c116b8d2d0c8,
+    0x1e376c085141ab53,
+    0x2748774cdf8eeb99,
+    0x34b0bcb5e19b48a8,
+    0x391c0cb3c5c95a63,
+    0x4ed8aa4ae3418acb,
+    0x5b9cca4f7763e373,
+    0x682e6ff3d6b2b8a3,
+    0x748f82ee5defb2fc,
+    0x78a5636f43172f60,
+    0x84c87814a1f0ab72,
+    0x8cc702081a6439ec,
+    0x90befffa23631e28,
+    0xa4506cebde82bde9,
+    0xbef9a3f7b2c67915,
+    0xc67178f2e372532b,
+    0xca273eceea26619c,
+    0xd186b8c721c0c207,
+    0xeada7dd6cde0eb1e,
+    0xf57d4f7fee6ed178,
+    0x06f067aa72176fba,
+    0x0a637dc5a2c898a6,
+    0x113f9804bef90dae,
+    0x1b710b35131c471b,
+    0x28db77f523047d84,
+    0x32caab7b40c72493,
+    0x3c9ebe0a15c9bebc,
+    0x431d67c49c100d4c,
+    0x4cc5d4becb3e42b6,
+    0x597f299cfc657e2a,
+    0x5fcb6fab3ad6faec,
+    0x6c44198c4a475817,
 ];
 
 /// SHA-512 of the pieces, one after the other (all in memory: a checksum
 /// file and its signature are small).
 pub fn sha512(pieces: &[&[u8]]) -> [u8; 64] {
     let mut h: [u64; 8] = [
-        0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1, 0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b,
+        0x6a09e667f3bcc908,
+        0xbb67ae8584caa73b,
+        0x3c6ef372fe94f82b,
+        0xa54ff53a5f1d36f1,
+        0x510e527fade682d1,
+        0x9b05688c2b3e6c1f,
+        0x1f83d9abfb41bd6b,
         0x5be0cd19137e2179,
     ];
     let mut data: Vec<u8> = pieces.concat();
@@ -637,8 +721,15 @@ impl Fe {
 
     /// The low 255 bits (the top bit is the caller's).
     fn from_bytes(b: &[u8; 32]) -> Fe {
-        let load = |i: usize| u64::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3], b[i + 4], b[i + 5], b[i + 6], b[i + 7]]);
-        Fe([load(0) & MASK51, (load(6) >> 3) & MASK51, (load(12) >> 6) & MASK51, (load(19) >> 1) & MASK51, (load(24) >> 12) & MASK51])
+        let load =
+            |i: usize| u64::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3], b[i + 4], b[i + 5], b[i + 6], b[i + 7]]);
+        Fe([
+            load(0) & MASK51,
+            (load(6) >> 3) & MASK51,
+            (load(12) >> 6) & MASK51,
+            (load(19) >> 1) & MASK51,
+            (load(24) >> 12) & MASK51,
+        ])
     }
 
     /// Limbs back under 2^51 + 2^13.
@@ -855,8 +946,8 @@ impl Point {
 
 /// The order of the base point, L = 2^252 + 27742317777372353535851937790883648493, little-endian.
 const ORDER: [u8; 32] = [
-    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0x10,
+    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
 ];
 
 /// Is `sig` `key`'s Ed25519 signature of `msg`? (RFC 8032 5.1.7, the
@@ -913,7 +1004,18 @@ pub fn parse_version(s: &str) -> Option<Vec<u64>> {
     if parts.is_empty() || parts.len() > 4 {
         return None;
     }
-    parts.iter().map(|p| if !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()) { p.parse().ok() } else { None }).collect()
+    parts
+        .iter()
+        .map(
+            |p| {
+                if !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()) {
+                    p.parse().ok()
+                } else {
+                    None
+                }
+            },
+        )
+        .collect()
 }
 
 /// Is version `a` newer than `b`? (`2.10` is newer than `2.9`; `2.7` and
@@ -1032,7 +1134,8 @@ pub fn pick(list: &Json, pkg: Package, src: &Source) -> Result<Option<Offer>, St
     };
     let mut best: Option<Offer> = None;
     for r in releases {
-        if r.get("draft").and_then(Json::bool) != Some(false) || r.get("prerelease").and_then(Json::bool) != Some(false) {
+        if r.get("draft").and_then(Json::bool) != Some(false) || r.get("prerelease").and_then(Json::bool) != Some(false)
+        {
             continue;
         }
         let assets = r.get("assets").map(Json::arr).unwrap_or(&[]);
@@ -1047,8 +1150,17 @@ pub fn pick(list: &Json, pkg: Package, src: &Source) -> Result<Option<Offer>, St
         }
         let sums = assets.iter().filter_map(|a| asset_of(a, src, MAX_SUMS)).find(|a| a.name == "SHA256SUMS.txt");
         let sig = assets.iter().filter_map(|a| asset_of(a, src, MAX_SIG)).find(|a| a.name == "SHA256SUMS.txt.sig");
-        let page = r.get("html_url").and_then(Json::str).filter(|u| clean_url(u, &src.pages)).unwrap_or(RELEASES_PAGE).to_string();
-        let notes = r.get("body").and_then(Json::str).map(|b| cut(b.replace("\r\n", "\n").trim(), MAX_NOTES)).unwrap_or_default();
+        let page = r
+            .get("html_url")
+            .and_then(Json::str)
+            .filter(|u| clean_url(u, &src.pages))
+            .unwrap_or(RELEASES_PAGE)
+            .to_string();
+        let notes = r
+            .get("body")
+            .and_then(Json::str)
+            .map(|b| cut(b.replace("\r\n", "\n").trim(), MAX_NOTES))
+            .unwrap_or_default();
         let tag = r.get("tag_name").and_then(Json::str).map(|t| cut(t, 64)).unwrap_or_default();
         let published = r.get("published_at").and_then(Json::str).and_then(parse_utc);
         best = Some(Offer { version, tag, page, notes, asset, sums, sig, published });
@@ -1059,7 +1171,8 @@ pub fn pick(list: &Json, pkg: Package, src: &Source) -> Result<Option<Offer>, St
 /// Seconds since 1970 of a time as GitHub writes it (`2026-10-25T16:20:25Z`).
 pub fn parse_utc(s: &str) -> Option<u64> {
     let b = s.as_bytes();
-    if b.len() != 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' || b[19] != b'Z' {
+    if b.len() != 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' || b[19] != b'Z'
+    {
         return None;
     }
     let num = |r: std::ops::Range<usize>| -> Option<u64> {
@@ -1185,7 +1298,12 @@ const NO_TOOL: &str = if cfg!(windows) {
 
 /// Run a child process to its end: `stop` ends it early, `limit` too;
 /// `tick` runs every 100 ms (progress). Returns (exit code, stdout, stderr).
-fn run(mut cmd: Command, limit: Duration, stop: &AtomicBool, tick: &mut dyn FnMut() -> Result<(), String>) -> Result<(Option<i32>, String, String), String> {
+fn run(
+    mut cmd: Command,
+    limit: Duration,
+    stop: &AtomicBool,
+    tick: &mut dyn FnMut() -> Result<(), String>,
+) -> Result<(Option<i32>, String, String), String> {
     // A program file just written can be "busy" for a moment: a process
     // forked meanwhile by another thread holds it open for writing until it
     // calls exec (CI saw this in the tests). It frees up within milliseconds.
@@ -1270,7 +1388,15 @@ fn redirected_to_http(headers: &str) -> bool {
 
 /// Download `url` to `dest` (through `dest.part`, renamed when complete).
 /// `max`: the most it may be. `json`: GitHub's API (its headers).
-pub fn fetch(src: &Source, url: &str, dest: &Path, max: u64, json: bool, stop: &AtomicBool, progress: &mut dyn FnMut(u64)) -> Result<(), String> {
+pub fn fetch(
+    src: &Source,
+    url: &str,
+    dest: &Path,
+    max: u64,
+    json: bool,
+    stop: &AtomicBool,
+    progress: &mut dyn FnMut(u64),
+) -> Result<(), String> {
     let tool = find_tool().ok_or(NO_TOOL)?;
     let part = PathBuf::from(format!("{}.part", dest.display()));
     let _ = std::fs::remove_file(&part);
@@ -1282,7 +1408,19 @@ pub fn fetch(src: &Source, url: &str, dest: &Path, max: u64, json: bool, stop: &
         Tool::Curl(p) => {
             let mut c = command(p);
             // -q first: the user's ~/.curlrc cannot change what this does
-            c.args(["-q", "-sS", "-L", "--proto", proto, "--proto-redir", proto, "--max-redirs", "8", "--connect-timeout", "20"]);
+            c.args([
+                "-q",
+                "-sS",
+                "-L",
+                "--proto",
+                proto,
+                "--proto-redir",
+                proto,
+                "--max-redirs",
+                "8",
+                "--connect-timeout",
+                "20",
+            ]);
             c.args(["--max-time", &limit.as_secs().to_string(), "--max-filesize", &max.to_string(), "--retry", "2"]);
             c.arg("-H").arg(format!("User-Agent: {agent}"));
             if json {
@@ -1328,7 +1466,9 @@ pub fn fetch(src: &Source, url: &str, dest: &Path, max: u64, json: bool, stop: &
             let http = out.trim();
             if http != "200" {
                 let why = match http {
-                    "403" | "429" if json => "GitHub refused the request (too many in a short time); try again in an hour".to_string(),
+                    "403" | "429" if json => {
+                        "GitHub refused the request (too many in a short time); try again in an hour".to_string()
+                    }
                     "404" => "not found (404)".to_string(),
                     "000" | "" => "no answer from the server".to_string(),
                     h => format!("the server answered HTTP {h}"),
@@ -1346,7 +1486,11 @@ pub fn fetch(src: &Source, url: &str, dest: &Path, max: u64, json: bool, stop: &
         (Tool::Wget(_), Some(c)) => {
             // wget's own message, not the server's headers (-S, indented)
             let d = err.lines().filter(|l| !l.starts_with("  ")).map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
-            return fail(if d.is_empty() { format!("wget failed (exit {c})") } else { format!("wget failed (exit {c}): {}", cut(d, 200)) });
+            return fail(if d.is_empty() {
+                format!("wget failed (exit {c})")
+            } else {
+                format!("wget failed (exit {c}): {}", cut(d, 200))
+            });
         }
         (_, None) => return fail("the download was stopped".into()),
     }
@@ -1380,7 +1524,11 @@ fn make_cache(sub: &str) -> Result<PathBuf, String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&d).map_err(|e| format!("{}: {e}", d.display()))?;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&d)
+            .map_err(|e| format!("{}: {e}", d.display()))?;
     }
     #[cfg(windows)]
     std::fs::create_dir_all(&d).map_err(|e| format!("{}: {e}", d.display()))?;
@@ -1466,7 +1614,9 @@ pub fn method() -> Method {
     }
     #[cfg(unix)]
     if std::env::var_os("APPIMAGE").is_some_and(|a| !a.is_empty()) {
-        return Method::Manual("this BananaSplit runs from an AppImage: download the new one from the release page".into());
+        return Method::Manual(
+            "this BananaSplit runs from an AppImage: download the new one from the release page".into(),
+        );
     }
     let Some(exe) = self_path() else { return Method::Manual("cannot find this program's file".into()) };
     #[cfg(unix)]
@@ -1478,7 +1628,10 @@ pub fn method() -> Method {
             return Method::Manual("BananaSplit was installed from its .deb, and apt-get is not here: install the new .deb from the release page".into());
         }
         if crate::desktop::is_system_path(&exe) {
-            return Method::Manual(format!("{} was installed by a package manager: update BananaSplit there", exe.display()));
+            return Method::Manual(format!(
+                "{} was installed by a package manager: update BananaSplit there",
+                exe.display()
+            ));
         }
     }
     #[cfg_attr(windows, allow(unused_mut))]
@@ -1494,7 +1647,10 @@ pub fn method() -> Method {
     for t in &targets {
         let dir = t.parent().unwrap_or(Path::new("."));
         if !writable(dir) {
-            return Method::Manual(format!("BananaSplit cannot write to {}: download the new version from the release page", dir.display()));
+            return Method::Manual(format!(
+                "BananaSplit cannot write to {}: download the new version from the release page",
+                dir.display()
+            ));
         }
     }
     Method::Replace(targets)
@@ -1523,7 +1679,9 @@ pub fn verify(file: &Path, offer: &Offer, sums: Option<&str>) -> Result<[u8; 32]
         return Err(format!("{name} has {len} bytes, the release says {}", offer.asset.size));
     }
     let listed = match sums {
-        Some(text) => Some(sum_for(text, name).ok_or_else(|| format!("the release's SHA256SUMS.txt does not list {name}"))?),
+        Some(text) => {
+            Some(sum_for(text, name).ok_or_else(|| format!("the release's SHA256SUMS.txt does not list {name}"))?)
+        }
         None => None,
     };
     if offer.asset.digest.is_none() && listed.is_none() {
@@ -1532,7 +1690,9 @@ pub fn verify(file: &Path, offer: &Offer, sums: Option<&str>) -> Result<[u8; 32]
     let got = sha256_file(file)?;
     for (want, from) in [(offer.asset.digest, "GitHub's checksum"), (listed, "SHA256SUMS.txt")] {
         if want.is_some_and(|w| w != got) {
-            return Err(format!("{name} does not match {from} (damaged or not the released file); nothing was changed"));
+            return Err(format!(
+                "{name} does not match {from} (damaged or not the released file); nothing was changed"
+            ));
         }
     }
     Ok(got)
@@ -1548,9 +1708,18 @@ fn fetch_text(src: &Source, dir: &Path, a: &Asset, max: u64, stop: &AtomicBool) 
 }
 
 /// Download the release file and check it. Returns its path and SHA-256.
-pub fn download(src: &Source, cache: &str, offer: &Offer, stop: &AtomicBool, progress: &mut dyn FnMut(u64)) -> Result<(PathBuf, [u8; 32]), String> {
+pub fn download(
+    src: &Source,
+    cache: &str,
+    offer: &Offer,
+    stop: &AtomicBool,
+    progress: &mut dyn FnMut(u64),
+) -> Result<(PathBuf, [u8; 32]), String> {
     let (Some(sums), Some(sig)) = (&offer.sums, &offer.sig) else {
-        return Err("the release is not signed (it has no SHA256SUMS.txt and SHA256SUMS.txt.sig), so it is not installed".into());
+        return Err(
+            "the release is not signed (it has no SHA256SUMS.txt and SHA256SUMS.txt.sig), so it is not installed"
+                .into(),
+        );
     };
     let dir = make_cache(cache)?;
     clean_cache(&dir);
@@ -1559,7 +1728,8 @@ pub fn download(src: &Source, cache: &str, offer: &Offer, stop: &AtomicBool, pro
     // before the big download: an unsigned release is not worth fetching
     check_signature(&sums, &sig, &src.key)?;
     let file = dir.join(&offer.asset.name);
-    fetch(src, &offer.asset.url, &file, offer.asset.size, false, stop, progress).map_err(|e| format!("downloading {}: {e}", offer.asset.name))?;
+    fetch(src, &offer.asset.url, &file, offer.asset.size, false, stop, progress)
+        .map_err(|e| format!("downloading {}: {e}", offer.asset.name))?;
     match verify(&file, offer, Some(&sums)) {
         Ok(hash) => Ok((file, hash)),
         Err(e) => {
@@ -1575,7 +1745,10 @@ fn clean_cache(dir: &Path) {
     for e in rd.flatten() {
         let p = e.path();
         let name = e.file_name().to_string_lossy().into_owned();
-        let ours = name.starts_with("bananasplit") || name.starts_with("SHA256SUMS.txt") || name.starts_with("releases.json") || name == "unpacked";
+        let ours = name.starts_with("bananasplit")
+            || name.starts_with("SHA256SUMS.txt")
+            || name.starts_with("releases.json")
+            || name == "unpacked";
         if !ours {
             continue;
         }
@@ -1592,15 +1765,21 @@ pub fn check_program(program: &Path, version: &str) -> Result<(), String> {
     let mut c = command(program);
     c.arg("--version");
     let never = AtomicBool::new(false);
-    let (code, out, err) = run(c, Duration::from_secs(20), &never, &mut || Ok(())).map_err(|e| format!("the new version did not run: {e}"))?;
+    let (code, out, err) = run(c, Duration::from_secs(20), &never, &mut || Ok(()))
+        .map_err(|e| format!("the new version did not run: {e}"))?;
     let line = first_line(&out);
     let said = line.strip_prefix("BananaSplit ").and_then(|r| r.split_whitespace().next());
     match said {
         Some(v) if code == Some(0) && v == version => Ok(()),
-        Some(v) if code == Some(0) => Err(format!("the downloaded program says it is BananaSplit {}, not {version}", cut(v, 40))),
+        Some(v) if code == Some(0) => {
+            Err(format!("the downloaded program says it is BananaSplit {}, not {version}", cut(v, 40)))
+        }
         _ => {
             let what = if line.is_empty() { first_line(&err) } else { line };
-            Err(format!("the new version does not run on this computer ({})", if what.is_empty() { "no answer".to_string() } else { cut(what, 200) }))
+            Err(format!(
+                "the new version does not run on this computer ({})",
+                if what.is_empty() { "no answer".to_string() } else { cut(what, 200) }
+            ))
         }
     }
 }
@@ -1718,7 +1897,8 @@ fn replace_one(new: &Path, target: &Path, version: &str, first: bool, stop: &Ato
             {
                 use std::os::unix::fs::PermissionsExt;
                 let was = std::fs::metadata(target).map(|m| m.permissions().mode()).ok();
-                std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(program_mode(was))).map_err(|e| format!("{}: {e}", stage.display()))?;
+                std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(program_mode(was)))
+                    .map_err(|e| format!("{}: {e}", stage.display()))?;
             }
             // to disk before it takes the old one's place (Windows flushes
             // only a handle opened for writing)
@@ -1778,10 +1958,13 @@ fn replace_one(new: &Path, target: &Path, version: &str, first: bool, stop: &Ato
 /// BananaSplit ended) or an unfinished new file of an update that is not
 /// running any more (not this process's, not a live one's).
 fn stale(windows: bool, exe: &str, f: &str, me: u32, alive: &dyn Fn(&str) -> bool) -> bool {
-    let pid = |p: &str| !p.is_empty() && p.len() <= 10 && p.bytes().all(|b| b.is_ascii_digit()) && p != me.to_string() && !alive(p);
+    let pid = |p: &str| {
+        !p.is_empty() && p.len() <= 10 && p.bytes().all(|b| b.is_ascii_digit()) && p != me.to_string() && !alive(p)
+    };
     if windows {
         f == format!("{exe}.old")
-            || f.strip_prefix(&format!("{exe}.old-")).is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            || f.strip_prefix(&format!("{exe}.old-"))
+                .is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
             || f.strip_prefix("bananasplit.update-").and_then(|r| r.strip_suffix(".exe")).is_some_and(pid)
     } else {
         f.strip_prefix(&format!(".{exe}.update-")).is_some_and(pid)
@@ -1820,14 +2003,26 @@ if [ "${1%% *}" != "$2" ]; then echo "the package changed after it was checked" 
 #[cfg(unix)]
 fn install_deb(deb: &Path, hash: &[u8; 32], version: &str, stop: &AtomicBool, interactive: bool) -> Result<(), String> {
     let Some(pkexec) = which("pkexec") else {
-        return Err(format!("installing a package needs pkexec, which is not here. Install it in a terminal:  sudo apt install {}", deb.display()));
+        return Err(format!(
+            "installing a package needs pkexec, which is not here. Install it in a terminal:  sudo apt install {}",
+            deb.display()
+        ));
     };
     install_deb_with(&pkexec, Path::new(APT_GET), Path::new(DEB_PROGRAM), deb, hash, version, stop, interactive)
 }
 
 #[cfg(unix)]
 #[allow(clippy::too_many_arguments)]
-fn install_deb_with(pkexec: &Path, apt: &Path, program: &Path, deb: &Path, hash: &[u8; 32], version: &str, stop: &AtomicBool, interactive: bool) -> Result<(), String> {
+fn install_deb_with(
+    pkexec: &Path,
+    apt: &Path,
+    program: &Path,
+    deb: &Path,
+    hash: &[u8; 32],
+    version: &str,
+    stop: &AtomicBool,
+    interactive: bool,
+) -> Result<(), String> {
     let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
     let args = |c: &mut Command| {
         c.arg("/bin/sh").arg("-c").arg(ROOT_INSTALL).arg("bananasplit-update").arg(deb).arg(&hex).arg(apt);
@@ -1838,7 +2033,9 @@ fn install_deb_with(pkexec: &Path, apt: &Path, program: &Path, deb: &Path, hash:
         crate::sys::cloexec_all();
         let mut c = std::process::Command::new(pkexec);
         args(&mut c);
-        c.status().map(|s| (s.code(), String::new(), String::new())).map_err(|e| format!("cannot run {}: {e}", pkexec.display()))
+        c.status()
+            .map(|s| (s.code(), String::new(), String::new()))
+            .map_err(|e| format!("cannot run {}: {e}", pkexec.display()))
     } else {
         let mut c = command(pkexec);
         args(&mut c);
@@ -1851,11 +2048,18 @@ fn install_deb_with(pkexec: &Path, apt: &Path, program: &Path, deb: &Path, hash:
         Ok((Some(126), _, _)) => return Err("installing was cancelled (no password given)".into()),
         Ok((Some(127), _, err)) => {
             let why = first_line(&err);
-            return Err(format!("could not get permission to install the package{}", if why.is_empty() { String::new() } else { format!(" ({})", cut(why, 200)) }));
+            return Err(format!(
+                "could not get permission to install the package{}",
+                if why.is_empty() { String::new() } else { format!(" ({})", cut(why, 200)) }
+            ));
         }
         Ok((code, _, err)) => {
             let last = err.lines().map(str::trim).rfind(|l| !l.is_empty()).unwrap_or("");
-            return Err(format!("apt-get failed (exit {}): {}", code.map_or("?".into(), |c| c.to_string()), cut(last, 200)));
+            return Err(format!(
+                "apt-get failed (exit {}): {}",
+                code.map_or("?".into(), |c| c.to_string()),
+                cut(last, 200)
+            ));
         }
         Err(e) => return Err(e),
     }
@@ -1864,7 +2068,14 @@ fn install_deb_with(pkexec: &Path, apt: &Path, program: &Path, deb: &Path, hash:
 
 /// Install a downloaded, checked release file. Returns where it went, and
 /// warnings (a copy that could not be updated).
-pub fn install(method: &Method, offer: &Offer, file: &Path, hash: &[u8; 32], stop: &AtomicBool, interactive: bool) -> Result<(String, Vec<String>), String> {
+pub fn install(
+    method: &Method,
+    offer: &Offer,
+    file: &Path,
+    hash: &[u8; 32],
+    stop: &AtomicBool,
+    interactive: bool,
+) -> Result<(String, Vec<String>), String> {
     let _ = (hash, stop, interactive);
     match method {
         Method::Manual(why) => Err(why.clone()),
@@ -2066,7 +2277,9 @@ impl Updater {
     pub fn install(&self) -> Result<String, String> {
         let st = self.status();
         match (&st.offer, st.phase) {
-            (Some(o), Phase::Available | Phase::Prepared | Phase::Failed) if newer(&o.version, st.installed.as_deref().unwrap_or(VERSION)) => {
+            (Some(o), Phase::Available | Phase::Prepared | Phase::Failed)
+                if newer(&o.version, st.installed.as_deref().unwrap_or(VERSION)) =>
+            {
                 if let Method::Manual(why) = &st.method {
                     return Err(why.clone());
                 }
@@ -2097,7 +2310,9 @@ impl Updater {
             return;
         }
         let now = Instant::now();
-        let next = *g.next_auto.get_or_insert_with(|| (self.started + self.first).max(now + self.first.min(Duration::from_secs(5))));
+        let next = *g
+            .next_auto
+            .get_or_insert_with(|| (self.started + self.first).max(now + self.first.min(Duration::from_secs(5))));
         if now < next || g.st.phase.busy() || g.job.is_some() || g.done {
             return;
         }
@@ -2181,7 +2396,9 @@ impl Updater {
                     if s.installed.is_some() {
                         // what was installed still waits for the restart
                         s.phase = Phase::Ready;
-                        s.message = format!("BananaSplit {have} is installed: restart BananaSplit to use it. (Checking again failed: {e})");
+                        s.message = format!(
+                            "BananaSplit {have} is installed: restart BananaSplit to use it. (Checking again failed: {e})"
+                        );
                     } else {
                         s.phase = Phase::Failed;
                         s.message = format!("Could not check for updates: {e}");
@@ -2191,14 +2408,20 @@ impl Updater {
                     }
                 }
                 Ok(Some(o)) if newer(&o.version, &have) => {
-                    let keep = s.prepared.as_ref().is_some_and(|p| p.is_file()) && s.offer.as_ref().is_some_and(|p| p.version == o.version && p.asset == o.asset);
+                    let keep = s.prepared.as_ref().is_some_and(|p| p.is_file())
+                        && s.offer.as_ref().is_some_and(|p| p.version == o.version && p.asset == o.asset);
                     if !keep {
                         s.prepared = None;
                         s.prepared_hash = None;
                     }
                     s.message = match &method {
-                        Method::Manual(why) => format!("BananaSplit {} is available. It cannot install itself here: {why}.", o.version),
-                        _ if keep => format!("BananaSplit {} is downloaded and checked: install it now (asks for your password).", o.version),
+                        Method::Manual(why) => {
+                            format!("BananaSplit {} is available. It cannot install itself here: {why}.", o.version)
+                        }
+                        _ if keep => format!(
+                            "BananaSplit {} is downloaded and checked: install it now (asks for your password).",
+                            o.version
+                        ),
                         _ => format!("BananaSplit {} is available.", o.version),
                     };
                     s.phase = if keep { Phase::Prepared } else { Phase::Available };
@@ -2209,7 +2432,9 @@ impl Updater {
                             inner.event = Some(format!("BananaSplit {} is available: Menu ▸ Updates", o.version));
                         } else if let Some(wait) = young {
                             // installed by itself once it has been out for SETTLE
-                            s.message.push_str(" It installs itself once it has been out for two days; Install does it now.");
+                            s.message.push_str(
+                                " It installs itself once it has been out for two days; Install does it now.",
+                            );
                             inner.event = Some(format!("BananaSplit {} is available: Menu ▸ Updates", o.version));
                             inner.next_auto = Some(Instant::now() + (wait + Duration::from_secs(60)).min(RECHECK));
                         } else {
@@ -2298,14 +2523,19 @@ impl Updater {
             g.st.phase = Phase::Prepared;
             g.st.prepared = Some(file);
             g.st.prepared_hash = Some(hash);
-            g.st.message = format!("BananaSplit {v} is downloaded and checked: install it now (asks for your password).");
+            g.st.message =
+                format!("BananaSplit {v} is downloaded and checked: install it now (asks for your password).");
             g.st.rev += 1;
             g.event = Some(format!("BananaSplit {v} is ready to install: Menu ▸ Updates"));
             return;
         }
         self.set(|s| {
             s.phase = Phase::Installing;
-            s.message = if method == Method::Deb { format!("installing BananaSplit {v} (enter your password)…") } else { format!("installing BananaSplit {v}…") };
+            s.message = if method == Method::Deb {
+                format!("installing BananaSplit {v} (enter your password)…")
+            } else {
+                format!("installing BananaSplit {v}…")
+            };
         });
         let r = install(&method, &offer, &file, &hash, &self.stop, false);
         if r.is_err() && method == Method::Deb {
@@ -2323,11 +2553,13 @@ impl Updater {
                 g.st.installed = Some(v.clone());
                 g.st.prepared = None;
                 g.st.prepared_hash = None;
-                let extra = if warnings.is_empty() { String::new() } else { format!(" Note: {}.", warnings.join("; ")) };
+                let extra =
+                    if warnings.is_empty() { String::new() } else { format!(" Note: {}.", warnings.join("; ")) };
                 g.st.message = format!("BananaSplit {v} is installed. Restart BananaSplit to use it.{extra}");
                 g.st.rev += 1;
                 if auto {
-                    g.event = Some(format!("BananaSplit {v} was installed: restart BananaSplit to use it (Menu ▸ Updates)"));
+                    g.event =
+                        Some(format!("BananaSplit {v} was installed: restart BananaSplit to use it (Menu ▸ Updates)"));
                 }
             }
             Err(e) => fail(e),
@@ -2453,8 +2685,9 @@ fn pid_alive(pid: &str) -> bool {
 #[cfg(unix)]
 fn alive(pid: u32) -> bool {
     // a zombie (exited, not yet reaped by its parent) is gone
-    std::fs::read_to_string(format!("/proc/{pid}/stat"))
-        .is_ok_and(|s| s.rsplit_once(')').and_then(|(_, r)| r.trim_start().chars().next()).is_some_and(|c| c != 'Z' && c != 'X'))
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| {
+        s.rsplit_once(')').and_then(|(_, r)| r.trim_start().chars().next()).is_some_and(|c| c != 'Z' && c != 'X')
+    })
 }
 
 /// A restarted BananaSplit: wait (20 s at most) for the one it replaces to
@@ -2463,7 +2696,10 @@ pub fn wait_for_previous() {
     let Some(v) = std::env::var_os(WAIT_ENV) else { return };
     // SAFETY: called at the start of main, before any thread is started.
     unsafe { std::env::remove_var(WAIT_ENV) };
-    let Some(pid) = v.to_str().and_then(|s| s.parse::<u32>().ok()).filter(|&p| p != 0 && p != std::process::id()) else { return };
+    let Some(pid) = v.to_str().and_then(|s| s.parse::<u32>().ok()).filter(|&p| p != 0 && p != std::process::id())
+    else {
+        return;
+    };
     #[cfg(unix)]
     {
         let t0 = Instant::now();
@@ -2498,7 +2734,10 @@ pub fn cli(running: bool) -> Result<(), String> {
     let src = Source::from_env();
     let never = AtomicBool::new(false);
     let method = method();
-    println!("bananasplit: this is BananaSplit {VERSION}; checking {} …", if src.https { "GitHub" } else { src.api.as_str() });
+    println!(
+        "bananasplit: this is BananaSplit {VERSION}; checking {} …",
+        if src.https { "GitHub" } else { src.api.as_str() }
+    );
     let Some(offer) = find(&src, CLI_CACHE, method.package(), &never)?.filter(|o| newer(&o.version, VERSION)) else {
         println!("bananasplit: BananaSplit {VERSION} is the newest version");
         return Ok(());
@@ -2518,15 +2757,22 @@ pub fn cli(running: bool) -> Result<(), String> {
     println!("bananasplit: the release is signed with BananaSplit's key, and the download matches its checksums");
     #[cfg(unix)]
     if method == Method::Deb && !crate::sys::stdin_is_tty() {
-        return Err(format!("installing the package needs your password; in a terminal run:  sudo apt install {}", file.display()));
+        return Err(format!(
+            "installing the package needs your password; in a terminal run:  sudo apt install {}",
+            file.display()
+        ));
     }
     let r = install(&method, &offer, &file, &hash, &never, true);
     if (r.is_ok() || method != Method::Deb)
-        && let Some(d) = file.parent() {
-            clean_cache(d);
-        }
+        && let Some(d) = file.parent()
+    {
+        clean_cache(d);
+    }
     let (r, warnings) = r?;
-    println!("bananasplit: installed BananaSplit {} ({r}); a running BananaSplit uses it after a restart", offer.version);
+    println!(
+        "bananasplit: installed BananaSplit {} ({r}); a running BananaSplit uses it after a restart",
+        offer.version
+    );
     for w in warnings {
         println!("bananasplit: note: {w}");
     }
@@ -2548,7 +2794,22 @@ mod tests {
         assert_eq!(j.get("e"), Some(&Json::Obj(vec![])));
         assert_eq!(j.get("l"), Some(&Json::Arr(vec![])));
         assert_eq!(Json::parse("\"日本語\"").unwrap().str(), Some("日本語"));
-        for bad in ["", "{", "[1,]", "{\"a\" 1}", "01", "1.", "-", "\"a", "\"\u{1}\"", "tru", "[1] 2", "{1:2}", "\"\\x\"", "\"\\u12\""] {
+        for bad in [
+            "",
+            "{",
+            "[1,]",
+            "{\"a\" 1}",
+            "01",
+            "1.",
+            "-",
+            "\"a",
+            "\"\u{1}\"",
+            "tru",
+            "[1] 2",
+            "{1:2}",
+            "\"\\x\"",
+            "\"\\u12\"",
+        ] {
             assert!(Json::parse(bad).is_err(), "{bad:?}");
         }
         let deep = "[".repeat(100) + &"]".repeat(100);
@@ -2663,7 +2924,10 @@ mod tests {
         p[0] = 0xed;
         p[31] = 0x7f;
         assert!(!ed25519_verify(&p, b"", &parse_sig(vectors[0].2).unwrap()));
-        assert!(parse_hex32(SIGNING_KEY).is_some_and(|k| Point::decode(&k, curve_d()).is_some()), "the release key is a point");
+        assert!(
+            parse_hex32(SIGNING_KEY).is_some_and(|k| Point::decode(&k, curve_d()).is_some()),
+            "the release key is a point"
+        );
     }
 
     #[test]
@@ -2707,10 +2971,22 @@ mod tests {
 
     #[test]
     fn only_a_server_on_this_computer_stands_in_for_github() {
-        assert_eq!(Source::local("http://127.0.0.1:8123").unwrap().download, "http://127.0.0.1:8123/LudaLunizz/BananaSplit/releases/download/");
+        assert_eq!(
+            Source::local("http://127.0.0.1:8123").unwrap().download,
+            "http://127.0.0.1:8123/LudaLunizz/BananaSplit/releases/download/"
+        );
         assert!(Source::local("http://localhost:8123").is_some());
-        for bad in ["http://127.0.0.1", "http://127.0.0.1:", "http://127.0.0.1:0", "http://127.0.0.1:99999", "http://127.0.0.1:80/x",
-                    "http://127.0.0.10:80", "https://evil.example:80", "http://127.0.0.1.evil:80", "http://127.0.0.1:80@evil"] {
+        for bad in [
+            "http://127.0.0.1",
+            "http://127.0.0.1:",
+            "http://127.0.0.1:0",
+            "http://127.0.0.1:99999",
+            "http://127.0.0.1:80/x",
+            "http://127.0.0.10:80",
+            "https://evil.example:80",
+            "http://127.0.0.1.evil:80",
+            "http://127.0.0.1:80@evil",
+        ] {
             assert!(Source::local(bad).is_none(), "{bad}");
         }
         let g = Source::github();
@@ -2740,7 +3016,16 @@ mod tests {
             "[{},{},{},{},{}]",
             release("v2.9.0", true, false, &[("bananasplit-2.9.0-windows-x64.exe", 10, Some(&d))]),
             release("v2.8.1", false, true, &[("bananasplit-2.8.1-windows-x64.exe", 10, Some(&d))]),
-            release("v2.7.10", false, false, &[("bananasplit-2.7.10-windows-x64.exe", 10, Some(&d)), ("SHA256SUMS.txt", 300, None), ("SHA256SUMS.txt.sig", 129, None)]),
+            release(
+                "v2.7.10",
+                false,
+                false,
+                &[
+                    ("bananasplit-2.7.10-windows-x64.exe", 10, Some(&d)),
+                    ("SHA256SUMS.txt", 300, None),
+                    ("SHA256SUMS.txt.sig", 129, None)
+                ]
+            ),
             release("v2.7.9", false, false, &[("bananasplit-2.7.9-windows-x64.exe", 10, Some(&d))]),
             release("v2.8.0", false, false, &[("bananasplit-2.8.0-linux-x86_64.tar.gz", 10, None)]),
         );
@@ -2755,9 +3040,16 @@ mod tests {
         assert_eq!(o.notes, "Fixes.\nMore.");
         assert_eq!(o.page, "https://github.com/LudaLunizz/BananaSplit/releases/tag/v2.7.10");
         let t = pick(&j, Package::Tarball, &src).unwrap().unwrap();
-        assert_eq!((t.version.as_str(), t.asset.digest, t.sums.is_none(), t.sig.is_none()), ("2.8.0", None, true, true));
+        assert_eq!(
+            (t.version.as_str(), t.asset.digest, t.sums.is_none(), t.sig.is_none()),
+            ("2.8.0", None, true, true)
+        );
         assert_eq!(pick(&j, Package::Deb, &src).unwrap(), None);
-        assert!(pick(&Json::parse(r#"{"message":"API rate limit exceeded"}"#).unwrap(), Package::Deb, &src).unwrap_err().contains("rate limit"));
+        assert!(
+            pick(&Json::parse(r#"{"message":"API rate limit exceeded"}"#).unwrap(), Package::Deb, &src)
+                .unwrap_err()
+                .contains("rate limit")
+        );
         assert_eq!(pick(&Json::parse("[]").unwrap(), Package::Deb, &src).unwrap(), None);
     }
 
@@ -2768,15 +3060,30 @@ mod tests {
         let j = Json::parse(include_str!("../tests/update/github-releases.json")).unwrap();
         let src = Source::github();
         let want = [
-            (Package::Tarball, "bananasplit-2.7.3-linux-x86_64.tar.gz", "205c5e561e406b0b6a92c98f16ed5318aad0428f273d8d7ed68cb37a6e097f03"),
-            (Package::Deb, "bananasplit_2.7.3_amd64.deb", "b7032402e0195141f50d1bfa446dffab918c80630e01d03c31feb40961fc94ff"),
-            (Package::WindowsExe, "bananasplit-2.7.3-windows-x64.exe", "247e304c69470d6a65b4467a859263448b38a6cfdd59574f901830bb930dd9e0"),
+            (
+                Package::Tarball,
+                "bananasplit-2.7.3-linux-x86_64.tar.gz",
+                "205c5e561e406b0b6a92c98f16ed5318aad0428f273d8d7ed68cb37a6e097f03",
+            ),
+            (
+                Package::Deb,
+                "bananasplit_2.7.3_amd64.deb",
+                "b7032402e0195141f50d1bfa446dffab918c80630e01d03c31feb40961fc94ff",
+            ),
+            (
+                Package::WindowsExe,
+                "bananasplit-2.7.3-windows-x64.exe",
+                "247e304c69470d6a65b4467a859263448b38a6cfdd59574f901830bb930dd9e0",
+            ),
         ];
         for (pkg, name, digest) in want {
             let o = pick(&j, pkg, &src).unwrap().unwrap();
             assert_eq!((o.version.as_str(), o.tag.as_str(), o.asset.name.as_str()), ("2.7.3", "v2.7.3", name));
             assert_eq!(o.asset.digest, parse_hex32(digest));
-            assert_eq!(o.asset.url, format!("https://github.com/LudaLunizz/BananaSplit/releases/download/v2.7.3/{name}"));
+            assert_eq!(
+                o.asset.url,
+                format!("https://github.com/LudaLunizz/BananaSplit/releases/download/v2.7.3/{name}")
+            );
             assert_eq!(o.page, "https://github.com/LudaLunizz/BananaSplit/releases/tag/v2.7.3");
             assert_eq!(o.sums.as_ref().map(|s| s.name.as_str()), Some("SHA256SUMS.txt"));
             assert!(!o.notes.is_empty());
@@ -2795,25 +3102,50 @@ mod tests {
         let good = "https://github.com/LudaLunizz/BananaSplit/releases/download/v9/bananasplit_9.0.0_amd64.deb";
         let o = one(good, 5, "https://evil.example/x").unwrap();
         assert_eq!(o.page, RELEASES_PAGE, "a foreign page link is replaced by the releases list");
-        assert!(one("https://evil.example/LudaLunizz/BananaSplit/releases/download/v9/bananasplit_9.0.0_amd64.deb", 5, "").is_none());
-        assert!(one("http://github.com/LudaLunizz/BananaSplit/releases/download/v9/bananasplit_9.0.0_amd64.deb", 5, "").is_none());
-        assert!(one("https://github.com/LudaLunizz/BananaSplit/releases/download/v9/other.deb", 5, "").is_none(), "the link names the file");
-        assert!(one("https://github.com/LudaLunizz/BananaSplit/releases/download/v9/x y/bananasplit_9.0.0_amd64.deb", 5, "").is_none());
+        assert!(
+            one("https://evil.example/LudaLunizz/BananaSplit/releases/download/v9/bananasplit_9.0.0_amd64.deb", 5, "")
+                .is_none()
+        );
+        assert!(
+            one("http://github.com/LudaLunizz/BananaSplit/releases/download/v9/bananasplit_9.0.0_amd64.deb", 5, "")
+                .is_none()
+        );
+        assert!(
+            one("https://github.com/LudaLunizz/BananaSplit/releases/download/v9/other.deb", 5, "").is_none(),
+            "the link names the file"
+        );
+        assert!(
+            one(
+                "https://github.com/LudaLunizz/BananaSplit/releases/download/v9/x y/bananasplit_9.0.0_amd64.deb",
+                5,
+                ""
+            )
+            .is_none()
+        );
         assert!(one(good, 0, "").is_none(), "empty");
         assert!(one(good, MAX_ASSET + 1, "").is_none(), "too big");
         let j = format!(
             r#"[{{"tag_name":"v9","draft":false,"prerelease":false,"assets":[{{"name":"bananasplit_9.0.0_amd64.deb","state":"starter","size":5,"browser_download_url":"{good}"}}]}}]"#
         );
         assert_eq!(pick(&Json::parse(&j).unwrap(), Package::Deb, &src).unwrap(), None, "an upload that did not finish");
-        let j = format!(r#"[{{"tag_name":"v9","assets":[{{"name":"bananasplit_9.0.0_amd64.deb","size":5,"browser_download_url":"{good}"}}]}}]"#);
-        assert_eq!(pick(&Json::parse(&j).unwrap(), Package::Deb, &src).unwrap(), None, "draft/prerelease must say false");
+        let j = format!(
+            r#"[{{"tag_name":"v9","assets":[{{"name":"bananasplit_9.0.0_amd64.deb","size":5,"browser_download_url":"{good}"}}]}}]"#
+        );
+        assert_eq!(
+            pick(&Json::parse(&j).unwrap(), Package::Deb, &src).unwrap(),
+            None,
+            "draft/prerelease must say false"
+        );
     }
 
     #[test]
     fn curl_versions_are_read() {
         assert_eq!(parse_curl_version("curl 8.4.0 (Windows) libcurl/8.4.0 Schannel\nRelease-Date: x\n"), Some((8, 4)));
         assert_eq!(parse_curl_version("curl 7.55.1 (Windows) libcurl/7.55.1 WinSSL\n"), Some((7, 55)));
-        assert!(parse_curl_version("curl 7.55.1").unwrap() < (7, 70) && (7, 70) <= parse_curl_version("curl 7.70.0").unwrap());
+        assert!(
+            parse_curl_version("curl 7.55.1").unwrap() < (7, 70)
+                && (7, 70) <= parse_curl_version("curl 7.70.0").unwrap()
+        );
         assert_eq!(parse_curl_version("wget 1.21"), None);
         assert_eq!(parse_curl_version(""), None);
     }
@@ -2823,7 +3155,15 @@ mod tests {
         let p = "https://github.com/LudaLunizz/BananaSplit/releases/download/";
         assert!(clean_url(&format!("{p}v9/bananasplit_9.0.0_amd64.deb"), p));
         assert!(clean_url(&format!("{p}v9/a.b..c.deb"), p), "dots inside a name are fine");
-        for bad in ["v9/../../../other/x.deb", "v9/./x.deb", "v9/%2e%2e/x.deb", "v9/%2E%2E/x.deb", "..", "v9/x .deb", "v9/x\"y.deb"] {
+        for bad in [
+            "v9/../../../other/x.deb",
+            "v9/./x.deb",
+            "v9/%2e%2e/x.deb",
+            "v9/%2E%2E/x.deb",
+            "..",
+            "v9/x .deb",
+            "v9/x\"y.deb",
+        ] {
             assert!(!clean_url(&format!("{p}{bad}"), p), "{bad}");
         }
         assert!(!clean_url("https://github.com/LudaLunizz/BananaSplit/", p));
@@ -2831,9 +3171,14 @@ mod tests {
         let multi = format!("{}é/x.deb", &p[..p.len() - 1]);
         assert!(!clean_url(&multi, p));
         assert!(!clean_url("é", p));
-        let mut j = format!(r#"[{{"tag_name":"v9","draft":false,"prerelease":false,"html_url":"{multi}","body":"","assets":[]}}]"#);
+        let mut j = format!(
+            r#"[{{"tag_name":"v9","draft":false,"prerelease":false,"html_url":"{multi}","body":"","assets":[]}}]"#
+        );
         assert_eq!(pick(&Json::parse(&j).unwrap(), Package::Deb, &Source::github()).unwrap(), None);
-        j = j.replace(r#""assets":[]"#, &format!(r#""assets":[{{"name":"x.deb","size":5,"browser_download_url":"{multi}"}}]"#));
+        j = j.replace(
+            r#""assets":[]"#,
+            &format!(r#""assets":[{{"name":"x.deb","size":5,"browser_download_url":"{multi}"}}]"#),
+        );
         assert_eq!(pick(&Json::parse(&j).unwrap(), Package::Deb, &Source::github()).unwrap(), None);
     }
 
@@ -2858,7 +3203,9 @@ mod tests {
 
     #[test]
     fn a_wget_redirect_to_plain_http_is_seen() {
-        let hop = |loc: &str| format!("  HTTP/1.1 302 Found\n  Server: GitHub.com\n  {loc}\n  HTTP/1.1 200 OK\n  Content-Length: 2\n");
+        let hop = |loc: &str| {
+            format!("  HTTP/1.1 302 Found\n  Server: GitHub.com\n  {loc}\n  HTTP/1.1 200 OK\n  Content-Length: 2\n")
+        };
         assert!(redirected_to_http(&hop("Location: http://objects.githubusercontent.com/x")));
         assert!(redirected_to_http(&hop("location:HTTP://evil.example/x")));
         assert!(!redirected_to_http(&hop("Location: https://objects.githubusercontent.com/x")));
@@ -2874,8 +3221,18 @@ mod tests {
         assert_eq!(parse_utc("2026-10-25T16:20:25Z"), Some(1_792_945_225));
         assert_eq!(parse_utc("2000-02-29T12:00:00Z"), Some(951_825_600), "a leap day");
         assert_eq!(parse_utc("2024-12-31T23:59:59Z"), Some(1_735_689_599));
-        for bad in ["", "2026-10-25", "2026-10-25T16:20:25", "2026-10-25 16:20:25Z", "2026-13-01T00:00:00Z", "1969-12-31T23:59:59Z",
-                    "2026-10-25T24:00:00Z", "2026-1a-25T16:20:25Z", "+026-10-25T16:20:25Z", "2026-10-25T16:20:25+01:00"] {
+        for bad in [
+            "",
+            "2026-10-25",
+            "2026-10-25T16:20:25",
+            "2026-10-25 16:20:25Z",
+            "2026-13-01T00:00:00Z",
+            "1969-12-31T23:59:59Z",
+            "2026-10-25T24:00:00Z",
+            "2026-1a-25T16:20:25Z",
+            "+026-10-25T16:20:25Z",
+            "2026-10-25T16:20:25+01:00",
+        ] {
             assert_eq!(parse_utc(bad), None, "{bad}");
         }
     }
@@ -2982,7 +3339,10 @@ mod tests {
 
     #[test]
     fn a_restart_brings_the_window_back() {
-        let a: Vec<String> = ["--gui", "--hidden", "--config", "/x/--hidden.ini", "--gui-port", "9000"].iter().map(|s| s.to_string()).collect();
+        let a: Vec<String> = ["--gui", "--hidden", "--config", "/x/--hidden.ini", "--gui-port", "9000"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert_eq!(restart_args(&a), ["--gui", "--config", "/x/--hidden.ini", "--gui-port", "9000"]);
         let b: Vec<String> = ["--gui", "--no-open"].iter().map(|s| s.to_string()).collect();
         assert_eq!(restart_args(&b), if cfg!(windows) { vec!["--gui"] } else { vec!["--gui", "--no-open"] });
@@ -3030,7 +3390,8 @@ mod tests {
         let never = AtomicBool::new(false);
         let dest = d.join("file");
         let mut last = 0;
-        fetch(&src, &format!("http://127.0.0.1:{port}/f"), &dest, body.len() as u64, true, &never, &mut |n| last = n).unwrap();
+        fetch(&src, &format!("http://127.0.0.1:{port}/f"), &dest, body.len() as u64, true, &never, &mut |n| last = n)
+            .unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), body);
         assert_eq!(last, body.len() as u64, "progress reaches the size");
         let head = h.join().unwrap().join("");
@@ -3044,7 +3405,8 @@ mod tests {
         h.join().unwrap();
 
         let (port, h) = serve("200 OK", body.clone(), 1);
-        let e = fetch(&src, &format!("http://127.0.0.1:{port}/f"), &dest, 1000, false, &never, &mut |_| {}).unwrap_err();
+        let e =
+            fetch(&src, &format!("http://127.0.0.1:{port}/f"), &dest, 1000, false, &never, &mut |_| {}).unwrap_err();
         assert!(e.contains("larger"), "{e}");
         assert!(!dest.exists());
         h.join().unwrap();
@@ -3055,7 +3417,9 @@ mod tests {
         drop(l);
         assert!(fetch(&src, &format!("http://127.0.0.1:{port}/f"), &dest, 1000, false, &never, &mut |_| {}).is_err());
         // https only, when the source is GitHub
-        let e = fetch(&Source::github(), &format!("http://127.0.0.1:{port}/f"), &dest, 1000, false, &never, &mut |_| {}).unwrap_err();
+        let e =
+            fetch(&Source::github(), &format!("http://127.0.0.1:{port}/f"), &dest, 1000, false, &never, &mut |_| {})
+                .unwrap_err();
         assert!(!e.is_empty());
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -3091,7 +3455,11 @@ mod tests {
         // one that does not run
         let broken = d.join("broken");
         script(&broken, "#!/bin/sh\nexit 3\n");
-        assert!(replace(&broken, std::slice::from_ref(&t1), "9.9.9", &AtomicBool::new(false)).unwrap_err().contains("does not run on this computer"));
+        assert!(
+            replace(&broken, std::slice::from_ref(&t1), "9.9.9", &AtomicBool::new(false))
+                .unwrap_err()
+                .contains("does not run on this computer")
+        );
         assert_eq!(std::fs::read(&t1).unwrap(), b"old one");
         // the right one: both copies, executable
         replace(&new, &[t1.clone(), t2.clone()], "9.9.9", &AtomicBool::new(false)).unwrap();
@@ -3156,14 +3524,24 @@ mod tests {
         script(&pkexec, "#!/bin/sh\nexec \"$@\"\n");
         for (code, installs, want) in [(0, true, ""), (100, false, "apt-get failed (exit 100)")] {
             let _ = std::fs::remove_file(&log);
-            script(&apt, &format!("#!/bin/sh\necho \"$@\" > {log}\ncmp -s \"$4\" {deb} && echo same >> {log}\necho 'E: something' >&2\nexit {code}\n",
-                                  log = log.display(), deb = deb.display()));
+            script(
+                &apt,
+                &format!(
+                    "#!/bin/sh\necho \"$@\" > {log}\ncmp -s \"$4\" {deb} && echo same >> {log}\necho 'E: something' >&2\nexit {code}\n",
+                    log = log.display(),
+                    deb = deb.display()
+                ),
+            );
             script(&program, "#!/bin/sh\necho 'BananaSplit 9.9.9'\n");
             let r = install_deb_with(&pkexec, &apt, &program, &deb, &hash, "9.9.9", &never, false);
             let said = std::fs::read_to_string(&log).unwrap();
             let mut lines = said.lines();
             let first = lines.next().unwrap();
-            assert!(first.starts_with("install -y --no-remove /tmp/bananasplit-update.") && first.ends_with("/bananasplit.deb"), "{said}");
+            assert!(
+                first.starts_with("install -y --no-remove /tmp/bananasplit-update.")
+                    && first.ends_with("/bananasplit.deb"),
+                "{said}"
+            );
             assert_eq!(lines.next(), Some("same"), "a copy of the checked package");
             assert!(!Path::new(first.rsplit(' ').next().unwrap()).exists(), "the copy is removed");
             match installs {
@@ -3179,12 +3557,21 @@ mod tests {
         // pkexec's own answers
         for (code, want) in [(126, "cancelled"), (127, "could not get permission")] {
             script(&pkexec, &format!("#!/bin/sh\nexit {code}\n"));
-            assert!(install_deb_with(&pkexec, &apt, &program, &deb, &hash, "9.9.9", &never, false).unwrap_err().contains(want), "{code}");
+            assert!(
+                install_deb_with(&pkexec, &apt, &program, &deb, &hash, "9.9.9", &never, false)
+                    .unwrap_err()
+                    .contains(want),
+                "{code}"
+            );
         }
         // installed, but the program is not the new version: an error
         script(&pkexec, "#!/bin/sh\nexit 0\n");
         script(&program, "#!/bin/sh\necho 'BananaSplit 2.7.3'\n");
-        assert!(install_deb_with(&pkexec, &apt, &program, &deb, &hash, "9.9.9", &never, false).unwrap_err().contains("not 9.9.9"));
+        assert!(
+            install_deb_with(&pkexec, &apt, &program, &deb, &hash, "9.9.9", &never, false)
+                .unwrap_err()
+                .contains("not 9.9.9")
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -3212,7 +3599,14 @@ mod tests {
         std::fs::write(top.join("bananasplit"), b"program").unwrap();
         std::fs::write(top.join("install.sh"), b"#!/bin/sh\n").unwrap();
         let tgz = d.join("bananasplit-9.9.9-linux-x86_64.tar.gz");
-        let ok = Command::new("tar").arg("-czf").arg(&tgz).arg("-C").arg(d.join("src")).arg("bananasplit-9.9.9-linux-x86_64").status().unwrap();
+        let ok = Command::new("tar")
+            .arg("-czf")
+            .arg(&tgz)
+            .arg("-C")
+            .arg(d.join("src"))
+            .arg("bananasplit-9.9.9-linux-x86_64")
+            .status()
+            .unwrap();
         assert!(ok.success());
         let bin = unpack(&tgz, "9.9.9").unwrap();
         assert_eq!(std::fs::read(&bin).unwrap(), b"program");
@@ -3247,7 +3641,10 @@ mod tests {
         assert!(u.install().unwrap_err().contains("no new version"));
         let mut o = String::new();
         u.json(&mut o, false);
-        assert!(o.starts_with(&format!("{{\"auto\":false,\"phase\":\"idle\",\"current\":\"{VERSION}\",\"latest\":null,")), "{o}");
+        assert!(
+            o.starts_with(&format!("{{\"auto\":false,\"phase\":\"idle\",\"current\":\"{VERSION}\",\"latest\":null,")),
+            "{o}"
+        );
         Json::parse(&o).unwrap();
         Json::parse(&u.details_json()).unwrap();
         u.shutdown();

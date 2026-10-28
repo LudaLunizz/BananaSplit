@@ -29,10 +29,10 @@
 
 use crate::cables;
 use crate::devices::{PulseInfo, Stream};
+use bananasplit::engine::NUM_STRIPS;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use bananasplit::engine::NUM_STRIPS;
 
 const FILE: &str = "app-strips";
 
@@ -84,7 +84,9 @@ pub fn plan(
                         p.learn.push((app.to_string(), k));
                     }
                 }
-                None if !ours(&s.pinned) && home_of(homes, app).is_some() && !p.forget.iter().any(|a| a == app) => p.forget.push(app.to_string()),
+                None if !ours(&s.pinned) && home_of(homes, app).is_some() && !p.forget.iter().any(|a| a == app) => {
+                    p.forget.push(app.to_string())
+                }
                 None => {}
             }
         }
@@ -117,9 +119,10 @@ pub fn parse(text: &str) -> BTreeMap<String, usize> {
     let mut m = BTreeMap::new();
     for l in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
         if let Some((n, app)) = l.split_once(char::is_whitespace)
-            && let Ok(n @ 1..=NUM_STRIPS) = n.parse::<usize>() {
-                m.insert(app.trim().to_string(), n - 1);
-            }
+            && let Ok(n @ 1..=NUM_STRIPS) = n.parse::<usize>()
+        {
+            m.insert(app.trim().to_string(), n - 1);
+        }
     }
     m
 }
@@ -168,7 +171,8 @@ impl AppHomes {
     }
 
     fn save(&mut self) -> Result<(), String> {
-        std::fs::write(&self.path, render(&self.homes)).map_err(|e| format!("cannot save {}: {e}", self.path.display()))?;
+        std::fs::write(&self.path, render(&self.homes))
+            .map_err(|e| format!("cannot save {}: {e}", self.path.display()))?;
         self.stamp = mtime(&self.path);
         Ok(())
     }
@@ -187,7 +191,13 @@ impl AppHomes {
 
     /// Look at the latest report; move apps back to their strips. Returns
     /// a line for the user per app moved.
-    pub fn poll(&mut self, info: &PulseInfo, set: &cables::CableSet, live: &cables::Cables, names: &[String]) -> Vec<String> {
+    pub fn poll(
+        &mut self,
+        info: &PulseInfo,
+        set: &cables::CableSet,
+        live: &cables::Cables,
+        names: &[String],
+    ) -> Vec<String> {
         let Some(d) = info.devices.as_ref() else { return Vec::new() };
         self.reload();
         let present = |n: &str| d.list.iter().any(|x| !x.is_source && x.name == n);
@@ -206,7 +216,9 @@ impl AppHomes {
         }
         let mut notes = Vec::new();
         for (id, k) in p.moves {
-            let (Some(node), Some(s)) = (strips[k].as_deref(), info.playing.iter().find(|s| s.id == id)) else { continue };
+            let (Some(node), Some(s)) = (strips[k].as_deref(), info.playing.iter().find(|s| s.id == id)) else {
+                continue;
+            };
             let name = names.get(k).map_or(String::new(), |n| format!(" ({n})"));
             match cables::pactl(&["move-sink-input", &id.to_string(), node]) {
                 Ok(_) => notes.push(format!("{} is back on strip {}{name}", key(s), k + 1)),
@@ -217,9 +229,10 @@ impl AppHomes {
         // forget streams that ended, so the set stays small
         self.done.retain(|id| info.playing.iter().any(|s| s.id == *id));
         if self.homes != before
-            && let Err(e) = self.save() {
-                notes.push(e);
-            }
+            && let Err(e) = self.save()
+        {
+            notes.push(e);
+        }
         notes
     }
 }
@@ -262,7 +275,8 @@ mod tests {
 
     #[test]
     fn an_app_put_on_a_strip_is_remembered() {
-        let p = plan(&BTreeMap::new(), &[st(7, "Discord", 52, "bananasplit_in2")], sink, &cables(), ours, &HashSet::new());
+        let p =
+            plan(&BTreeMap::new(), &[st(7, "Discord", 52, "bananasplit_in2")], sink, &cables(), ours, &HashSet::new());
         assert_eq!(p.learn, [("Discord".to_string(), 1)]);
         assert!(p.moves.is_empty());
         assert_eq!(p.done, [7]);
@@ -284,7 +298,10 @@ mod tests {
         assert_eq!(p.done, [9]);
         // also when it waits on the speakers, or still names its old cable
         assert_eq!(plan(&h, &[st(9, "Discord", 50, "")], sink, &cables(), ours, &HashSet::new()).moves, [(9, 1)]);
-        assert_eq!(plan(&h, &[st(9, "Discord", 50, "bananasplit_in2")], sink, &cables(), ours, &HashSet::new()).moves, [(9, 1)]);
+        assert_eq!(
+            plan(&h, &[st(9, "Discord", 50, "bananasplit_in2")], sink, &cables(), ours, &HashSet::new()).moves,
+            [(9, 1)]
+        );
     }
 
     #[test]

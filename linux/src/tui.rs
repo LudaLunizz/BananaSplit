@@ -17,12 +17,12 @@
 //! selected channel are edited. The line under the header shows VBAN when it
 //! is on (`v` switches it on and off).
 
-use std::fmt::Write as _;
-use std::sync::atomic::Ordering::Relaxed;
 use bananasplit::config::Config;
 use bananasplit::engine::{BUS_IDS, MAX_GAIN_DB, MIN_GAIN_DB, NUM_BUSES, NUM_STRIPS, Shared, gain_to_db};
 use bananasplit::eq::{self, BANDS, Band, DEFAULT_BANDS, Kind};
 use bananasplit::recorder::source_id;
+use std::fmt::Write as _;
+use std::sync::atomic::Ordering::Relaxed;
 
 pub const ROWS: usize = NUM_STRIPS + NUM_BUSES;
 /// The screen is laid out for at least this many columns.
@@ -201,7 +201,8 @@ fn curve(on: bool, bands: &[Band; BANDS], sample_rate: u32) -> [String; 3] {
     let mut cells = [[0u8; CURVE_W]; 3];
     for x in 0..cols {
         let f = (lo + (hi - lo) * x as f64 / (cols - 1) as f64).exp();
-        let db: f64 = if on { bands.iter().filter(|b| b.on).map(|b| eq::band_db(b, sr, f.min(0.49 * sr))).sum() } else { 0.0 };
+        let db: f64 =
+            if on { bands.iter().filter(|b| b.on).map(|b| eq::band_db(b, sr, f.min(0.49 * sr))).sum() } else { 0.0 };
         let row = (6.0 - db / CURVE_DB_PER_DOT).round().clamp(0.0, 11.0) as usize;
         let (cell_row, dot_row) = (row / 4, row % 4);
         // Braille dot bits: left column rows 0-3 = 0x01 0x02 0x04 0x40, right = 0x08 0x10 0x20 0x80
@@ -356,10 +357,18 @@ impl View {
             Key::Char(b'.') => gain(self).store(step_gain(gain(self).load(), 0.1)),
             Key::Char(b'0') => gain(self).store(0.0),
             Key::Char(b'm') => {
-                if is_strip { toggle(&sh.strips[self.sel].mute) } else { toggle(&sh.buses[self.sel - NUM_STRIPS].mute) }
+                if is_strip {
+                    toggle(&sh.strips[self.sel].mute)
+                } else {
+                    toggle(&sh.buses[self.sel - NUM_STRIPS].mute)
+                }
             }
             Key::Char(b'o') => {
-                if is_strip { toggle(&sh.strips[self.sel].mono) } else { toggle(&sh.buses[self.sel - NUM_STRIPS].mono) }
+                if is_strip {
+                    toggle(&sh.strips[self.sel].mono)
+                } else {
+                    toggle(&sh.buses[self.sel - NUM_STRIPS].mono)
+                }
             }
             Key::Char(b's') if is_strip => toggle(&sh.strips[self.sel].solo),
             Key::Char(c @ b'1'..=b'5') if is_strip => sh.toggle_route(self.sel, (c - b'1') as usize),
@@ -372,7 +381,10 @@ impl View {
                 } else if from == to {
                     return Action::Note(format!("{} cannot feed itself", BUS_IDS[from]));
                 } else if sh.send_loops(from, to) {
-                    return Action::Note(format!("{} already reaches {}: that would be a loop", BUS_IDS[to], BUS_IDS[from]));
+                    return Action::Note(format!(
+                        "{} already reaches {}: that would be a loop",
+                        BUS_IDS[to], BUS_IDS[from]
+                    ));
                 } else {
                     r.fetch_or(1 << to, Relaxed);
                 }
@@ -434,14 +446,19 @@ impl View {
         // sel+id+link, name, gain, two meters, peak, flags, routes
         let row_w = 4 + 1 + nw + 1 + 6 + 2 + METER_W + 1 + METER_W + 6 + 7 + 2 + 14; // 79 at 80 cols
 
-        let period_ms = if info.sample_rate > 0 { info.buffer_size as f64 * 1000.0 / info.sample_rate as f64 } else { 0.0 };
+        let period_ms =
+            if info.sample_rate > 0 { info.buffer_size as f64 * 1000.0 / info.sample_rate as f64 } else { 0.0 };
         let (rt_ms, measured) = if info.sample_rate > 0 && (info.lat_in > 0 || info.lat_out > 0) {
             ((info.lat_in + info.lat_out) as f64 * 1000.0 / info.sample_rate as f64, true)
         } else {
             (2.0 * period_ms, false)
         };
         let ok = rt_ms < 10.0;
-        let _ = write!(o, "\x1b[1m BananaSplit\x1b[0m  6 strips · 5 buses · JACK client \"{}\" · {} cables{line_end}", info.client, info.cables);
+        let _ = write!(
+            o,
+            "\x1b[1m BananaSplit\x1b[0m  6 strips · 5 buses · JACK client \"{}\" · {} cables{line_end}",
+            info.client, info.cables
+        );
         let _ = write!(
             o,
             " {} Hz · {} fr · {:.2} ms/period · RTT {}{:.2} ms {} · DSP {:.0}% · xruns {}{}{line_end}",
@@ -463,7 +480,8 @@ impl View {
         }
 
         let _ = write!(o, "{line_end}");
-        let sel_name = if self.sel < NUM_STRIPS { &cfg.strips[self.sel].name } else { &cfg.buses[self.sel - NUM_STRIPS].name };
+        let sel_name =
+            if self.sel < NUM_STRIPS { &cfg.strips[self.sel].name } else { &cfg.buses[self.sel - NUM_STRIPS].name };
         let conn_text = conn.get(self.sel).map_or("", String::as_str);
         let arrow = if self.sel < NUM_STRIPS { "←" } else { "→" };
         let sel_line = fit(&format!("\x1b[1m{sel_name}\x1b[0m {arrow} {conn_text}"), cols - 2);
@@ -477,12 +495,24 @@ impl View {
         }
         match self.page {
             Page::Mixer => {
-                let _ = write!(o, "\x1b[2m ↑↓ select  ←→ gain ±1 dB  , . ±0.1  0 = 0 dB  m mute  s solo  o mono  e/E EQ{line_end}");
-                let _ = write!(o, "\x1b[2m 1-5 route to A1-B2  c rec link  R record  v VBAN  r reconnect  w save  q quit{line_end}");
+                let _ = write!(
+                    o,
+                    "\x1b[2m ↑↓ select  ←→ gain ±1 dB  , . ±0.1  0 = 0 dB  m mute  s solo  o mono  e/E EQ{line_end}"
+                );
+                let _ = write!(
+                    o,
+                    "\x1b[2m 1-5 route to A1-B2  c rec link  R record  v VBAN  r reconnect  w save  q quit{line_end}"
+                );
             }
             Page::Eq => {
-                let _ = write!(o, "\x1b[2m ↑↓ band  ←→ field  , . change  < > faster  space band on/off  0 flat band{line_end}");
-                let _ = write!(o, "\x1b[2m e EQ on/off  [ ] other channel  E or Enter: mixer  R record  w save  q quit{line_end}");
+                let _ = write!(
+                    o,
+                    "\x1b[2m ↑↓ band  ←→ field  , . change  < > faster  space band on/off  0 flat band{line_end}"
+                );
+                let _ = write!(
+                    o,
+                    "\x1b[2m e EQ on/off  [ ] other channel  E or Enter: mixer  R record  w save  q quit{line_end}"
+                );
             }
         }
         let _ = write!(o, " {}{line_end}", fit(&self.status, cols - 2));
@@ -492,7 +522,10 @@ impl View {
                 let _ = write!(o, " \x1b[33m{}{line_end}", fit(m, cols - 2));
             }
             None if !ok => {
-                let _ = write!(o, " \x1b[31mround trip >= 10 ms: run `bananasplit --low-latency` once (README: Latency){line_end}");
+                let _ = write!(
+                    o,
+                    " \x1b[31mround trip >= 10 ms: run `bananasplit --low-latency` once (README: Latency){line_end}"
+                );
             }
             None => {}
         }
@@ -536,7 +569,15 @@ impl View {
                 let b = r - NUM_STRIPS;
                 let p = &sh.buses[b];
                 let sends = p.routes.load(Relaxed) & !(1 << b);
-                (BUS_IDS[b].to_string(), cfg.buses[b].name.as_str(), p.gain_db.load(), p.mute.load(Relaxed), None, p.mono.load(Relaxed), sends)
+                (
+                    BUS_IDS[b].to_string(),
+                    cfg.buses[b].name.as_str(),
+                    p.gain_db.load(),
+                    p.mute.load(Relaxed),
+                    None,
+                    p.mono.load(Relaxed),
+                    sends,
+                )
             };
             let dimmed = r < NUM_STRIPS && any_solo && solo == Some(false);
             let name = ellipsize(name, nw);
@@ -646,7 +687,15 @@ fn meter(o: &mut String, db: f32, grey: bool) {
         // cell i covers up to this level
         let cell_db = FLOOR_DB + (i + 1) as f32 * (-FLOOR_DB / METER_W as f32);
         if i < lit {
-            let col = if grey { "90" } else if cell_db > -3.0 { "31" } else if cell_db > -12.0 { "33" } else { "32" };
+            let col = if grey {
+                "90"
+            } else if cell_db > -3.0 {
+                "31"
+            } else if cell_db > -12.0 {
+                "33"
+            } else {
+                "32"
+            };
             let _ = write!(o, "\x1b[{col}m█");
         } else {
             o.push_str("\x1b[2m·");
@@ -739,7 +788,18 @@ mod tests {
         let mut v = View::default();
         sh.strips[0].peak[0].take();
         v.update_meters(&sh);
-        let info = Info { client: "BananaSplit", sample_rate: 48000, buffer_size: 128, cpu: 1.0, xruns: 0, oversize: 0, lat_in: 128, lat_out: 256, cables: 8, vban: "" };
+        let info = Info {
+            client: "BananaSplit",
+            sample_rate: 48000,
+            buffer_size: 128,
+            cpu: 1.0,
+            xruns: 0,
+            oversize: 0,
+            lat_in: 128,
+            lat_out: 256,
+            cables: 8,
+            vban: "",
+        };
         let s = v.render(&sh, &cfg, &info, &[]);
         assert!(s.contains("RTT 8.00 ms"));
         // every line fits an 80-column terminal
@@ -777,7 +837,18 @@ mod tests {
         sh.buses[3].routes.store(0b00001, Relaxed); // B1 -> A1
         v.update_meters(&sh);
         assert!(v.in_meters()[1][0] > -7.0 && v.meters()[1][0] <= FLOOR_DB);
-        let info = Info { client: "BananaSplit", sample_rate: 48000, buffer_size: 128, cpu: 1.0, xruns: 0, oversize: 0, lat_in: 128, lat_out: 256, cables: 8, vban: "" };
+        let info = Info {
+            client: "BananaSplit",
+            sample_rate: 48000,
+            buffer_size: 128,
+            cpu: 1.0,
+            xruns: 0,
+            oversize: 0,
+            lat_in: 128,
+            lat_out: 256,
+            cables: 8,
+            vban: "",
+        };
         let s = v.render(&sh, &cfg, &info, &[]);
         let row = |id: &str| s.lines().find(|l| strip_ansi(l).starts_with(id)).unwrap().to_string();
         assert!(row("  2").contains("\x1b[90m█"), "strip 2 is muted: its input, grey");
@@ -804,7 +875,18 @@ mod tests {
         let mut cfg = Config::default();
         cfg.buses[1].name = "Blue Headphones".into(); // the review: "Blue Headph"
         cfg.strips[3].name = "Game capture (Elgato HD60 S+)".into(); // 29 chars
-        let info = Info { client: "BananaSplit", sample_rate: 48000, buffer_size: 128, cpu: 1.0, xruns: 3, oversize: 0, lat_in: 416, lat_out: 416, cables: 8, vban: "" };
+        let info = Info {
+            client: "BananaSplit",
+            sample_rate: 48000,
+            buffer_size: 128,
+            cpu: 1.0,
+            xruns: 3,
+            oversize: 0,
+            lat_in: 416,
+            lat_out: 416,
+            cables: 8,
+            vban: "",
+        };
         cfg.apply(&sh);
         let mut v = View {
             status: format!("\x1b[33mstrip 2: nothing matches \"^alsa_input.usb-Blue\" — {}\x1b[0m", "x".repeat(100)),
@@ -814,7 +896,10 @@ mod tests {
         let lines = fits(&v.render(&sh, &cfg, &info, &[]), 80);
         // RTT >= 10 ms gets its own line even while the status line is busy
         assert!(lines.iter().any(|l| l.contains("run `bananasplit --low-latency` once")), "{lines:#?}");
-        v.latency = Some(format!("round trip 17.3 ms at 128 frames (goal < 10 ms): run `bananasplit --low-latency` {}", "x".repeat(20)));
+        v.latency = Some(format!(
+            "round trip 17.3 ms at 128 frames (goal < 10 ms): run `bananasplit --low-latency` {}",
+            "x".repeat(20)
+        ));
         let lines = fits(&v.render(&sh, &cfg, &info, &[]), 80);
         assert!(lines.len() < 24, "{} rows", lines.len());
         assert!(lines.last().unwrap().starts_with(" round trip 17.3 ms") && lines.last().unwrap().ends_with('…'));
@@ -879,7 +964,18 @@ mod tests {
         v.handle(&sh, Key::Char(b' '));
         let b2 = sh.buses[1].eq.bands[1].load();
         assert_eq!((b2.kind, b2.on), (Kind::LowShelf, false));
-        let info = Info { client: "BananaSplit", sample_rate: 48000, buffer_size: 128, cpu: 1.0, xruns: 0, oversize: 0, lat_in: 128, lat_out: 128, cables: 8, vban: "" };
+        let info = Info {
+            client: "BananaSplit",
+            sample_rate: 48000,
+            buffer_size: 128,
+            cpu: 1.0,
+            xruns: 0,
+            oversize: 0,
+            lat_in: 128,
+            lat_out: 128,
+            cables: 8,
+            vban: "",
+        };
         let lines = fits(&v.render(&sh, &cfg, &info, &[]), 80);
         assert!(lines.len() < 24, "{} rows", lines.len());
         assert!(lines.iter().any(|l| l.contains("EQ  A2 Blue Headphones") && l.contains(" ON ")), "{lines:#?}");
@@ -887,7 +983,10 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("2    ○   low shelf      250 Hz")), "{lines:#?}");
         assert!(lines.iter().any(|l| l.contains("10.0 kHz")));
         let dots = |l: &str| l.chars().any(|c| ('\u{2801}'..='\u{28FF}').contains(&c));
-        assert!(lines.iter().any(|l| l.starts_with(" +18 ")) && lines.iter().any(|l| l.starts_with("   0 ") && dots(l)), "a curve");
+        assert!(
+            lines.iter().any(|l| l.starts_with(" +18 ")) && lines.iter().any(|l| l.starts_with("   0 ") && dots(l)),
+            "a curve"
+        );
         assert!(lines.iter().any(|l| l.contains("20") && l.contains("1k") && l.contains("20k")));
         assert!(lines.iter().any(|l| l.contains("E or Enter: mixer")));
         // a cut has no gain to change
@@ -938,7 +1037,9 @@ mod tests {
         let c = curve(true, &b, 48000);
         let mid: Vec<char> = c[1].chars().collect();
         let top: Vec<char> = c[0].chars().collect();
-        let x = |f: f64| ((f.ln() - 20f64.ln()) / (20_000f64.ln() - 20f64.ln()) * (2 * CURVE_W - 1) as f64).round() as usize / 2;
+        let x = |f: f64| {
+            ((f.ln() - 20f64.ln()) / (20_000f64.ln() - 20f64.ln()) * (2 * CURVE_W - 1) as f64).round() as usize / 2
+        };
         for (i, ch) in mid.iter().enumerate() {
             if i + 6 < x(1500.0) || i > x(1500.0) + 6 {
                 assert_eq!(*ch, '⠤', "column {i}");
@@ -979,10 +1080,26 @@ mod tests {
         let sh = Shared::default();
         let cfg = Config::default();
         let v = View::default();
-        let text = format!("\x1b[1mVBAN\x1b[0m UDP 6980 · in: 1 of 2 receiving · out: 1 of 1 sending · {}", "x".repeat(60));
-        let info = Info { client: "BananaSplit", sample_rate: 48000, buffer_size: 128, cpu: 1.0, xruns: 0, oversize: 0, lat_in: 128, lat_out: 128, cables: 8, vban: &text };
+        let text =
+            format!("\x1b[1mVBAN\x1b[0m UDP 6980 · in: 1 of 2 receiving · out: 1 of 1 sending · {}", "x".repeat(60));
+        let info = Info {
+            client: "BananaSplit",
+            sample_rate: 48000,
+            buffer_size: 128,
+            cpu: 1.0,
+            xruns: 0,
+            oversize: 0,
+            lat_in: 128,
+            lat_out: 128,
+            cables: 8,
+            vban: &text,
+        };
         let lines = fits(&v.render(&sh, &cfg, &info, &["Yeti + VBAN in1 \"Stream1\" (48 kHz)".into()]), 80);
-        assert!(lines[2].starts_with(" VBAN UDP 6980 · in: 1 of 2 receiving") && lines[2].ends_with('…'), "{}", lines[2]);
+        assert!(
+            lines[2].starts_with(" VBAN UDP 6980 · in: 1 of 2 receiving") && lines[2].ends_with('…'),
+            "{}",
+            lines[2]
+        );
         assert!(lines.iter().any(|l| l == " Mic ← Yeti + VBAN in1 \"Stream1\" (48 kHz)"));
         assert!(lines.len() < 24);
     }

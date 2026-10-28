@@ -34,100 +34,143 @@ type SourceFn = unsafe extern "C" fn(Ptr) -> c_int;
 
 use crate::dl::{self, dl_api};
 
-dl_api!(struct Glib {
-    g_main_loop_new: unsafe extern "C" fn(Ptr, c_int) -> Ptr,
-    g_main_loop_run: unsafe extern "C" fn(Ptr),
-    g_main_loop_quit: unsafe extern "C" fn(Ptr),
-    g_unix_fd_add: unsafe extern "C" fn(c_int, c_uint, FdFn, Ptr) -> c_uint,
-    g_timeout_add: unsafe extern "C" fn(c_uint, SourceFn, Ptr) -> c_uint,
-    g_variant_new_parsed: unsafe extern "C" fn(*const c_char, ...) -> Ptr,
-    g_variant_parse: unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *mut *const c_char, *mut Ptr) -> Ptr,
-    g_variant_new_int32: unsafe extern "C" fn(i32) -> Ptr,
-    g_variant_new_tuple: unsafe extern "C" fn(*const Ptr, usize) -> Ptr,
-    g_variant_new_array: unsafe extern "C" fn(Ptr, *const Ptr, usize) -> Ptr,
-    g_variant_new_fixed_array: unsafe extern "C" fn(Ptr, *const c_void, usize, usize) -> Ptr,
-    g_variant_type_new: unsafe extern "C" fn(*const c_char) -> Ptr,
-    g_variant_type_free: unsafe extern "C" fn(Ptr),
-    g_variant_get_child_value: unsafe extern "C" fn(Ptr, usize) -> Ptr,
-    g_variant_get_int32: unsafe extern "C" fn(Ptr) -> i32,
-    g_variant_get_boolean: unsafe extern "C" fn(Ptr) -> c_int,
-    g_variant_get_string: unsafe extern "C" fn(Ptr, *mut usize) -> *const c_char,
-    g_variant_get_variant: unsafe extern "C" fn(Ptr) -> Ptr,
-    g_variant_get_type_string: unsafe extern "C" fn(Ptr) -> *const c_char,
-    g_variant_get_uint32: unsafe extern "C" fn(Ptr) -> u32,
-    g_variant_n_children: unsafe extern "C" fn(Ptr) -> usize,
-    g_variant_unref: unsafe extern "C" fn(Ptr),
-    g_error_free: unsafe extern "C" fn(Ptr),
-    g_set_prgname: unsafe extern "C" fn(*const c_char),
-    g_set_application_name: unsafe extern "C" fn(*const c_char),
-});
+dl_api!(
+    struct Glib {
+        g_main_loop_new: unsafe extern "C" fn(Ptr, c_int) -> Ptr,
+        g_main_loop_run: unsafe extern "C" fn(Ptr),
+        g_main_loop_quit: unsafe extern "C" fn(Ptr),
+        g_unix_fd_add: unsafe extern "C" fn(c_int, c_uint, FdFn, Ptr) -> c_uint,
+        g_timeout_add: unsafe extern "C" fn(c_uint, SourceFn, Ptr) -> c_uint,
+        g_variant_new_parsed: unsafe extern "C" fn(*const c_char, ...) -> Ptr,
+        g_variant_parse: unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *mut *const c_char, *mut Ptr) -> Ptr,
+        g_variant_new_int32: unsafe extern "C" fn(i32) -> Ptr,
+        g_variant_new_tuple: unsafe extern "C" fn(*const Ptr, usize) -> Ptr,
+        g_variant_new_array: unsafe extern "C" fn(Ptr, *const Ptr, usize) -> Ptr,
+        g_variant_new_fixed_array: unsafe extern "C" fn(Ptr, *const c_void, usize, usize) -> Ptr,
+        g_variant_type_new: unsafe extern "C" fn(*const c_char) -> Ptr,
+        g_variant_type_free: unsafe extern "C" fn(Ptr),
+        g_variant_get_child_value: unsafe extern "C" fn(Ptr, usize) -> Ptr,
+        g_variant_get_int32: unsafe extern "C" fn(Ptr) -> i32,
+        g_variant_get_boolean: unsafe extern "C" fn(Ptr) -> c_int,
+        g_variant_get_string: unsafe extern "C" fn(Ptr, *mut usize) -> *const c_char,
+        g_variant_get_variant: unsafe extern "C" fn(Ptr) -> Ptr,
+        g_variant_get_type_string: unsafe extern "C" fn(Ptr) -> *const c_char,
+        g_variant_get_uint32: unsafe extern "C" fn(Ptr) -> u32,
+        g_variant_n_children: unsafe extern "C" fn(Ptr) -> usize,
+        g_variant_unref: unsafe extern "C" fn(Ptr),
+        g_error_free: unsafe extern "C" fn(Ptr),
+        g_set_prgname: unsafe extern "C" fn(*const c_char),
+        g_set_application_name: unsafe extern "C" fn(*const c_char),
+    }
+);
 
-dl_api!(struct Gobject {
-    g_signal_connect_data: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Ptr, Ptr, c_int) -> c_ulong,
-    g_object_set: unsafe extern "C" fn(Ptr, *const c_char, ...),
-});
+dl_api!(
+    struct Gobject {
+        g_signal_connect_data: unsafe extern "C" fn(Ptr, *const c_char, Ptr, Ptr, Ptr, c_int) -> c_ulong,
+        g_object_set: unsafe extern "C" fn(Ptr, *const c_char, ...),
+    }
+);
 
 #[repr(C)]
 struct VTable {
     method_call: unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *const c_char, *const c_char, Ptr, Ptr, Ptr),
-    get_property: unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *const c_char, *const c_char, *mut Ptr, Ptr) -> Ptr,
+    get_property:
+        unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *const c_char, *const c_char, *mut Ptr, Ptr) -> Ptr,
     set_property: Ptr,
     padding: [Ptr; 8],
 }
 // SAFETY: plain function pointers and NULLs, never mutated.
 unsafe impl Sync for VTable {}
 
-dl_api!(struct Gio {
-    g_bus_get_sync: unsafe extern "C" fn(c_int, Ptr, *mut Ptr) -> Ptr,
-    g_dbus_node_info_new_for_xml: unsafe extern "C" fn(*const c_char, *mut Ptr) -> Ptr,
-    g_dbus_node_info_lookup_interface: unsafe extern "C" fn(Ptr, *const c_char) -> Ptr,
-    g_dbus_connection_register_object: unsafe extern "C" fn(Ptr, *const c_char, Ptr, *const VTable, Ptr, Ptr, *mut Ptr) -> c_uint,
-    g_dbus_connection_emit_signal: unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *const c_char, *const c_char, Ptr, *mut Ptr) -> c_int,
-    g_dbus_connection_call: unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *const c_char, *const c_char, Ptr, Ptr, c_int, c_int, Ptr, Ptr, Ptr),
-    g_dbus_connection_call_finish: unsafe extern "C" fn(Ptr, Ptr, *mut Ptr) -> Ptr,
-    g_dbus_connection_call_sync: unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *const c_char, *const c_char, Ptr, Ptr, c_int, c_int, Ptr, *mut Ptr) -> Ptr,
-    g_dbus_connection_get_unique_name: unsafe extern "C" fn(Ptr) -> *const c_char,
-    g_bus_own_name_on_connection: unsafe extern "C" fn(Ptr, *const c_char, c_int, Ptr, Ptr, Ptr, Ptr) -> c_uint,
-    g_bus_watch_name_on_connection: unsafe extern "C" fn(Ptr, *const c_char, c_int, Ptr, Ptr, Ptr, Ptr) -> c_uint,
-    g_dbus_method_invocation_return_value: unsafe extern "C" fn(Ptr, Ptr),
-    g_dbus_method_invocation_return_dbus_error: unsafe extern "C" fn(Ptr, *const c_char, *const c_char),
-    g_dbus_connection_signal_subscribe: unsafe extern "C" fn(
-        Ptr,
-        *const c_char,
-        *const c_char,
-        *const c_char,
-        *const c_char,
-        *const c_char,
-        c_int,
-        Ptr,
-        Ptr,
-        Ptr,
-    ) -> c_uint,
-});
+dl_api!(
+    struct Gio {
+        g_bus_get_sync: unsafe extern "C" fn(c_int, Ptr, *mut Ptr) -> Ptr,
+        g_dbus_node_info_new_for_xml: unsafe extern "C" fn(*const c_char, *mut Ptr) -> Ptr,
+        g_dbus_node_info_lookup_interface: unsafe extern "C" fn(Ptr, *const c_char) -> Ptr,
+        g_dbus_connection_register_object:
+            unsafe extern "C" fn(Ptr, *const c_char, Ptr, *const VTable, Ptr, Ptr, *mut Ptr) -> c_uint,
+        g_dbus_connection_emit_signal: unsafe extern "C" fn(
+            Ptr,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            Ptr,
+            *mut Ptr,
+        ) -> c_int,
+        g_dbus_connection_call: unsafe extern "C" fn(
+            Ptr,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            Ptr,
+            Ptr,
+            c_int,
+            c_int,
+            Ptr,
+            Ptr,
+            Ptr,
+        ),
+        g_dbus_connection_call_finish: unsafe extern "C" fn(Ptr, Ptr, *mut Ptr) -> Ptr,
+        g_dbus_connection_call_sync: unsafe extern "C" fn(
+            Ptr,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            Ptr,
+            Ptr,
+            c_int,
+            c_int,
+            Ptr,
+            *mut Ptr,
+        ) -> Ptr,
+        g_dbus_connection_get_unique_name: unsafe extern "C" fn(Ptr) -> *const c_char,
+        g_bus_own_name_on_connection: unsafe extern "C" fn(Ptr, *const c_char, c_int, Ptr, Ptr, Ptr, Ptr) -> c_uint,
+        g_bus_watch_name_on_connection: unsafe extern "C" fn(Ptr, *const c_char, c_int, Ptr, Ptr, Ptr, Ptr) -> c_uint,
+        g_dbus_method_invocation_return_value: unsafe extern "C" fn(Ptr, Ptr),
+        g_dbus_method_invocation_return_dbus_error: unsafe extern "C" fn(Ptr, *const c_char, *const c_char),
+        g_dbus_connection_signal_subscribe: unsafe extern "C" fn(
+            Ptr,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            c_int,
+            Ptr,
+            Ptr,
+            Ptr,
+        ) -> c_uint,
+    }
+);
 
-dl_api!(struct Gtk {
-    gtk_init_check: unsafe extern "C" fn(*mut c_int, *mut Ptr) -> c_int,
-    gtk_window_new: unsafe extern "C" fn(c_int) -> Ptr,
-    gtk_window_set_title: unsafe extern "C" fn(Ptr, *const c_char),
-    gtk_window_set_default_size: unsafe extern "C" fn(Ptr, c_int, c_int),
-    gtk_window_set_icon_name: unsafe extern "C" fn(Ptr, *const c_char),
-    gtk_window_set_default_icon_from_file: unsafe extern "C" fn(*const c_char, *mut Ptr) -> c_int,
-    gtk_widget_set_size_request: unsafe extern "C" fn(Ptr, c_int, c_int),
-    gtk_container_add: unsafe extern "C" fn(Ptr, Ptr),
-    gtk_widget_show_all: unsafe extern "C" fn(Ptr),
-    gtk_widget_hide: unsafe extern "C" fn(Ptr),
-    gtk_widget_get_visible: unsafe extern "C" fn(Ptr) -> c_int,
-    gtk_window_present: unsafe extern "C" fn(Ptr),
-    gtk_window_set_startup_id: unsafe extern "C" fn(Ptr, *const c_char),
-    gtk_window_iconify: unsafe extern "C" fn(Ptr),
-    gtk_window_deiconify: unsafe extern "C" fn(Ptr),
-    gtk_window_is_active: unsafe extern "C" fn(Ptr) -> c_int,
-    gtk_window_get_size: unsafe extern "C" fn(Ptr, *mut c_int, *mut c_int),
-    gtk_message_dialog_new: unsafe extern "C" fn(Ptr, c_int, c_int, c_int, *const c_char, ...) -> Ptr,
-    gtk_dialog_run: unsafe extern "C" fn(Ptr) -> c_int,
-    gtk_settings_get_default: unsafe extern "C" fn() -> Ptr,
-    gtk_widget_destroy: unsafe extern "C" fn(Ptr),
-});
+dl_api!(
+    struct Gtk {
+        gtk_init_check: unsafe extern "C" fn(*mut c_int, *mut Ptr) -> c_int,
+        gtk_window_new: unsafe extern "C" fn(c_int) -> Ptr,
+        gtk_window_set_title: unsafe extern "C" fn(Ptr, *const c_char),
+        gtk_window_set_default_size: unsafe extern "C" fn(Ptr, c_int, c_int),
+        gtk_window_set_icon_name: unsafe extern "C" fn(Ptr, *const c_char),
+        gtk_window_set_default_icon_from_file: unsafe extern "C" fn(*const c_char, *mut Ptr) -> c_int,
+        gtk_widget_set_size_request: unsafe extern "C" fn(Ptr, c_int, c_int),
+        gtk_container_add: unsafe extern "C" fn(Ptr, Ptr),
+        gtk_widget_show_all: unsafe extern "C" fn(Ptr),
+        gtk_widget_hide: unsafe extern "C" fn(Ptr),
+        gtk_widget_get_visible: unsafe extern "C" fn(Ptr) -> c_int,
+        gtk_window_present: unsafe extern "C" fn(Ptr),
+        gtk_window_set_startup_id: unsafe extern "C" fn(Ptr, *const c_char),
+        gtk_window_iconify: unsafe extern "C" fn(Ptr),
+        gtk_window_deiconify: unsafe extern "C" fn(Ptr),
+        gtk_window_is_active: unsafe extern "C" fn(Ptr) -> c_int,
+        gtk_window_get_size: unsafe extern "C" fn(Ptr, *mut c_int, *mut c_int),
+        gtk_message_dialog_new: unsafe extern "C" fn(Ptr, c_int, c_int, c_int, *const c_char, ...) -> Ptr,
+        gtk_dialog_run: unsafe extern "C" fn(Ptr) -> c_int,
+        gtk_settings_get_default: unsafe extern "C" fn() -> Ptr,
+        gtk_widget_destroy: unsafe extern "C" fn(Ptr),
+    }
+);
 
 #[repr(C)]
 #[derive(Default)]
@@ -146,21 +189,25 @@ struct GdkRgba {
     alpha: f64,
 }
 
-dl_api!(struct Gdk {
-    gdk_set_program_class: unsafe extern "C" fn(*const c_char),
-    gdk_display_get_default: unsafe extern "C" fn() -> Ptr,
-    gdk_display_get_primary_monitor: unsafe extern "C" fn(Ptr) -> Ptr,
-    gdk_display_get_monitor: unsafe extern "C" fn(Ptr, c_int) -> Ptr,
-    gdk_monitor_get_workarea: unsafe extern "C" fn(Ptr, *mut GdkRectangle),
-});
+dl_api!(
+    struct Gdk {
+        gdk_set_program_class: unsafe extern "C" fn(*const c_char),
+        gdk_display_get_default: unsafe extern "C" fn() -> Ptr,
+        gdk_display_get_primary_monitor: unsafe extern "C" fn(Ptr) -> Ptr,
+        gdk_display_get_monitor: unsafe extern "C" fn(Ptr, c_int) -> Ptr,
+        gdk_monitor_get_workarea: unsafe extern "C" fn(Ptr, *mut GdkRectangle),
+    }
+);
 
-dl_api!(struct WebKit {
-    webkit_web_view_new: unsafe extern "C" fn() -> Ptr,
-    webkit_web_view_load_uri: unsafe extern "C" fn(Ptr, *const c_char),
-    webkit_web_view_reload: unsafe extern "C" fn(Ptr),
-    webkit_web_view_set_background_color: unsafe extern "C" fn(Ptr, *const GdkRgba),
-    webkit_hit_test_result_context_is_editable: unsafe extern "C" fn(Ptr) -> c_int,
-});
+dl_api!(
+    struct WebKit {
+        webkit_web_view_new: unsafe extern "C" fn() -> Ptr,
+        webkit_web_view_load_uri: unsafe extern "C" fn(Ptr, *const c_char),
+        webkit_web_view_reload: unsafe extern "C" fn(Ptr),
+        webkit_web_view_set_background_color: unsafe extern "C" fn(Ptr, *const GdkRgba),
+        webkit_hit_test_result_context_is_editable: unsafe extern "C" fn(Ptr) -> c_int,
+    }
+);
 
 /// The libraries this process uses. Loaded once, kept for the whole run.
 struct Libs {
@@ -345,7 +392,8 @@ fn toggle_window() {
         return;
     };
     // SAFETY: valid window.
-    let front = !win.is_null() && unsafe { (gtk.gtk_widget_get_visible)(win) != 0 && (gtk.gtk_window_is_active)(win) != 0 };
+    let front =
+        !win.is_null() && unsafe { (gtk.gtk_widget_get_visible)(win) != 0 && (gtk.gtk_window_is_active)(win) != 0 };
     if front { hide_window() } else { show_window(None) }
 }
 
@@ -464,7 +512,9 @@ fn parsed(libs: &Libs, text: &str) -> Ptr {
     let c = cstr(text);
     let mut err: Ptr = std::ptr::null_mut();
     // SAFETY: NUL-terminated text, no type, no limit or end pointer.
-    let checked = unsafe { (g.g_variant_parse)(std::ptr::null_mut(), c.as_ptr(), std::ptr::null(), std::ptr::null_mut(), &mut err) };
+    let checked = unsafe {
+        (g.g_variant_parse)(std::ptr::null_mut(), c.as_ptr(), std::ptr::null(), std::ptr::null_mut(), &mut err)
+    };
     if checked.is_null() {
         eprintln!("bananasplit: bad tray text {text:?}: {}", gerror_text(libs, err));
         // SAFETY: no children; an empty tuple.
@@ -557,7 +607,11 @@ fn int_child(libs: &Libs, v: Ptr, i: usize) -> i32 {
 fn menu_event(id: i32) {
     match id {
         MENU_SHOW => {
-            if window_visible() { hide_window() } else { show_window(None) }
+            if window_visible() {
+                hide_window()
+            } else {
+                show_window(None)
+            }
         }
         MENU_RECORD => tell("record"),
         MENU_QUIT => tell("quit"),
@@ -575,7 +629,8 @@ unsafe extern "C" fn method_call(
     inv: Ptr,
     _data: Ptr,
 ) {
-    let Some((libs, has_window, recording, rev)) = with(|a| (a.libs, a.libs.ui.is_some(), a.recording, a.menu_rev)) else {
+    let Some((libs, has_window, recording, rev)) = with(|a| (a.libs, a.libs.ui.is_some(), a.recording, a.menu_rev))
+    else {
         return;
     };
     // SAFETY: GDBus passes valid strings.
@@ -597,7 +652,11 @@ unsafe extern "C" fn method_call(
             if parent != 0 && !items.iter().any(|(id, _)| *id == parent) {
                 // SAFETY: valid invocation and strings.
                 return unsafe {
-                    (libs.gio.g_dbus_method_invocation_return_dbus_error)(inv, c"org.freedesktop.DBus.Error.InvalidArgs".as_ptr(), c"no such menu item".as_ptr())
+                    (libs.gio.g_dbus_method_invocation_return_dbus_error)(
+                        inv,
+                        c"org.freedesktop.DBus.Error.InvalidArgs".as_ptr(),
+                        c"no such menu item".as_ptr(),
+                    )
                 };
             }
             ret(parsed(libs, &layout_text(rev, &items, parent)))
@@ -656,7 +715,11 @@ unsafe extern "C" fn method_call(
         b"AboutToShowGroup" => ret(parsed(libs, "(@ai [], @ai [])")),
         // SAFETY: valid invocation, completed once here; static C strings.
         _ => unsafe {
-            (libs.gio.g_dbus_method_invocation_return_dbus_error)(inv, c"org.freedesktop.DBus.Error.UnknownMethod".as_ptr(), c"unknown method".as_ptr())
+            (libs.gio.g_dbus_method_invocation_return_dbus_error)(
+                inv,
+                c"org.freedesktop.DBus.Error.UnknownMethod".as_ptr(),
+                c"unknown method".as_ptr(),
+            )
         },
     }
 }
@@ -702,7 +765,8 @@ unsafe extern "C" fn get_property(
     }
 }
 
-static VTABLE: VTable = VTable { method_call, get_property, set_property: std::ptr::null_mut(), padding: [std::ptr::null_mut(); 8] };
+static VTABLE: VTable =
+    VTable { method_call, get_property, set_property: std::ptr::null_mut(), padding: [std::ptr::null_mut(); 8] };
 
 fn bus_name() -> String {
     format!("org.kde.StatusNotifierItem-{}-1", std::process::id())
@@ -778,7 +842,8 @@ unsafe extern "C" fn name_acquired(_c: Ptr, _name: *const c_char, _d: Ptr) {}
 
 /// Is there a tray that shows our icon right now?
 fn tray_available() -> bool {
-    let Some((libs, conn, registered, present)) = with(|a| (a.libs, a.conn, a.tray_registered, a.watcher_present)) else {
+    let Some((libs, conn, registered, present)) = with(|a| (a.libs, a.conn, a.tray_registered, a.watcher_present))
+    else {
         return false;
     };
     if conn.is_null() || !registered || !present {
@@ -843,8 +908,12 @@ fn gerror_text(libs: &Libs, e: Ptr) -> String {
     }
     // SAFETY: GLib hands out GError structs of exactly this layout.
     let m = unsafe { (*(e as *const GError)).message };
-    // SAFETY: non-null, the GError's NUL-terminated message, read before the free below.
-    let text = if m.is_null() { "unknown error".into() } else { unsafe { CStr::from_ptr(m) }.to_string_lossy().into_owned() };
+    let text = if m.is_null() {
+        "unknown error".into()
+    } else {
+        // SAFETY: non-null, the GError's NUL-terminated message, read before the free below.
+        unsafe { CStr::from_ptr(m) }.to_string_lossy().into_owned()
+    };
     // SAFETY: a GError we own (from an out-parameter), not used after this.
     unsafe { (libs.glib.g_error_free)(e) };
     text
@@ -885,7 +954,16 @@ fn setup_tray(libs: &'static Libs) -> Ptr {
             }
             let info = (g.g_dbus_node_info_lookup_interface)(node, iface.as_ptr());
             let mut e: Ptr = std::ptr::null_mut();
-            if (g.g_dbus_connection_register_object)(conn, path.as_ptr(), info, &VTABLE, std::ptr::null_mut(), std::ptr::null_mut(), &mut e) == 0 {
+            if (g.g_dbus_connection_register_object)(
+                conn,
+                path.as_ptr(),
+                info,
+                &VTABLE,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut e,
+            ) == 0
+            {
                 warn("cannot export the icon", e);
                 return std::ptr::null_mut();
             }
@@ -1036,7 +1114,8 @@ unsafe extern "C" fn scheme_changed(
             return;
         }
         let key = (g.g_variant_get_child_value)(params, 1);
-        let is_scheme = !key.is_null() && CStr::from_ptr((g.g_variant_get_string)(key, std::ptr::null_mut())) == c"color-scheme";
+        let is_scheme =
+            !key.is_null() && CStr::from_ptr((g.g_variant_get_string)(key, std::ptr::null_mut())) == c"color-scheme";
         if !key.is_null() {
             (g.g_variant_unref)(key);
         }
@@ -1130,10 +1209,11 @@ unsafe extern "C" fn on_context_menu(_v: Ptr, _menu: Ptr, _ev: Ptr, hit: Ptr, _d
 
 unsafe extern "C" fn reload_later(_d: Ptr) -> c_int {
     if let Some((libs, view)) = with(|a| (a.libs, a.view))
-        && let (Some((_, _, wk)), false) = (&libs.ui, view.is_null()) {
-            // SAFETY: valid view.
-            unsafe { (wk.webkit_web_view_reload)(view) };
-        }
+        && let (Some((_, _, wk)), false) = (&libs.ui, view.is_null())
+    {
+        // SAFETY: valid view.
+        unsafe { (wk.webkit_web_view_reload)(view) };
+    }
     0 // G_SOURCE_REMOVE
 }
 
@@ -1186,11 +1266,7 @@ fn handle_line(line: &str) {
 unsafe extern "C" fn on_stdin(fd: c_int, cond: c_uint, _d: Ptr) -> c_int {
     const G_IO_IN: c_uint = 1;
     let mut buf = [0u8; 4096];
-    let n = if cond & G_IO_IN != 0 {
-        crate::sys::read_fd(fd, &mut buf)
-    } else {
-        0
-    };
+    let n = if cond & G_IO_IN != 0 { crate::sys::read_fd(fd, &mut buf) } else { 0 };
     if n <= 0 {
         // The mixer is gone (or closed our input): so are we.
         quit();
@@ -1239,7 +1315,8 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
             "--size" => {
                 let v = it.next().ok_or("--size needs WxH")?;
                 let (w, h) = v.split_once('x').ok_or("--size needs WxH")?;
-                let (w, h) = (w.parse::<i32>().map_err(|e| e.to_string())?, h.parse::<i32>().map_err(|e| e.to_string())?);
+                let (w, h) =
+                    (w.parse::<i32>().map_err(|e| e.to_string())?, h.parse::<i32>().map_err(|e| e.to_string())?);
                 o.size = Some((w.clamp(640, 8192), h.clamp(480, 8192)));
             }
             "--token" => o.token = it.next().cloned(),
@@ -1384,7 +1461,9 @@ pub fn main(args: &[String]) -> ExitCode {
         follow_dark_style(libs, conn);
     }
     // SAFETY: fd 0 is the pipe from the mixer.
-    unsafe { (g.g_unix_fd_add)(0, 1 | 8 | 16 /* IN | ERR | HUP */, on_stdin, std::ptr::null_mut()) };
+    unsafe {
+        (g.g_unix_fd_add)(0, 1 | 8 | 16 /* IN | ERR | HUP */, on_stdin, std::ptr::null_mut())
+    };
 
     if ui_ok {
         tell("ready app");
@@ -1416,24 +1495,40 @@ pub fn main(args: &[String]) -> ExitCode {
 /// terminal to print to): a GTK dialog, else zenity / kdialog / notify-send.
 pub fn error_dialog(text: &str) {
     if let Ok((glib, _, _)) = load_glib()
-        && let Ok((gtk, _)) = load_gtk() {
-            // SAFETY: GTK calls on this thread with valid arguments; the
-            // message goes through "%s", never as a format string itself.
-            unsafe {
-                (glib.g_set_prgname)(c"bananasplit".as_ptr());
-                if (gtk.gtk_init_check)(std::ptr::null_mut(), std::ptr::null_mut()) != 0 {
-                    let msg = cstr(text);
-                    let d = (gtk.gtk_message_dialog_new)(std::ptr::null_mut(), 0, 3 /* ERROR */, 2 /* CLOSE */, c"%s".as_ptr(), msg.as_ptr());
-                    if !d.is_null() {
-                        (gtk.gtk_window_set_title)(d, c"BananaSplit".as_ptr());
-                        (gtk.gtk_dialog_run)(d);
-                        (gtk.gtk_widget_destroy)(d);
-                        return;
-                    }
+        && let Ok((gtk, _)) = load_gtk()
+    {
+        // SAFETY: GTK calls on this thread with valid arguments; the
+        // message goes through "%s", never as a format string itself.
+        unsafe {
+            (glib.g_set_prgname)(c"bananasplit".as_ptr());
+            if (gtk.gtk_init_check)(std::ptr::null_mut(), std::ptr::null_mut()) != 0 {
+                let msg = cstr(text);
+                let d = (gtk.gtk_message_dialog_new)(
+                    std::ptr::null_mut(),
+                    0,
+                    3, /* ERROR */
+                    2, /* CLOSE */
+                    c"%s".as_ptr(),
+                    msg.as_ptr(),
+                );
+                if !d.is_null() {
+                    (gtk.gtk_window_set_title)(d, c"BananaSplit".as_ptr());
+                    (gtk.gtk_dialog_run)(d);
+                    (gtk.gtk_widget_destroy)(d);
+                    return;
                 }
             }
         }
-    let plain: String = text.chars().map(|c| match c { '<' => '‹', '>' => '›', '&' => '+', c => c }).collect();
+    }
+    let plain: String = text
+        .chars()
+        .map(|c| match c {
+            '<' => '‹',
+            '>' => '›',
+            '&' => '+',
+            c => c,
+        })
+        .collect();
     // "BananaSplit could not start." or "BananaSplit stopped.", then why
     let (head, body) = text.split_once("\n\n").unwrap_or(("BananaSplit", text));
     let head = head.trim_end_matches('.');
@@ -1471,7 +1566,11 @@ mod tests {
         let items = menu_items(false, true, false);
         assert_eq!(items[0], (MENU_SHOW, "Show BananaSplit"));
         assert_eq!(menu_items(true, true, true)[0].1, "Hide BananaSplit");
-        assert_eq!(menu_items(true, false, true)[0].1, "Show BananaSplit", "a browser window cannot be hidden from here");
+        assert_eq!(
+            menu_items(true, false, true)[0].1,
+            "Show BananaSplit",
+            "a browser window cannot be hidden from here"
+        );
         assert_eq!(menu_items(false, true, true)[2], (MENU_RECORD, "Stop recording"));
         let t = layout_text(7, &items, 0);
         assert_eq!(
@@ -1480,7 +1579,10 @@ mod tests {
              <(2, {'type': <'separator'>}, @av [])>, <(3, {'label': <'Start recording'>, 'enabled': <true>, 'visible': <true>}, @av [])>, \
              <(4, {'type': <'separator'>}, @av [])>, <(5, {'label': <'Quit BananaSplit'>, 'enabled': <true>, 'visible': <true>}, @av [])>]))"
         );
-        assert_eq!(layout_text(2, &items, 5), "(uint32 2, (5, {'label': <'Quit BananaSplit'>, 'enabled': <true>, 'visible': <true>}, @av []))");
+        assert_eq!(
+            layout_text(2, &items, 5),
+            "(uint32 2, (5, {'label': <'Quit BananaSplit'>, 'enabled': <true>, 'visible': <true>}, @av []))"
+        );
         assert_eq!(group_text(&items, &[2]), "([(2, {'type': <'separator'>})],)");
         assert!(group_text(&items, &[]).starts_with("([(1, "));
         assert_eq!(group_text(&items, &[99]), "(@a(ia{sv}) [],)");
@@ -1492,7 +1594,9 @@ mod tests {
     #[test]
     fn window_args_and_size() {
         let a = |v: &[&str]| parse_args(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-        let o = a(&["http://127.0.0.1:8790/", "--hidden", "--close-to-tray", "0", "--size", "1200x700", "--token", "abc"]).unwrap();
+        let o =
+            a(&["http://127.0.0.1:8790/", "--hidden", "--close-to-tray", "0", "--size", "1200x700", "--token", "abc"])
+                .unwrap();
         assert!(o.hidden && !o.close_to_tray && o.size == Some((1200, 700)) && o.token.as_deref() == Some("abc"));
         assert!(a(&["https://evil.example/"]).is_err());
         assert!(a(&[]).is_err());

@@ -16,15 +16,14 @@ pub mod ffi;
 pub mod route;
 pub mod wasapi;
 
-
-use std::sync::Arc;
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
-use std::time::{Duration, Instant};
 use bananasplit::config::Config;
 use bananasplit::engine::Shared;
 use bananasplit::player::PlayTap;
 use bananasplit::recorder::RecTap;
 use bananasplit::vban::VbanTap;
+use std::sync::Arc;
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::time::{Duration, Instant};
 use wasapi::{Enumerator, Graph, RATE, Stats};
 
 pub const SERVER_GONE: &str = "the Windows audio service stopped";
@@ -41,12 +40,7 @@ pub struct Status {
 /// The virtual cable check at start (a note when none is installed). True if
 /// none is installed: on the very first start, the app's page opens its
 /// "Virtual cables" window (`cables::report`).
-pub fn first_run(
-    cfg: &mut Config,
-    _path: &std::path::Path,
-    headless: bool,
-    notes: &mut Vec<String>,
-) -> bool {
+pub fn first_run(cfg: &mut Config, _path: &std::path::Path, headless: bool, notes: &mut Vec<String>) -> bool {
     let _com = match ffi::ComInit::mta() {
         Ok(c) => c,
         Err(e) => {
@@ -69,31 +63,15 @@ pub fn list_devices() -> Result<String, String> {
     let en = Enumerator::new()?;
     let mut o = String::new();
     for (cap, title, hint) in [
-        (
-            true,
-            "Recording devices (use in [stripN] connect =)",
-            "default",
-        ),
-        (
-            false,
-            "Playback devices (use in [bus.XX] connect =)",
-            "default",
-        ),
+        (true, "Recording devices (use in [stripN] connect =)", "default"),
+        (false, "Playback devices (use in [bus.XX] connect =)", "default"),
     ] {
         let def = en.default_id(cap);
         o.push_str(title);
         o.push('\n');
         for d in en.devices(cap)? {
-            let mark = if def.as_deref() == Some(d.info.id.as_str()) {
-                format!("  [{hint}]")
-            } else {
-                String::new()
-            };
-            let virt = if route::is_virtual(&d.info.name) {
-                "  (virtual)"
-            } else {
-                ""
-            };
+            let mark = if def.as_deref() == Some(d.info.id.as_str()) { format!("  [{hint}]") } else { String::new() };
+            let virt = if route::is_virtual(&d.info.name) { "  (virtual)" } else { "" };
             o.push_str(&format!("    {}{mark}{virt}\n", d.info.name));
         }
         o.push('\n');
@@ -132,13 +110,14 @@ impl Session {
         let stats = Arc::new(Stats::default());
         shared.sample_rate.store(RATE, SeqCst);
         // Start audio right away; the first connect() reuses this graph.
-        let graph = match Graph::build(&en, cfg, &shared, &stats, rec_tap.clone(), vban_tap.clone(), Some(play_tap.clone())) {
-            Ok(g) => Some(g),
-            Err(e) => {
-                notes.push(e);
-                None
-            }
-        };
+        let graph =
+            match Graph::build(&en, cfg, &shared, &stats, rec_tap.clone(), vban_tap.clone(), Some(play_tap.clone())) {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    notes.push(e);
+                    None
+                }
+            };
         Ok(Session {
             shared,
             stats,
@@ -197,7 +176,15 @@ impl Session {
             self.last_scan = Instant::now();
             self.built_at = Instant::now();
             self.shared.sample_rate.store(RATE, SeqCst);
-            match Graph::build(&self.en, cfg, &self.shared, &self.stats, self.rec_tap.clone(), self.vban_tap.clone(), self.play_tap.clone()) {
+            match Graph::build(
+                &self.en,
+                cfg,
+                &self.shared,
+                &self.stats,
+                self.rec_tap.clone(),
+                self.vban_tap.clone(),
+                self.play_tap.clone(),
+            ) {
                 Ok(g) => self.graph = Some(g),
                 Err(e) => return (Vec::new(), vec![e]),
             }
@@ -214,19 +201,12 @@ impl Session {
     }
 
     pub fn status(&self) -> Status {
-        Status {
-            sample_rate: RATE,
-            buffer_size: self.stats.block.load(Relaxed),
-            cpu: self.stats.cpu.load(),
-        }
+        Status { sample_rate: RATE, buffer_size: self.stats.block.load(Relaxed), cpu: self.stats.cpu.load() }
     }
 
     /// (capture side, playback side) latency estimate in frames.
     pub fn io_latency(&self) -> (u32, u32) {
-        (
-            self.stats.lat_in.load(Relaxed),
-            self.stats.lat_out.load(Relaxed),
-        )
+        (self.stats.lat_in.load(Relaxed), self.stats.lat_out.load(Relaxed))
     }
 
     pub fn cable_count(&self) -> usize {
@@ -240,10 +220,3 @@ impl Drop for Session {
         console::CLEAN_EXIT.store(true, SeqCst);
     }
 }
-
-
-
-
-
-
-

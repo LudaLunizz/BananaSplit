@@ -20,12 +20,12 @@
 //! window keeps it running" off in the menu, closing it quits BananaSplit.
 //! Started hidden (`--hidden`, the autostart entry), only the icon shows.
 
-use crate::win::ffi::{GetFileType, GetStdHandle, SetForegroundWindow, FILE_TYPE_PIPE, HWND, STD_INPUT_HANDLE};
+use crate::tray::{Tray, TrayAction};
+use crate::win::ffi::{FILE_TYPE_PIPE, GetFileType, GetStdHandle, HWND, STD_INPUT_HANDLE, SetForegroundWindow};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
-use crate::tray::{Tray, TrayAction};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
@@ -74,7 +74,8 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
             "--size" => {
                 let v = it.next().ok_or("--size needs WxH")?;
                 let (w, h) = v.split_once('x').ok_or("--size needs WxH")?;
-                let (w, h) = (w.parse::<u32>().map_err(|e| e.to_string())?, h.parse::<u32>().map_err(|e| e.to_string())?);
+                let (w, h) =
+                    (w.parse::<u32>().map_err(|e| e.to_string())?, h.parse::<u32>().map_err(|e| e.to_string())?);
                 o.size = Some((w.clamp(640, 8192), h.clamp(480, 8192)));
             }
             // A desktop activation token (Linux); Windows has none.
@@ -92,7 +93,9 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
 pub fn fit_size(want: Option<(u32, u32)>, screen: Option<(u32, u32)>) -> (u32, u32) {
     let (w, h) = want.unwrap_or(DEFAULT_SIZE);
     match screen {
-        Some((sw, sh)) if sw > 0 && sh > 0 => (w.min(sw.saturating_sub(48)).max(640), h.min(sh.saturating_sub(120)).max(480)),
+        Some((sw, sh)) if sw > 0 && sh > 0 => {
+            (w.min(sw.saturating_sub(48)).max(640), h.min(sh.saturating_sub(120)).max(480))
+        }
         _ => (w, h),
     }
 }
@@ -312,7 +315,9 @@ fn run(opts: Opts) -> Result<(), String> {
                 }
             }
             Event::WindowEvent { event: WindowEvent::Resized(_), .. } => resized_at = Some(Instant::now()),
-            Event::WindowEvent { event: WindowEvent::Focused(f), .. } => blurred = if f { None } else { Some(Instant::now()) },
+            Event::WindowEvent { event: WindowEvent::Focused(f), .. } => {
+                blurred = if f { None } else { Some(Instant::now()) }
+            }
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 if resized_at.is_some_and(|t| t.elapsed() >= SIZE_SETTLE) {
                     resized_at = None;
@@ -352,8 +357,13 @@ mod tests {
     #[test]
     fn window_args() {
         let a = |v: &[&str]| parse_args(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-        let o = a(&["http://127.0.0.1:8790/", "--hidden", "--close-to-tray", "0", "--size", "1300x700", "--token", "x"]).unwrap();
-        assert_eq!(o, Opts { url: "http://127.0.0.1:8790/".into(), hidden: true, close_to_tray: false, size: Some((1300, 700)) });
+        let o =
+            a(&["http://127.0.0.1:8790/", "--hidden", "--close-to-tray", "0", "--size", "1300x700", "--token", "x"])
+                .unwrap();
+        assert_eq!(
+            o,
+            Opts { url: "http://127.0.0.1:8790/".into(), hidden: true, close_to_tray: false, size: Some((1300, 700)) }
+        );
         let o = a(&["http://127.0.0.1:8790/"]).unwrap();
         assert!(!o.hidden && o.close_to_tray && o.size.is_none());
         assert!(a(&["https://example.com/"]).is_err());

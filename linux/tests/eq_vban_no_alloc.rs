@@ -7,12 +7,12 @@
 //! (Separate test binary with its own counting allocator, which counts
 //! the test's own thread.)
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
-use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use bananasplit::engine::{Engine, NUM_BUSES, NUM_STRIPS, Shared};
 use bananasplit::eq::{BANDS, Kind};
 use bananasplit::vban::VbanTap;
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 struct Counting;
 thread_local! {
