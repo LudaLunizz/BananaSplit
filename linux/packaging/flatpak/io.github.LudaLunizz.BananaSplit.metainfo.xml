@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.14" date="2026-10-28">
+      <description>
+        <p>BananaSplit now also comes as an app for macOS (Apple silicon and Intel), on Core Audio with BlackHole as virtual cables. Nothing changes on Linux.</p>
+      </description>
+    </release>
     <release version="2.8.13" date="2026-10-28">
       <description>
         <p>The last part of the Rust code review: every unsafe block explains why it is sound, the code is lint-clean and checked on every change, and all calls into C and Windows libraries are declared in one place per platform.</p>
