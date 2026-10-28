@@ -1,7 +1,6 @@
 //! Windows helpers used by the GUI and main loop.
 
 use crate::win::ffi::*;
-use std::ffi::c_void;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
 
@@ -22,89 +21,6 @@ pub struct LocalIp {
     pub broadcast: Option<Ipv4Addr>,
 }
 
-#[repr(C)]
-struct RawSockaddr {
-    family: u16,
-    data: [u8; 14],
-}
-
-#[repr(C)]
-struct SocketAddress {
-    sock: *const RawSockaddr,
-    len: i32,
-}
-
-#[repr(C)]
-struct IpAdapterUnicastAddress {
-    len: u32,
-    flags: u32,
-    next: *mut IpAdapterUnicastAddress,
-    addr: SocketAddress,
-    // IP_PREFIX_ORIGIN, IP_SUFFIX_ORIGIN and IP_DAD_STATE are C enums: 4 bytes each.
-    prefix: u32,
-    suffix: u32,
-    dad: u32,
-    valid_lifetime: u32,
-    preferred_lifetime: u32,
-    lease_lifetime: u32,
-    on_link_prefix_length: u8,
-}
-
-#[repr(C)]
-struct IpAdapterAddresses {
-    len: u32,
-    if_index: u32,
-    next: *mut IpAdapterAddresses,
-    adapter_name: *const i8,
-    first_unicast: *mut IpAdapterUnicastAddress,
-    first_anycast: *mut c_void,
-    first_multicast: *mut c_void,
-    first_dns: *mut c_void,
-    dns_suffix: *const u16,
-    description: *const u16,
-    friendly_name: *const u16,
-    phys_addr: [u8; 8],
-    phys_len: u32,
-    flags: u32,
-    mtu: u32,
-    if_type: u32,
-    oper_status: u32,
-    ipv6_if_index: u32,
-    zone: [u32; 16],
-    first_prefix: *mut c_void,
-    transmit_link_speed: u64,
-    receive_link_speed: u64,
-    first_wins: *mut c_void,
-}
-
-#[repr(C)]
-struct SockaddrIn {
-    sin_family: u16,
-    sin_port: u16,
-    sin_addr: u32,
-    sin_zero: [u8; 8],
-}
-
-#[link(name = "iphlpapi")]
-unsafe extern "system" {
-    fn GetAdaptersAddresses(
-        family: u32,
-        flags: u32,
-        reserved: *mut c_void,
-        adapter_addresses: *mut IpAdapterAddresses,
-        size: *mut u32,
-    ) -> u32;
-}
-
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn GetDiskFreeSpaceExW(
-        dir: *const u16,
-        free_bytes_avail: *mut u64,
-        total_bytes: *mut u64,
-        total_free: *mut u64,
-    ) -> i32;
-}
 
 const AF_INET: u32 = 2;
 const GAA_FLAG_SKIP_ANYCAST: u32 = 0x2;
@@ -178,26 +94,6 @@ fn broadcast_of(ip: Ipv4Addr, prefix: u8) -> Option<Ipv4Addr> {
 // ---------------------------------------------------------------------------
 // Which user is on the other end of a loopback connection
 // ---------------------------------------------------------------------------
-
-#[link(name = "iphlpapi")]
-unsafe extern "system" {
-    fn GetExtendedTcpTable(table: *mut c_void, size: *mut u32, order: i32, af: u32, class: u32, reserved: u32) -> u32;
-}
-
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn GetCurrentProcessId() -> u32;
-    fn GetCurrentProcess() -> HANDLE;
-    fn OpenProcess(access: u32, inherit: i32, pid: u32) -> HANDLE;
-    fn ProcessIdToSessionId(pid: u32, session: *mut u32) -> i32;
-}
-
-#[link(name = "advapi32")]
-unsafe extern "system" {
-    fn OpenProcessToken(process: HANDLE, access: u32, token: *mut HANDLE) -> i32;
-    fn GetTokenInformation(token: HANDLE, class: u32, info: *mut c_void, len: u32, ret: *mut u32) -> i32;
-    fn EqualSid(a: *mut c_void, b: *mut c_void) -> i32;
-}
 
 const AF_INET6: u32 = 23;
 const TCP_TABLE_OWNER_PID_ALL: u32 = 5;
@@ -329,9 +225,6 @@ pub fn local_timestamp() -> String {
     format!("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", t.year, t.month, t.day, t.hour, t.minute, t.second)
 }
 
-#[repr(C)]
-struct SystemTime { year: u16, month: u16, day_of_week: u16, day: u16, hour: u16, minute: u16, second: u16, milliseconds: u16 }
-unsafe extern "system" { fn GetLocalTime(out: *mut SystemTime); }
 
 pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     let mut cur = path.to_path_buf();

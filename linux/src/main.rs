@@ -6,6 +6,7 @@ mod cables;
 mod chanmenu;
 mod desktop;
 mod devices;
+mod dl;
 mod gui;
 mod jack;
 mod lowlat;
