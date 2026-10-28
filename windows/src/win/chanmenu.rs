@@ -258,15 +258,15 @@ fn route_devs() -> Vec<crate::win::route::DevInfo> {
 }
 
 pub fn list(cfg: &Config) -> String {
-    // Without COM the lists below are just empty.
-    let _com = ffi::ComInit::mta().ok();
+    // Without COM the lists below are just empty (no audio objects are made).
+    let com = ffi::ComInit::mta().ok();
     let plan = build_plan(cfg);
     let (caps, rens) = enumerate().unwrap_or((vec![],vec![]));
     // build candidates
     let mut strip_cand: Vec<String> = Vec::new();
     let mut bus_cand: Vec<String> = Vec::new();
     // default capture/render
-    let en = wasapi::Enumerator::new().ok();
+    let en = com.as_ref().and_then(|_| wasapi::Enumerator::new().ok());
     let def_cap = en.as_ref().and_then(|e| e.default_id(true));
     let def_ren = en.as_ref().and_then(|e| e.default_id(false));
     // strip candidates = capture

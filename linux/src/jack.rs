@@ -131,6 +131,7 @@ static USE_PW: AtomicBool = AtomicBool::new(false);
 fn dlerror_text() -> String {
     // SAFETY: dlerror returns NULL or a valid C string.
     let e = unsafe { dlerror() };
+    // SAFETY: non-null here, a NUL-terminated string from dlerror.
     if e.is_null() { String::new() } else { unsafe { CStr::from_ptr(e) }.to_string_lossy().into_owned() }
 }
 
@@ -249,7 +250,7 @@ pub struct JackClient {
     pub raw: Client,
 }
 
-// The JACK client API is thread-safe for the non-RT calls we make from the
+// SAFETY: the JACK client API is thread-safe for the non-RT calls we make from the
 // control thread; the raw pointer itself is just a handle.
 unsafe impl Send for JackClient {}
 
@@ -342,18 +343,22 @@ impl JackClient {
     pub fn name(&self) -> String {
         // SAFETY: valid client; returned string is owned by JACK.
         let p = unsafe { (self.lib.jack_get_client_name)(self.raw) };
+        // SAFETY: non-null here; JACK owns the name while the client is open.
         if p.is_null() { String::new() } else { unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned() }
     }
 
     pub fn sample_rate(&self) -> u32 {
+        // SAFETY: valid client (non-null from jack_client_open, closed only in Drop).
         unsafe { (self.lib.jack_get_sample_rate)(self.raw) }
     }
 
     pub fn buffer_size(&self) -> u32 {
+        // SAFETY: valid client (non-null from jack_client_open, closed only in Drop).
         unsafe { (self.lib.jack_get_buffer_size)(self.raw) }
     }
 
     pub fn set_buffer_size(&self, n: u32) -> Result<(), String> {
+        // SAFETY: valid client (non-null from jack_client_open, closed only in Drop).
         match unsafe { (self.lib.jack_set_buffer_size)(self.raw, n) } {
             0 => Ok(()),
             e => Err(format!("jack_set_buffer_size({n}) failed ({e})")),
@@ -361,6 +366,7 @@ impl JackClient {
     }
 
     pub fn cpu_load(&self) -> f32 {
+        // SAFETY: valid client (non-null from jack_client_open, closed only in Drop).
         unsafe { (self.lib.jack_cpu_load)(self.raw) }
     }
 
@@ -373,12 +379,15 @@ impl JackClient {
     }
 
     pub fn port_name(&self, p: Port) -> String {
+        // SAFETY: `p` was registered by a client, valid while that client is open.
         let s = unsafe { (self.lib.jack_port_name)(p.as_ptr()) };
+        // SAFETY: non-null, a NUL-terminated name owned by the port.
         if s.is_null() { String::new() } else { unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned() }
     }
 
     pub fn latency(&self, p: Port, mode: c_int) -> LatencyRange {
         let mut r = LatencyRange::default();
+        // SAFETY: `p` as above; `r` is a #[repr(C)] jack_latency_range_t out-param.
         unsafe { (self.lib.jack_port_get_latency_range)(p.as_ptr(), mode, &mut r) };
         r
     }
@@ -412,9 +421,11 @@ impl JackClient {
             if s.is_null() {
                 break;
             }
+            // SAFETY: a non-null entry of that array, a NUL-terminated port name.
             out.push(unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned());
             i += 1;
         }
+        // SAFETY: `arr` came from libjack; freed once with jack_free after the last read.
         unsafe { (self.lib.jack_free)(arr.cast()) };
         out
     }
@@ -425,6 +436,7 @@ impl JackClient {
             (Ok(a), Ok(b)) => (a, b),
             _ => return Err("port name contains NUL".into()),
         };
+        // SAFETY: valid client; `a` and `b` are CStrings held in locals.
         match unsafe { (self.lib.jack_connect)(self.raw, a.as_ptr(), b.as_ptr()) } {
             0 => Ok(()),
             e if e == EEXIST || e == -EEXIST => Ok(()),
@@ -453,6 +465,7 @@ impl JackClient {
     }
 
     pub fn activate(&self) -> Result<(), String> {
+        // SAFETY: valid client (non-null from jack_client_open, closed only in Drop).
         match unsafe { (self.lib.jack_activate)(self.raw) } {
             0 => Ok(()),
             e => Err(format!("jack_activate failed ({e})")),

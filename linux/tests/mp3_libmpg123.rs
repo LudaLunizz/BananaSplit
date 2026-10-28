@@ -39,12 +39,14 @@ impl Mpg123 {
     fn load() -> Option<Mpg123> {
         let lib = CString::new("libmpg123.so.0").unwrap();
         // RTLD_NOW
+        // SAFETY: `lib` is a NUL-terminated name held in a local.
         let h = unsafe { dlopen(lib.as_ptr(), 2) };
         if h.is_null() {
             return None;
         }
         let sym = |name: &str| -> Option<*mut c_void> {
             let c = CString::new(name).unwrap();
+            // SAFETY: `h` is the non-null dlopen handle; `c` is a NUL-terminated name.
             let p = unsafe { dlsym(h, c.as_ptr()) };
             (!p.is_null()).then_some(p)
         };

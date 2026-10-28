@@ -117,6 +117,7 @@ unsafe extern "system" fn wndproc(hwnd: Hwnd, msg: u32, w: usize, l: isize) -> i
             QUIT.store(true, SeqCst);
             0
         }
+        // SAFETY: forwards exactly the arguments Windows passed to this window procedure.
         _ => unsafe { DefWindowProcW(hwnd, msg, w, l) },
     }
 }
