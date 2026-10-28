@@ -89,6 +89,7 @@ api!(Glib {
     g_unix_fd_add: unsafe extern "C" fn(c_int, c_uint, FdFn, Ptr) -> c_uint,
     g_timeout_add: unsafe extern "C" fn(c_uint, SourceFn, Ptr) -> c_uint,
     g_variant_new_parsed: unsafe extern "C" fn(*const c_char, ...) -> Ptr,
+    g_variant_parse: unsafe extern "C" fn(Ptr, *const c_char, *const c_char, *mut *const c_char, *mut Ptr) -> Ptr,
     g_variant_new_int32: unsafe extern "C" fn(i32) -> Ptr,
     g_variant_new_tuple: unsafe extern "C" fn(*const Ptr, usize) -> Ptr,
     g_variant_new_array: unsafe extern "C" fn(Ptr, *const Ptr, usize) -> Ptr,
@@ -501,10 +502,28 @@ const REC_PIX: [(i32, &[u8]); 4] = [
     (64, include_bytes!("../assets/tray/rec-64.argb")),
 ];
 
+/// A new floating GVariant from GVariant text. The text is checked first
+/// with `g_variant_parse`, which rejects bad text and any `%` format
+/// directive (a `%` inside a string is fine); `g_variant_new_parsed` would
+/// abort on the first and read varargs that were never passed for the
+/// second. Bad text gives an empty tuple and a message.
 fn parsed(libs: &Libs, text: &str) -> Ptr {
+    let g = &libs.glib;
     let c = cstr(text);
-    // SAFETY: valid GVariant text with no `%` (no varargs needed).
-    unsafe { (libs.glib.g_variant_new_parsed)(c.as_ptr()) }
+    let mut err: Ptr = std::ptr::null_mut();
+    // SAFETY: NUL-terminated text, no type, no limit or end pointer.
+    let checked = unsafe { (g.g_variant_parse)(std::ptr::null_mut(), c.as_ptr(), std::ptr::null(), std::ptr::null_mut(), &mut err) };
+    if checked.is_null() {
+        eprintln!("bananasplit: bad tray text {text:?}: {}", gerror_text(libs, err));
+        // SAFETY: no children; an empty tuple.
+        return unsafe { (g.g_variant_new_tuple)(std::ptr::null(), 0) };
+    }
+    // SAFETY: `checked` is ours (non-floating); the text parsed without
+    // format directives, so g_variant_new_parsed reads no varargs.
+    unsafe {
+        (g.g_variant_unref)(checked);
+        (g.g_variant_new_parsed)(c.as_ptr())
+    }
 }
 
 /// `a(iiay)` for the tray icon.

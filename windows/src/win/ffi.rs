@@ -445,11 +445,15 @@ pub struct Com<V> {
 
 // SAFETY: every object we use (MMDevice API, audio clients) is created and
 // used from multithreaded-apartment threads, where COM objects are free-threaded.
+// `ComInit::mta()` fails on a thread that is in another apartment, so
+// callers stop there instead of creating objects (see `from_raw`).
 unsafe impl<V> Send for Com<V> {}
 
 impl<V> Com<V> {
     /// # Safety
-    /// `ptr` must be a valid, owned (already AddRef'ed) interface pointer of type V, or NULL.
+    /// `ptr` must be a valid, owned (already AddRef'ed) interface pointer of type V, or NULL,
+    /// created on a thread in the multithreaded apartment (`ComInit::mta()` succeeded),
+    /// because `Com` may be sent to other threads.
     pub unsafe fn from_raw(ptr: *mut c_void) -> Option<Self> {
         if ptr.is_null() {
             None
@@ -480,8 +484,10 @@ impl<V> Drop for Com<V> {
     }
 }
 
-/// Win32 event handle, closed on drop.
-pub struct Event(pub HANDLE);
+/// Win32 event handle, closed on drop. Only `Event::new` makes one, so the
+/// handle is ours to close.
+pub struct Event(HANDLE);
+// SAFETY: an event handle may be used and closed from any thread.
 unsafe impl Send for Event {}
 impl Event {
     pub fn new() -> Result<Event, String> {
@@ -493,6 +499,10 @@ impl Event {
             Ok(Event(h))
         }
     }
+    /// The handle, for waiting on it or handing it to WASAPI; still owned here.
+    pub fn raw(&self) -> HANDLE {
+        self.0
+    }
 }
 impl Drop for Event {
     fn drop(&mut self) {
@@ -500,14 +510,23 @@ impl Drop for Event {
     }
 }
 
-/// Per-thread COM initialisation (multithreaded apartment).
-pub struct ComInit(bool);
+/// Per-thread COM initialisation; `CoUninitialize` on drop, on the same
+/// thread (the marker keeps it from being sent to another one).
+pub struct ComInit(bool, std::marker::PhantomData<*const ()>);
 impl ComInit {
-    pub fn mta() -> ComInit {
+    /// Multithreaded apartment, which the audio objects (`Com`) need. Fails
+    /// on a thread already in a single-threaded apartment (RPC_E_CHANGED_MODE)
+    /// or when COM can't start.
+    pub fn mta() -> Result<ComInit, String> {
         let hr = unsafe { CoInitializeEx(std::ptr::null_mut(), COINIT_MULTITHREADED) };
-        // S_FALSE (already initialised) also needs a matching CoUninitialize;
-        // RPC_E_CHANGED_MODE means someone else owns this thread's apartment.
-        ComInit(hr >= 0)
+        // S_FALSE (already initialised) also needs a matching CoUninitialize.
+        if hr == RPC_E_CHANGED_MODE {
+            Err("COM: this thread is in a single-threaded apartment".into())
+        } else if hr < 0 {
+            Err(format!("COM: CoInitializeEx failed: {}", hr_text(hr)))
+        } else {
+            Ok(ComInit(true, std::marker::PhantomData))
+        }
     }
     /// Single-threaded apartment, which ShellExecuteW wants: shell
     /// extensions and protocol handlers (`ms-settings:`) may need it. On a
@@ -515,7 +534,7 @@ impl ComInit {
     /// (RPC_E_CHANGED_MODE), and COM is initialised either way.
     pub fn sta() -> ComInit {
         let hr = unsafe { CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
-        ComInit(hr >= 0)
+        ComInit(hr >= 0, std::marker::PhantomData)
     }
 }
 impl Drop for ComInit {

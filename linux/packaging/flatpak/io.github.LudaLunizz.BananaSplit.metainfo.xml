@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.12" date="2026-10-28">
+      <description>
+        <p>More under-the-hood hardening from the Rust code review: the code that talks to JACK, the tray and Windows audio is harder to misuse, and a Windows audio thread that cannot start no longer leaves devices open.</p>
+      </description>
+    </release>
     <release version="2.8.11" date="2026-10-28">
       <description>
         <p>Under-the-hood fixes from a Rust code review: tray and dark-style checks no longer leak memory or trip on unexpected replies, and recording moves less data between threads.</p>
