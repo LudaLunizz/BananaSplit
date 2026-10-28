@@ -30,6 +30,7 @@ struct Ring {
 // consumer only reads slots in [tail, head); head/tail use Release/Acquire so
 // a slot's contents are visible before its index is published.
 unsafe impl Sync for Ring {}
+// SAFETY: the ring owns its slots (plain f32 frames) and two atomics; nothing in it is tied to a thread.
 unsafe impl Send for Ring {}
 
 impl Ring {

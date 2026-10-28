@@ -175,6 +175,7 @@ pub fn disk_space(path: &std::path::Path) -> Option<(u64, u64)> {
                 let c = CString::new(p.as_os_str().as_encoded_bytes()).ok()?;
                 // SAFETY: plain-old-data out-parameter with room to spare.
                 let mut st: StatVfs = unsafe { std::mem::zeroed() };
+                // SAFETY: `c` is a NUL-terminated path held in a local; `st` is a large enough out-param.
                 if unsafe { statvfs(c.as_ptr(), &mut st) } != 0 {
                     return None;
                 }
@@ -271,6 +272,7 @@ pub fn local_ipv4() -> Vec<LocalIp> {
 }
 
 pub fn stdin_is_tty() -> bool {
+    // SAFETY: isatty only inspects the descriptor.
     unsafe { isatty(0) == 1 && isatty(1) == 1 }
 }
 
@@ -303,6 +305,7 @@ static ORIGINAL: OnceLock<Termios> = OnceLock::new();
 
 fn restore_tty() {
     if let Some(t) = ORIGINAL.get() {
+        // SAFETY: `t` is the Termios tcgetattr filled, kept in a static.
         unsafe { tcsetattr(0, TCSANOW, t) };
     }
     // show cursor, leave alternate screen, reset colours
@@ -316,7 +319,9 @@ pub struct RawTerminal;
 
 impl RawTerminal {
     pub fn enter() -> Result<RawTerminal, String> {
+        // SAFETY: plain-old-data with room to spare; tcgetattr fills it.
         let mut t: Termios = unsafe { std::mem::zeroed() };
+        // SAFETY: `t` is a #[repr(C)] termios out-param with padding to spare.
         if unsafe { tcgetattr(0, &mut t) } != 0 {
             return Err("stdin is not a terminal (use --headless)".into());
         }
@@ -326,6 +331,7 @@ impl RawTerminal {
         raw.c_iflag &= !(ICRNL | IXON);
         raw.c_cc[VMIN] = 1;
         raw.c_cc[VTIME] = 0;
+        // SAFETY: `raw` is a filled termios from tcgetattr, modified only in flag bits.
         if unsafe { tcsetattr(0, TCSANOW, &raw) } != 0 {
             return Err("cannot set terminal raw mode".into());
         }
@@ -374,6 +380,7 @@ pub fn local_timestamp() -> String {
         }
         // SAFETY: plain-old-data out-parameter large enough for struct tm.
         let mut tm: Tm = unsafe { std::mem::zeroed() };
+        // SAFETY: `secs` and `tm` are locals; `tm` is larger than struct tm.
         if !unsafe { localtime_r(&secs, &mut tm) }.is_null() {
             return format!(
                 "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
@@ -422,9 +429,12 @@ mod tests {
         // SAFETY: F_DUPFD (0) makes a copy without close-on-exec, closed below.
         let fd = unsafe { fcntl(f.as_raw_fd(), 0, 3) };
         assert!(fd > 2);
+        // SAFETY: F_GETFD on the descriptor we just duplicated.
         assert_eq!(unsafe { fcntl(fd, 1) } & 1, 0);
         cloexec_all();
+        // SAFETY: F_GETFD on the descriptor we just duplicated.
         assert_eq!(unsafe { fcntl(fd, 1) } & 1, 1);
+        // SAFETY: closes our own duplicate, used nowhere else.
         unsafe { close(fd) };
     }
 

@@ -43,6 +43,7 @@ const RTLD_NOW: c_int = 2;
 fn dl_error() -> String {
     // SAFETY: dlerror returns NULL or a valid C string.
     let e = unsafe { dlerror() };
+    // SAFETY: non-null here, a NUL-terminated string from dlerror.
     if e.is_null() { "unknown error".into() } else { unsafe { CStr::from_ptr(e) }.to_string_lossy().into_owned() }
 }
 
@@ -583,6 +584,7 @@ fn menu_changed() {
 fn str_of(libs: &Libs, v: Ptr) -> String {
     // SAFETY: `v` holds a string-typed GVariant.
     let p = unsafe { (libs.glib.g_variant_get_string)(v, std::ptr::null_mut()) };
+    // SAFETY: non-null, NUL-terminated and owned by `v`, which the caller still holds.
     if p.is_null() { String::new() } else { unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned() }
 }
 
@@ -627,6 +629,7 @@ unsafe extern "C" fn method_call(
     };
     // SAFETY: GDBus passes valid strings.
     let (iface, method) = unsafe { (CStr::from_ptr(iface), CStr::from_ptr(method)) };
+    // SAFETY: `inv` is GDBus's invocation, completed once per call; `v` is NULL or a fresh GVariant it takes.
     let ret = |v: Ptr| unsafe { (libs.gio.g_dbus_method_invocation_return_value)(inv, v) };
     let items = menu_items(window_visible(), has_window, recording);
     if iface == ITEM_IFACE {
@@ -653,6 +656,7 @@ unsafe extern "C" fn method_call(
             // SAFETY: `ai` array.
             let n = unsafe { (libs.glib.g_variant_n_children)(ids_v) };
             let ids: Vec<i32> = (0..n).map(|i| int_child(libs, ids_v, i)).collect();
+            // SAFETY: the new reference from child(), released once.
             unsafe { (libs.glib.g_variant_unref)(ids_v) };
             ret(parsed(libs, &group_text(&items, &ids)))
         }
@@ -665,6 +669,7 @@ unsafe extern "C" fn method_call(
             let id = int_child(libs, params, 0);
             let ev = child(libs, params, 1);
             let what = str_of(libs, ev);
+            // SAFETY: the new reference from child(); str_of already copied its string.
             unsafe { (libs.glib.g_variant_unref)(ev) };
             ret(std::ptr::null_mut());
             if what == "clicked" {
@@ -683,11 +688,13 @@ unsafe extern "C" fn method_call(
                 if str_of(libs, ev) == "clicked" {
                     clicked.push(id);
                 }
+                // SAFETY: new references from child(), each released once after use.
                 unsafe {
                     (libs.glib.g_variant_unref)(ev);
                     (libs.glib.g_variant_unref)(e);
                 }
             }
+            // SAFETY: the new reference from child(), released once after the loop.
             unsafe { (libs.glib.g_variant_unref)(evs) };
             ret(parsed(libs, "(@ai [],)"));
             for id in clicked {
@@ -696,6 +703,7 @@ unsafe extern "C" fn method_call(
         }
         b"AboutToShow" => ret(parsed(libs, "(false,)")),
         b"AboutToShowGroup" => ret(parsed(libs, "(@ai [], @ai [])")),
+        // SAFETY: valid invocation, completed once here; static C strings.
         _ => unsafe {
             (libs.gio.g_dbus_method_invocation_return_dbus_error)(inv, c"org.freedesktop.DBus.Error.UnknownMethod".as_ptr(), c"unknown method".as_ptr())
         },
@@ -771,6 +779,7 @@ unsafe extern "C" fn registered(conn: Ptr, res: Ptr, _data: Ptr) {
     let v = unsafe { (libs.gio.g_dbus_connection_call_finish)(conn, res, &mut err) };
     let ok = !v.is_null();
     if ok {
+        // SAFETY: a non-null reply we own, released once.
         unsafe { (libs.glib.g_variant_unref)(v) };
     } else {
         eprintln!("bananasplit: the tray did not take the icon: {}", gerror_text(libs, err));
@@ -856,7 +865,9 @@ fn tray_available() -> bool {
     let inner = child(libs, v, 0);
     // SAFETY: `inner` is the `v`; its content should be a boolean.
     let b = unsafe { (libs.glib.g_variant_get_variant)(inner) };
+    // SAFETY: only reached when `b` is a non-null boolean GVariant.
     let on = has_type(libs, b, c"b") && unsafe { (libs.glib.g_variant_get_boolean)(b) } != 0;
+    // SAFETY: `b` (if non-null), `inner` and `v` are references we own, each released once.
     unsafe {
         if !b.is_null() {
             (libs.glib.g_variant_unref)(b);
@@ -881,6 +892,7 @@ fn gerror_text(libs: &Libs, e: Ptr) -> String {
     }
     // SAFETY: GLib hands out GError structs of exactly this layout.
     let m = unsafe { (*(e as *const GError)).message };
+    // SAFETY: non-null, the GError's NUL-terminated message, read before the free below.
     let text = if m.is_null() { "unknown error".into() } else { unsafe { CStr::from_ptr(m) }.to_string_lossy().into_owned() };
     // SAFETY: a GError we own (from an out-parameter), not used after this.
     unsafe { (libs.glib.g_error_free)(e) };
@@ -1350,6 +1362,7 @@ pub fn main(args: &[String]) -> ExitCode {
     let mut view: Ptr = std::ptr::null_mut();
     let mut ui_ok = false;
     if let Some((gtk, gdk, wk)) = &libs.ui {
+        // SAFETY: main thread, before the loop; gtk_init_check accepts NULL argc/argv.
         unsafe {
             ui_ok = (gtk.gtk_init_check)(std::ptr::null_mut(), std::ptr::null_mut()) != 0;
             // After gtk_init, which sets the class from the program name
@@ -1358,6 +1371,8 @@ pub fn main(args: &[String]) -> ExitCode {
             (gdk.gdk_set_program_class)(c"bananasplit".as_ptr());
         }
         if ui_ok {
+            // SAFETY: main thread after a successful gtk_init_check; every pointer is checked or
+            // freshly created, the CStrings outlive their calls, handlers match the signal signatures.
             unsafe {
                 let display = (gdk.gdk_display_get_default)();
                 let mut work = None;
@@ -1425,6 +1440,7 @@ pub fn main(args: &[String]) -> ExitCode {
         tell("ready app");
         if opts.hidden {
             // Give the tray a moment to pick up our icon.
+            // SAFETY: main thread; `hidden_check` is a GSourceFunc that ignores its NULL data.
             unsafe { (g.g_timeout_add)(2500, hidden_check, std::ptr::null_mut()) };
         } else {
             show_window(opts.token.as_deref());
@@ -1437,6 +1453,7 @@ pub fn main(args: &[String]) -> ExitCode {
         }
         tell(&format!("ready tray {why}"));
         if opts.hidden {
+            // SAFETY: main thread; `hidden_check` is a GSourceFunc that ignores its NULL data.
             unsafe { (g.g_timeout_add)(2500, hidden_check, std::ptr::null_mut()) };
         }
     }

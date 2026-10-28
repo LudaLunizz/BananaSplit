@@ -54,6 +54,7 @@ pub struct Enumerator(Com<IMMDeviceEnumeratorVtbl>);
 impl Enumerator {
     pub fn new() -> Result<Enumerator, String> {
         let mut p: *mut c_void = std::ptr::null_mut();
+        // SAFETY: COM is up on this thread (callers hold `ComInit::mta`); the CLSID/IID are statics and `p` is a local out-pointer.
         let hr = unsafe {
             CoCreateInstance(
                 &CLSID_MMDeviceEnumerator,
@@ -69,6 +70,7 @@ impl Enumerator {
                 hr_text(hr)
             ));
         }
+        // SAFETY: `p` is the owned IMMDeviceEnumerator CoCreateInstance returned for its IID, on an MTA thread.
         unsafe { Com::from_raw(p) }
             .map(Enumerator)
             .ok_or_else(|| "device enumerator is NULL".into())
@@ -80,21 +82,26 @@ impl Enumerator {
         let flow = if capture { eCapture } else { eRender };
         let mut pc: *mut c_void = std::ptr::null_mut();
         let hr =
+            // SAFETY: `e` owns a live IMMDeviceEnumerator (vtable order as in the SDK); `pc` is a local out-pointer.
             unsafe { (e.vt().EnumAudioEndpoints)(e.as_ptr(), flow, DEVICE_STATE_ACTIVE, &mut pc) };
         if hr < 0 {
             return Err(format!("EnumAudioEndpoints: {}", hr_text(hr)));
         }
+        // SAFETY: `pc` is the owned IMMDeviceCollection EnumAudioEndpoints returned, on this MTA thread.
         let Some(coll) = (unsafe { Com::<IMMDeviceCollectionVtbl>::from_raw(pc) }) else {
             return Ok(Vec::new());
         };
         let mut n = 0u32;
+        // SAFETY: `coll` owns a live IMMDeviceCollection; `n` is a local u32 out-pointer.
         unsafe { (coll.vt().GetCount)(coll.as_ptr(), &mut n) };
         let mut out = Vec::with_capacity(n as usize);
         for i in 0..n {
             let mut pd: *mut c_void = std::ptr::null_mut();
+            // SAFETY: `coll` owns a live IMMDeviceCollection, `i` < GetCount; `pd` is a local out-pointer.
             if unsafe { (coll.vt().Item)(coll.as_ptr(), i, &mut pd) } < 0 {
                 continue;
             }
+            // SAFETY: `pd` is the owned IMMDevice that Item returned, on this MTA thread.
             if let Some(dev) = unsafe { Com::<IMMDeviceVtbl>::from_raw(pd) } {
                 let info = DevInfo {
                     name: device_name(&dev),
@@ -110,10 +117,12 @@ impl Enumerator {
         let e = &self.0;
         let flow = if capture { eCapture } else { eRender };
         let mut pd: *mut c_void = std::ptr::null_mut();
+        // SAFETY: `e` owns a live IMMDeviceEnumerator (vtable order as in the SDK); `pd` is a local out-pointer.
         let hr = unsafe { (e.vt().GetDefaultAudioEndpoint)(e.as_ptr(), flow, eConsole, &mut pd) };
         if hr < 0 {
             return None; // no device of this kind
         }
+        // SAFETY: `pd` is the owned IMMDevice GetDefaultAudioEndpoint returned, on this MTA thread.
         unsafe { Com::<IMMDeviceVtbl>::from_raw(pd) }.map(|d| device_id(&d))
     }
 
@@ -139,19 +148,24 @@ impl Enumerator {
 
 fn device_id(dev: &Com<IMMDeviceVtbl>) -> String {
     let mut p: *mut u16 = std::ptr::null_mut();
+    // SAFETY: `dev` owns a live IMMDevice; `p` is a local out-pointer for the CoTaskMem id string.
     if unsafe { (dev.vt().GetId)(dev.as_ptr(), &mut p) } < 0 || p.is_null() {
         return String::new();
     }
+    // SAFETY: GetId succeeded and `p` is non-NULL: a NUL-terminated UTF-16 string.
     let s = unsafe { from_wide(p) };
+    // SAFETY: `p` was allocated by GetId (CoTaskMemAlloc) and is freed once, after its last use.
     unsafe { CoTaskMemFree(p.cast()) };
     s
 }
 
 fn device_name(dev: &Com<IMMDeviceVtbl>) -> String {
     let mut ps: *mut c_void = std::ptr::null_mut();
+    // SAFETY: `dev` owns a live IMMDevice; `ps` is a local out-pointer.
     if unsafe { (dev.vt().OpenPropertyStore)(dev.as_ptr(), STGM_READ, &mut ps) } < 0 {
         return "(unnamed device)".into();
     }
+    // SAFETY: `ps` is the owned IPropertyStore OpenPropertyStore returned, on this MTA thread.
     let Some(store) = (unsafe { Com::<IPropertyStoreVtbl>::from_raw(ps) }) else {
         return "(unnamed device)".into();
     };
@@ -163,10 +177,13 @@ fn device_name(dev: &Com<IMMDeviceVtbl>) -> String {
         data: [0; 2],
     };
     let mut name = String::from("(unnamed device)");
+    // SAFETY: `store` owns a live IPropertyStore; the key is a static, `pv` a local PROPVARIANT.
     if unsafe { (store.vt().GetValue)(store.as_ptr(), &PKEY_Device_FriendlyName, &mut pv) } >= 0 {
         if pv.vt == VT_LPWSTR && pv.data[0] != 0 {
+            // SAFETY: VT_LPWSTR with a non-NULL data[0]: a NUL-terminated UTF-16 string owned by `pv`.
             name = unsafe { from_wide(pv.data[0] as *const u16) };
         }
+        // SAFETY: GetValue succeeded, so `pv` is ours to clear, once, after its last use.
         unsafe { PropVariantClear(&mut pv) };
     }
     name
@@ -193,6 +210,7 @@ fn open_stream(dev: &Device, capture: bool) -> Result<Stream, String> {
     let fail = |what: &str, hr: HRESULT| format!("{name}: {what} failed: {}", hr_text(hr));
 
     let mut pc: *mut c_void = std::ptr::null_mut();
+    // SAFETY: `dev.dev` owns a live IMMDevice; the IID is a static and `pc` a local out-pointer.
     let hr = unsafe {
         (dev.dev.vt().Activate)(
             dev.dev.as_ptr(),
@@ -205,11 +223,13 @@ fn open_stream(dev: &Device, capture: bool) -> Result<Stream, String> {
     if hr < 0 {
         return Err(fail("Activate", hr));
     }
+    // SAFETY: `pc` is the owned IAudioClient Activate returned; callers hold `ComInit::mta`.
     let client = unsafe { Com::<IAudioClientVtbl>::from_raw(pc) }
         .ok_or_else(|| format!("{name}: no audio client"))?;
     let c = client.vt();
 
     let (mut def_period, mut min_period) = (0i64, 0i64);
+    // SAFETY: `client` owns a live IAudioClient; both out-pointers are local i64s.
     unsafe { (c.GetDevicePeriod)(client.as_ptr(), &mut def_period, &mut min_period) };
 
     let fmt = WAVEFORMATEX {
@@ -226,6 +246,7 @@ fn open_stream(dev: &Device, capture: bool) -> Result<Stream, String> {
         | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
     // Buffer duration 0 = the smallest buffer the engine allows (about one
     // device period in event-driven shared mode).
+    // SAFETY: `client` owns a live IAudioClient; `fmt` is a local WAVEFORMATEX (cbSize 0) that outlives the call; no session GUID.
     let hr = unsafe {
         (c.Initialize)(
             client.as_ptr(),
@@ -241,13 +262,16 @@ fn open_stream(dev: &Device, capture: bool) -> Result<Stream, String> {
         return Err(fail("Initialize", hr));
     }
     let event = Event::new()?;
+    // SAFETY: the handle is owned by `event`, which the Stream drops after `client` (field order).
     let hr = unsafe { (c.SetEventHandle)(client.as_ptr(), event.raw()) };
     if hr < 0 {
         return Err(fail("SetEventHandle", hr));
     }
     let mut buffer_frames = 0u32;
+    // SAFETY: `client` owns an initialised IAudioClient; `buffer_frames` is a local out-pointer.
     unsafe { (c.GetBufferSize)(client.as_ptr(), &mut buffer_frames) };
     let mut lat = 0i64;
+    // SAFETY: `client` owns an initialised IAudioClient; `lat` is a local out-pointer.
     unsafe { (c.GetStreamLatency)(client.as_ptr(), &mut lat) };
 
     let iid = if capture {
@@ -256,15 +280,18 @@ fn open_stream(dev: &Device, capture: bool) -> Result<Stream, String> {
         &IID_IAudioRenderClient
     };
     let mut ps: *mut c_void = std::ptr::null_mut();
+    // SAFETY: `client` owns an initialised IAudioClient; `iid` is a static IID and `ps` a local out-pointer.
     let hr = unsafe { (c.GetService)(client.as_ptr(), iid, &mut ps) };
     if hr < 0 {
         return Err(fail("GetService", hr));
     }
     let (render, capture_svc) = if capture {
+        // SAFETY: `ps` is the owned IAudioCaptureClient GetService returned for IID_IAudioCaptureClient.
         (None, unsafe {
             Com::<IAudioCaptureClientVtbl>::from_raw(ps)
         })
     } else {
+        // SAFETY: `ps` is the owned IAudioRenderClient GetService returned for IID_IAudioRenderClient.
         (unsafe { Com::<IAudioRenderClientVtbl>::from_raw(ps) }, None)
     };
     Ok(Stream {
@@ -283,7 +310,9 @@ impl Stream {
         // Pre-fill a render buffer with silence so the first period plays cleanly.
         if let Some(r) = &self.render {
             let mut p: *mut u8 = std::ptr::null_mut();
+            // SAFETY: `r` owns a live IAudioRenderClient; before Start the whole buffer is free; `p` is a local out-pointer.
             if unsafe { (r.vt().GetBuffer)(r.as_ptr(), self.buffer_frames, &mut p) } >= 0 {
+                // SAFETY: pairs the successful GetBuffer above, with the same frame count; no data is read.
                 unsafe {
                     (r.vt().ReleaseBuffer)(
                         r.as_ptr(),
@@ -293,11 +322,13 @@ impl Stream {
                 };
             }
         }
+        // SAFETY: `self.client` owns an initialised IAudioClient.
         let hr = unsafe { (self.client.vt().Start)(self.client.as_ptr()) };
         if hr < 0 { Err(hr) } else { Ok(()) }
     }
 
     fn stop(&self) {
+        // SAFETY: `self.client` owns an initialised IAudioClient.
         unsafe { (self.client.vt().Stop)(self.client.as_ptr()) };
     }
 
@@ -308,12 +339,14 @@ impl Stream {
 
     /// Like [`Stream::wait`], with an explicit timeout in milliseconds.
     fn wait_ms(&self, ms: u32) -> bool {
+        // SAFETY: the handle is owned by `self.event`, alive for the call.
         unsafe { WaitForSingleObject(self.event.raw(), ms) == WAIT_OBJECT_0 }
     }
 
     /// Frames the render buffer can take right now.
     fn writable(&self) -> Result<u32, HRESULT> {
         let mut pad = 0u32;
+        // SAFETY: `self.client` owns an initialised IAudioClient; `pad` is a local out-pointer.
         let hr = unsafe { (self.client.vt().GetCurrentPadding)(self.client.as_ptr(), &mut pad) };
         if hr < 0 {
             Err(hr)
@@ -326,14 +359,17 @@ impl Stream {
     fn write(&self, n: u32, fill: impl FnOnce(&mut [f32])) -> Result<(), HRESULT> {
         let r = self.render.as_ref().expect("render stream");
         let mut p: *mut u8 = std::ptr::null_mut();
+        // SAFETY: `r` owns a live IAudioRenderClient; `p` is a local out-pointer (GetBuffer fails if `n` frames do not fit).
         let hr = unsafe { (r.vt().GetBuffer)(r.as_ptr(), n, &mut p) };
         if hr < 0 {
             return Err(hr);
         }
         if !p.is_null() {
-            // SAFETY: WASAPI gives n frames of our 2 x f32 format.
+            // SAFETY: GetBuffer succeeded: `p` holds `n` frames of the stream's format,
+            // stereo f32 (Initialize with AUTOCONVERTPCM), until ReleaseBuffer below.
             fill(unsafe { std::slice::from_raw_parts_mut(p.cast::<f32>(), n as usize * 2) });
         }
+        // SAFETY: pairs the successful GetBuffer above, with the same `n` frames.
         let hr = unsafe { (r.vt().ReleaseBuffer)(r.as_ptr(), n, 0) };
         if hr < 0 { Err(hr) } else { Ok(()) }
     }
@@ -345,12 +381,14 @@ impl Mmcss {
     fn pro_audio() -> Mmcss {
         let task = wide("Pro Audio");
         let mut idx = 0u32;
+        // SAFETY: `task` is a NUL-terminated UTF-16 string held in a local; `idx` is a local out-pointer.
         Mmcss(unsafe { AvSetMmThreadCharacteristicsW(task.as_ptr(), &mut idx) })
     }
 }
 impl Drop for Mmcss {
     fn drop(&mut self) {
         if !self.0.is_null() {
+            // SAFETY: `self.0` is the non-NULL handle AvSetMmThreadCharacteristicsW gave this thread (HANDLE keeps Mmcss !Send).
             unsafe { AvRevertMmThreadCharacteristics(self.0) };
         }
     }
@@ -638,6 +676,7 @@ fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stat
         }
         loop {
             let mut next = 0u32;
+            // SAFETY: `cap` owns a live IAudioCaptureClient (this thread is MTA); `next` is a local out-pointer.
             let hr = unsafe { (cap.vt().GetNextPacketSize)(cap.as_ptr(), &mut next) };
             if hr < 0 {
                     stats.invalidated.store(true, Relaxed);
@@ -647,6 +686,7 @@ fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stat
                 break;
             }
             let (mut p, mut frames, mut flags) = (std::ptr::null_mut::<u8>(), 0u32, 0u32);
+            // SAFETY: `cap` owns a live IAudioCaptureClient; the out-pointers are locals of the right types, the optional ones NULL.
             let hr = unsafe {
                 (cap.vt().GetBuffer)(
                     cap.as_ptr(),
@@ -667,11 +707,13 @@ fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stat
             if flags & AUDCLNT_BUFFERFLAGS_SILENT != 0 || p.is_null() {
                 prod.push_silence(frames as usize);
             } else {
-                // SAFETY: `frames` frames of 2 x f32.
+                // SAFETY: GetBuffer succeeded with a non-NULL `p`: `frames` frames of the stream's
+                // format, stereo f32 (Initialize with AUTOCONVERTPCM), until ReleaseBuffer below.
                 prod.push_interleaved(unsafe {
                     std::slice::from_raw_parts(p.cast::<f32>(), frames as usize * 2)
                 });
             }
+            // SAFETY: releases the packet the successful GetBuffer above handed out, with its frame count.
             unsafe { (cap.vt().ReleaseBuffer)(cap.as_ptr(), frames) };
             got_data = true;
         }
