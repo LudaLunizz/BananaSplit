@@ -429,7 +429,7 @@ fn run(args: Args) -> Result<(), String> {
     let backend = Backend::start(client, shared.clone(), tap.clone(), Some(vban_tap.clone()), play_tap.clone())?;
     // The rate the server really runs the mixer at (see Backend::start).
     let rate = backend.sample_rate();
-    let recorder = tap.map(|t| Arc::new(Recorder::new(t, rate, cfg.recorder.settings())));
+    let recorder = tap.map(|t| Arc::new(Recorder::new(t, rate, cfg.recorder.settings()).with_clock(sys::local_timestamp)));
     let vban = Arc::new(Vban::start(vban_tap, rate, cfg.vban.clone()));
     let player = play_tap.map(|t| {
         let p = Arc::new(Player::new(t, rate));
