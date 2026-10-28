@@ -54,7 +54,13 @@ pub fn first_run(
     headless: bool,
     notes: &mut Vec<String>,
 ) -> bool {
-    let _com = ffi::ComInit::mta();
+    let _com = match ffi::ComInit::mta() {
+        Ok(c) => c,
+        Err(e) => {
+            notes.push(e);
+            return false;
+        }
+    };
     match Enumerator::new() {
         Ok(en) => cables::first_run(&en, cfg, headless, notes),
         Err(e) => {
@@ -66,7 +72,7 @@ pub fn first_run(
 
 /// `vmix --list-devices`: the names to use in `connect =` lines.
 pub fn list_devices() -> Result<String, String> {
-    let _com = ffi::ComInit::mta();
+    let _com = ffi::ComInit::mta()?;
     let en = Enumerator::new()?;
     let mut o = String::new();
     for (cap, title, hint) in [
@@ -127,7 +133,7 @@ impl Session {
         play_tap: Arc<PlayTap>,
         notes: &mut Vec<String>,
     ) -> Result<Session, String> {
-        let com = ffi::ComInit::mta();
+        let com = ffi::ComInit::mta()?;
         let en = Enumerator::new()?;
         let signature = en.signature();
         let stats = Arc::new(Stats::default());
