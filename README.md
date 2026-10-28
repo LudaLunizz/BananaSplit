@@ -118,7 +118,7 @@ The Linux and Windows apps are separate crates that share most of their mixer co
 
 ## Building from source
 
-Requires Rust 1.85 or newer.
+Requires Rust 1.88 or newer.
 
 **Linux**
 

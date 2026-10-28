@@ -104,6 +104,7 @@ api!(Glib {
     g_variant_get_uint32: unsafe extern "C" fn(Ptr) -> u32,
     g_variant_n_children: unsafe extern "C" fn(Ptr) -> usize,
     g_variant_unref: unsafe extern "C" fn(Ptr),
+    g_error_free: unsafe extern "C" fn(Ptr),
     g_set_prgname: unsafe extern "C" fn(*const c_char),
     g_set_application_name: unsafe extern "C" fn(*const c_char),
 });
@@ -753,7 +754,7 @@ unsafe extern "C" fn registered(conn: Ptr, res: Ptr, _data: Ptr) {
     if ok {
         unsafe { (libs.glib.g_variant_unref)(v) };
     } else {
-        eprintln!("bananasplit: the tray did not take the icon: {}", gerror_text(err));
+        eprintln!("bananasplit: the tray did not take the icon: {}", gerror_text(libs, err));
     }
     with(|a| a.tray_registered = ok);
 }
@@ -824,16 +825,21 @@ fn tray_available() -> bool {
         )
     };
     if v.is_null() {
+        gerror_free(libs, err);
         return false;
     }
-    // (v) holding b
+    // (v) holding b; another reply (a broken watcher) means no tray.
+    if !has_type(libs, v, c"(v)") {
+        // SAFETY: the reply is ours.
+        unsafe { (libs.glib.g_variant_unref)(v) };
+        return false;
+    }
     let inner = child(libs, v, 0);
     // SAFETY: `inner` is the `v`; its content should be a boolean.
     let b = unsafe { (libs.glib.g_variant_get_variant)(inner) };
-    let tyok = !b.is_null();
-    let on = tyok && unsafe { (libs.glib.g_variant_get_boolean)(b) } != 0;
+    let on = has_type(libs, b, c"b") && unsafe { (libs.glib.g_variant_get_boolean)(b) } != 0;
     unsafe {
-        if tyok {
+        if !b.is_null() {
             (libs.glib.g_variant_unref)(b);
         }
         (libs.glib.g_variant_unref)(inner);
@@ -842,8 +848,9 @@ fn tray_available() -> bool {
     on
 }
 
-/// The message of a GError (`struct { GQuark domain; gint code; gchar *message; }`).
-fn gerror_text(e: Ptr) -> String {
+/// The message of a GError (`struct { GQuark domain; gint code; gchar *message; }`),
+/// which is freed.
+fn gerror_text(libs: &Libs, e: Ptr) -> String {
     #[repr(C)]
     struct GError {
         domain: u32,
@@ -855,13 +862,30 @@ fn gerror_text(e: Ptr) -> String {
     }
     // SAFETY: GLib hands out GError structs of exactly this layout.
     let m = unsafe { (*(e as *const GError)).message };
-    if m.is_null() { "unknown error".into() } else { unsafe { CStr::from_ptr(m) }.to_string_lossy().into_owned() }
+    let text = if m.is_null() { "unknown error".into() } else { unsafe { CStr::from_ptr(m) }.to_string_lossy().into_owned() };
+    // SAFETY: a GError we own (from an out-parameter), not used after this.
+    unsafe { (libs.glib.g_error_free)(e) };
+    text
+}
+
+/// Free the GError of a failed call, if there is one.
+fn gerror_free(libs: &Libs, e: Ptr) {
+    if !e.is_null() {
+        // SAFETY: a GError we own (from an out-parameter), not used after this.
+        unsafe { (libs.glib.g_error_free)(e) };
+    }
+}
+
+/// Is `v` a GVariant of the D-Bus type `ty` (e.g. `(v)`)?
+fn has_type(libs: &Libs, v: Ptr, ty: &CStr) -> bool {
+    // SAFETY: `v` is a valid GVariant; the type string is GLib's own.
+    !v.is_null() && unsafe { CStr::from_ptr((libs.glib.g_variant_get_type_string)(v)) } == ty
 }
 
 fn setup_tray(libs: &'static Libs) -> Ptr {
     let g = &libs.gio;
     let mut err: Ptr = std::ptr::null_mut();
-    let warn = |what: &str, e: Ptr| eprintln!("bananasplit: no tray icon: {what}: {}", gerror_text(e));
+    let warn = |what: &str, e: Ptr| eprintln!("bananasplit: no tray icon: {what}: {}", gerror_text(libs, e));
     // SAFETY: GIO calls with valid arguments; the introspection data and
     // the vtable live for the whole process.
     unsafe {
@@ -996,7 +1020,12 @@ unsafe extern "C" fn scheme_read(conn: Ptr, res: Ptr, _d: Ptr) {
     unsafe {
         let r = (libs.gio.g_dbus_connection_call_finish)(conn, res, &mut err);
         if r.is_null() {
+            gerror_free(libs, err);
             return; // no portal: GTK's own setting stays
+        }
+        if !has_type(libs, r, c"(v)") {
+            (libs.glib.g_variant_unref)(r);
+            return;
         }
         let v = (libs.glib.g_variant_get_child_value)(r, 0);
         if let Some(s) = scheme_of(libs, v) {

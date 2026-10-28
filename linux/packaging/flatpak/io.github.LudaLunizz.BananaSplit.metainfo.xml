@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.11" date="2026-10-28">
+      <description>
+        <p>Under-the-hood fixes from a Rust code review: tray and dark-style checks no longer leak memory or trip on unexpected replies, and recording moves less data between threads.</p>
+      </description>
+    </release>
     <release version="2.8.10" date="2026-10-28">
       <description>
         <p>A silent take is shown only by the recorder's orange "Recording silence" label; the long notice below the recorder is gone.</p>
