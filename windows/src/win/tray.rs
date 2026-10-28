@@ -401,15 +401,14 @@ impl Tray {
     /// Show the recording icon, tooltip and menu entry.
     pub fn set_recording(&self, on: bool) {
         STATE.with(|s| {
-            if let Some(st) = s.borrow_mut().as_mut() {
-                if st.recording != on {
+            if let Some(st) = s.borrow_mut().as_mut()
+                && st.recording != on {
                     st.recording = on;
                     // Not shown yet: it is added with the right icon later.
                     if st.shown {
                         notify(st, NIM_MODIFY);
                     }
                 }
-            }
         });
     }
 

@@ -323,7 +323,7 @@ pub fn encode(frames: &[f32], channels: usize, format: SampleFormat, out: &mut [
         }
         o += format.bytes();
     };
-    for f in frames.chunks_exact(2) {
+    for f in frames.as_chunks::<2>().0 {
         if channels == 1 {
             put(0.5 * (f[0] + f[1]));
         } else {

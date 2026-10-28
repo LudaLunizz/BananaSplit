@@ -89,7 +89,7 @@ fn entry(res: &mut Vec<u8>, kind: u16, id: u16, data: &[u8]) {
 }
 
 fn pad4(v: &mut Vec<u8>) {
-    while v.len() % 4 != 0 {
+    while !v.len().is_multiple_of(4) {
         v.push(0);
     }
 }

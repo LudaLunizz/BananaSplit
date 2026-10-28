@@ -113,7 +113,7 @@ impl Resampler {
     /// now be computed to `out`, advancing `step` input frames per output
     /// frame (`nominal_step()`, give or take the drift correction).
     pub fn process(&mut self, input: &[f32], step: f64, out: &mut Vec<f32>) {
-        debug_assert!(input.len() % 2 == 0 && step > 0.0);
+        debug_assert!(input.len().is_multiple_of(2) && step > 0.0);
         self.hist.extend_from_slice(input);
         let frames = self.hist.len() / 2;
         // taps to each side of the position (offsets relative to `ipos`)

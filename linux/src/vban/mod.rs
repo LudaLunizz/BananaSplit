@@ -308,7 +308,7 @@ pub struct VbanStatus {
 }
 
 fn khz(sr: u32) -> String {
-    if sr % 1000 == 0 { format!("{} kHz", sr / 1000) } else { format!("{:.1} kHz", sr as f64 / 1000.0) }
+    if sr.is_multiple_of(1000) { format!("{} kHz", sr / 1000) } else { format!("{:.1} kHz", sr as f64 / 1000.0) }
 }
 
 impl InStatus {

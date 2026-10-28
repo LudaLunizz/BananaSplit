@@ -423,14 +423,13 @@ impl Graph {
             let mut idx: Vec<usize> = Vec::new();
             let mut shown: Vec<String> = Vec::new();
             for pat in patterns {
-                if pat == bananasplit::config::DEFAULT_DEVICE {
-                    if let Some(c) = route::default_cable(infos, def) {
+                if pat == bananasplit::config::DEFAULT_DEVICE
+                    && let Some(c) = route::default_cable(infos, def) {
                         errs.push(format!(
                             "{row}: the Windows default is {}, a virtual cable BananaSplit uses, so it would feed back; using the real device instead",
                             route::short_name(&c.name)
                         ));
                     }
-                }
                 match route::resolve(pat, infos, def) {
                     Some(d) => {
                         let i = infos.iter().position(|x| x.id == d.id).expect("from list");
@@ -461,11 +460,10 @@ impl Graph {
         let mut strip_devs = Vec::with_capacity(NUM_STRIPS);
         for s in 0..NUM_STRIPS {
             let mut patterns = cfg.strips[s].connect.clone();
-            if let Some(c) = &strip_cable[s] {
-                if !patterns.iter().any(|p| p.eq_ignore_ascii_case(c)) {
+            if let Some(c) = &strip_cable[s]
+                && !patterns.iter().any(|p| p.eq_ignore_ascii_case(c)) {
                     patterns.push(c.clone());
                 }
-            }
             let (idx, text) = pick(
                 &format!("strip {}", s + 1),
                 &patterns,
@@ -478,11 +476,10 @@ impl Graph {
         let mut bus_devs = Vec::with_capacity(NUM_BUSES);
         for b in 0..NUM_BUSES {
             let mut patterns = cfg.buses[b].connect.clone();
-            if let Some(c) = &bus_cable[b] {
-                if !patterns.iter().any(|p| p.eq_ignore_ascii_case(c)) {
+            if let Some(c) = &bus_cable[b]
+                && !patterns.iter().any(|p| p.eq_ignore_ascii_case(c)) {
                     patterns.push(c.clone());
                 }
-            }
             let (idx, text) = pick(
                 &format!("bus {}", BUS_IDS[b]),
                 &patterns,
@@ -751,12 +748,11 @@ fn master_thread(
         std::array::from_fn(|_| [vec![0.0; MAX_BLOCK], vec![0.0; MAX_BLOCK]]);
     let mut glitch_seen: Vec<Vec<u32>> = strips.iter().map(|v| vec![0; v.len()]).collect();
 
-    if let Some(s) = &out {
-        if s.start().is_err() {
+    if let Some(s) = &out
+        && s.start().is_err() {
             stats.invalidated.store(true, Relaxed);
             return;
         }
-    }
     // Without any output device, run on a 10 ms timer so meters and the
     // virtual-cable buses still work.
     let tick = Duration::from_millis(10);

@@ -424,7 +424,7 @@ impl Default for Sha256 {
 impl Sha256 {
     fn block(h: &mut [u32; 8], b: &[u8]) {
         let mut w = [0u32; 64];
-        for (t, c) in b.chunks_exact(4).enumerate() {
+        for (t, c) in b.as_chunks::<4>().0.iter().enumerate() {
             w[t] = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
         }
         for t in 16..64 {
@@ -468,11 +468,10 @@ impl Sha256 {
             Sha256::block(&mut self.h, &buf);
             self.used = 0;
         }
-        let mut chunks = data.chunks_exact(64);
-        for c in &mut chunks {
+        let (blocks, rest) = data.as_chunks::<64>();
+        for c in blocks {
             Sha256::block(&mut self.h, c);
         }
-        let rest = chunks.remainder();
         self.buf[..rest.len()].copy_from_slice(rest);
         self.used = rest.len();
     }
@@ -485,7 +484,7 @@ impl Sha256 {
         }
         self.update(&bits.to_be_bytes());
         let mut out = [0u8; 32];
-        for (o, h) in out.chunks_exact_mut(4).zip(self.h) {
+        for (o, h) in out.as_chunks_mut::<4>().0.iter_mut().zip(self.h) {
             o.copy_from_slice(&h.to_be_bytes());
         }
         out
@@ -570,9 +569,9 @@ pub fn sha512(pieces: &[&[u8]]) -> [u8; 64] {
         data.push(0);
     }
     data.extend_from_slice(&bits.to_be_bytes());
-    for b in data.chunks_exact(128) {
+    for b in data.as_chunks::<128>().0 {
         let mut w = [0u64; 80];
-        for (t, c) in b.chunks_exact(8).enumerate() {
+        for (t, c) in b.as_chunks::<8>().0.iter().enumerate() {
             w[t] = u64::from_be_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]);
         }
         for t in 16..80 {
@@ -602,7 +601,7 @@ pub fn sha512(pieces: &[&[u8]]) -> [u8; 64] {
         }
     }
     let mut out = [0u8; 64];
-    for (o, x) in out.chunks_exact_mut(8).zip(h) {
+    for (o, x) in out.as_chunks_mut::<8>().0.iter_mut().zip(h) {
         o.copy_from_slice(&x.to_be_bytes());
     }
     out
@@ -2528,11 +2527,10 @@ pub fn cli(running: bool) -> Result<(), String> {
         return Err(format!("installing the package needs your password; in a terminal run:  sudo apt install {}", file.display()));
     }
     let r = install(&method, &offer, &file, &hash, &never, true);
-    if r.is_ok() || method != Method::Deb {
-        if let Some(d) = file.parent() {
+    if (r.is_ok() || method != Method::Deb)
+        && let Some(d) = file.parent() {
             clean_cache(d);
         }
-    }
     let (r, warnings) = r?;
     println!("bananasplit: installed BananaSplit {} ({r}); a running BananaSplit uses it after a restart", offer.version);
     for w in warnings {
