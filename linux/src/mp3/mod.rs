@@ -35,7 +35,7 @@ pub fn rate_for(rate: u32) -> u32 {
         return rate;
     }
     // a whole multiple converts down most simply, a whole fraction up
-    if let Some(r) = [48000, 44100, 32000].into_iter().find(|r| rate % r == 0) {
+    if let Some(r) = [48000, 44100, 32000].into_iter().find(|r| rate.is_multiple_of(*r)) {
         return r;
     }
     if let Some(r) = [32000, 44100, 48000].into_iter().find(|r| r % rate.max(1) == 0) {
@@ -194,13 +194,12 @@ pub fn probe(path: &Path) -> Result<Info, String> {
         }
         // LAME tag: delay and padding, read when the encoder says it is one
         // (as ffmpeg does)
-        if let Some(v) = fr.get(p..p + 24) {
-            if [&b"LAME"[..], b"Lavf", b"Lavc"].contains(&&v[..4]) {
+        if let Some(v) = fr.get(p..p + 24)
+            && [&b"LAME"[..], b"Lavf", b"Lavc"].contains(&&v[..4]) {
                 let delay = (u64::from(v[21]) << 4) | u64::from(v[22] >> 4);
                 let padding = (u64::from(v[22] & 15) << 8) | u64::from(v[23]);
                 gapless = Some((delay, padding));
             }
-        }
         info.audio_start = first + h.frame_len as u64;
     } else if fr.len() >= 36 + 18 && &fr[36..40] == b"VBRI" {
         info.vbr = true;
@@ -774,15 +773,14 @@ mod tests {
                 }
             }
             assert!(pcm.iter().all(|v| v.is_finite()));
-            if let Ok(info) = probe(&p) {
-                if let Ok(mut r) = Reader::open(&p, &info) {
+            if let Ok(info) = probe(&p)
+                && let Ok(mut r) = Reader::open(&p, &info) {
                     let mut out = Vec::new();
                     let _ = r.read(100_000, &mut out);
                     let _ = r.seek(u64::from(rnd() % 50_000));
                     let _ = r.read(5000, &mut out);
                     assert!(out.iter().all(|v| v.is_finite()));
                 }
-            }
         }
         let _ = std::fs::remove_dir_all(d);
     }

@@ -1166,12 +1166,11 @@ unsafe extern "C" fn on_context_menu(_v: Ptr, _menu: Ptr, _ev: Ptr, hit: Ptr, _d
 }
 
 unsafe extern "C" fn reload_later(_d: Ptr) -> c_int {
-    if let Some((libs, view)) = with(|a| (a.libs, a.view)) {
-        if let (Some((_, _, wk)), false) = (&libs.ui, view.is_null()) {
+    if let Some((libs, view)) = with(|a| (a.libs, a.view))
+        && let (Some((_, _, wk)), false) = (&libs.ui, view.is_null()) {
             // SAFETY: valid view.
             unsafe { (wk.webkit_web_view_reload)(view) };
         }
-    }
     0 // G_SOURCE_REMOVE
 }
 
@@ -1449,8 +1448,8 @@ pub fn main(args: &[String]) -> ExitCode {
 /// Show an error to someone who started BananaSplit from the app menu (no
 /// terminal to print to): a GTK dialog, else zenity / kdialog / notify-send.
 pub fn error_dialog(text: &str) {
-    if let Ok((glib, _, _)) = load_glib() {
-        if let Ok((gtk, _)) = load_gtk() {
+    if let Ok((glib, _, _)) = load_glib()
+        && let Ok((gtk, _)) = load_gtk() {
             // SAFETY: GTK calls on this thread with valid arguments; the
             // message goes through "%s", never as a format string itself.
             unsafe {
@@ -1467,7 +1466,6 @@ pub fn error_dialog(text: &str) {
                 }
             }
         }
-    }
     let plain: String = text.chars().map(|c| match c { '<' => '‹', '>' => '›', '&' => '+', c => c }).collect();
     // "BananaSplit could not start." or "BananaSplit stopped.", then why
     let (head, body) = text.split_once("\n\n").unwrap_or(("BananaSplit", text));

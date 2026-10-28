@@ -113,11 +113,10 @@ pub fn exec_quote(path: &str) -> String {
 
 /// The program to start: the AppImage when running from one, else this file.
 pub fn program_path() -> Option<PathBuf> {
-    if let Some(a) = std::env::var_os("APPIMAGE").filter(|a| !a.is_empty()).map(PathBuf::from) {
-        if a.is_file() {
+    if let Some(a) = std::env::var_os("APPIMAGE").filter(|a| !a.is_empty()).map(PathBuf::from)
+        && a.is_file() {
             return Some(a);
         }
-    }
     std::env::current_exe().ok().map(installed_path)
 }
 
@@ -380,11 +379,10 @@ pub fn uninstall() -> Result<String, String> {
             }
             refresh_caches(&data);
         }
-        if let Some(bin) = bin {
-            if std::fs::remove_file(&bin).is_ok() {
+        if let Some(bin) = bin
+            && std::fs::remove_file(&bin).is_ok() {
                 removed.push(bin.display().to_string());
             }
-        }
     }
     if let Some(a) = autostart_path().filter(|a| ours(a, AUTOSTART_MARK)) {
         std::fs::remove_file(&a).map_err(|e| format!("{}: {e}", a.display()))?;

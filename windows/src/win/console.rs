@@ -142,12 +142,11 @@ pub fn key_bytes(rec: &INPUT_RECORD, out: &mut Vec<u8>) {
     for _ in 0..repeat {
         if !seq.is_empty() {
             out.extend_from_slice(seq);
-        } else if rec.UnicodeChar != 0 {
-            if let Some(c) = char::from_u32(rec.UnicodeChar as u32) {
+        } else if rec.UnicodeChar != 0
+            && let Some(c) = char::from_u32(rec.UnicodeChar as u32) {
                 let mut b = [0u8; 4];
                 out.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
             }
-        }
     }
 }
 

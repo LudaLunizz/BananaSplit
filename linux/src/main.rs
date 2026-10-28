@@ -382,11 +382,10 @@ fn run(args: Args) -> Result<(), String> {
         }
     };
     let mut notes: Vec<String> = migrated.into_iter().collect();
-    if cfg.force_buffer_size && cfg.buffer_size > 0 && client.buffer_size() != cfg.buffer_size {
-        if let Err(e) = client.set_buffer_size(cfg.buffer_size) {
+    if cfg.force_buffer_size && cfg.buffer_size > 0 && client.buffer_size() != cfg.buffer_size
+        && let Err(e) = client.set_buffer_size(cfg.buffer_size) {
             notes.push(e);
         }
-    }
 
     // We own the JACK name now, so cables with our names that are still
     // loaded were left by a BananaSplit that was killed: let its watchdog finish,
@@ -1309,11 +1308,10 @@ fn run_gui(
                         _ => None,
                     };
                     let mut r = chanmenu::handle(op, backend, cfg, &mut ctx.cables.borrow_mut(), &info);
-                    if let (Ok(m), Some((app, strip)), Some(h)) = (&mut r, home, seen.homes.as_mut()) {
-                        if let Err(e) = h.set(&app, strip) {
+                    if let (Ok(m), Some((app, strip)), Some(h)) = (&mut r, home, seen.homes.as_mut())
+                        && let Err(e) = h.set(&app, strip) {
                             m.push_str(&format!(" ({e})"));
                         }
-                    }
                     if !list {
                         pulse.kick();
                         conns_at = Instant::now() - Duration::from_secs(10);

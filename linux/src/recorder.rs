@@ -261,11 +261,10 @@ pub fn expand_home(v: &str) -> PathBuf {
         if let Some(h) = home() {
             return h;
         }
-    } else if let Some(rest) = v.strip_prefix("~/") {
-        if let Some(h) = home() {
+    } else if let Some(rest) = v.strip_prefix("~/")
+        && let Some(h) = home() {
             return h.join(rest);
         }
-    }
     PathBuf::from(v)
 }
 
@@ -924,11 +923,10 @@ impl TrackWriter {
 
     /// Finish the part that still took the start of its successor.
     fn close(&mut self) {
-        if let Some((old, _)) = self.closing.take() {
-            if let Err(e) = old.finish() {
+        if let Some((old, _)) = self.closing.take()
+            && let Err(e) = old.finish() {
                 self.fail(e);
             }
-        }
     }
 
     /// Move on to the parts that start at or before `done`.
@@ -937,11 +935,10 @@ impl TrackWriter {
             let Some((_, sink)) = self.next.pop_front() else { break };
             self.close();
             let old = std::mem::replace(&mut self.sink, sink);
-            if self.sink.overlaps() && !self.failed {
-                if let Err(e) = self.sink.preroll(&self.recent) {
+            if self.sink.overlaps() && !self.failed
+                && let Err(e) = self.sink.preroll(&self.recent) {
                     self.fail(e);
                 }
-            }
             if old.overlaps() && !self.failed {
                 self.closing = Some((old, mp3::enc::TAIL));
             } else if let Err(e) = old.finish() {
@@ -962,11 +959,10 @@ impl TrackWriter {
             let room = self.next.front().map_or(usize::MAX, |(at, _)| (at - self.done) as usize);
             let k = (lr.len() / 2).min(room);
             let part = &lr[..2 * k];
-            if !self.failed {
-                if let Err(e) = self.sink.write(part) {
+            if !self.failed
+                && let Err(e) = self.sink.write(part) {
                     self.fail(e);
                 }
-            }
             // the start of this part ends the one before
             if let Some((old, want)) = &mut self.closing {
                 let t = k.min(*want);
@@ -1008,11 +1004,10 @@ impl TrackWriter {
             match job {
                 Job::Write(v) => self.write(&v),
                 Job::Refresh => {
-                    if !self.failed {
-                        if let Err(e) = self.sink.refresh() {
+                    if !self.failed
+                        && let Err(e) = self.sink.refresh() {
                             self.fail(e);
                         }
-                    }
                 }
                 Job::Rate(server, file) => {
                     self.conv = (server != file).then(|| Resampler::new(server, file));
@@ -1384,14 +1379,13 @@ impl Take {
     fn next_part(&mut self) -> io::Result<()> {
         self.flush()?;
         let now = (self.clock)();
-        if let (Some(_), Some(today)) = (&self.day, stamp_day(&now)) {
-            if self.day.as_deref() != Some(today) {
+        if let (Some(_), Some(today)) = (&self.day, stamp_day(&now))
+            && self.day.as_deref() != Some(today) {
                 let dir = self.root.join(today);
                 std::fs::create_dir_all(&dir).map_err(|e| at(&dir, e))?;
                 self.bases = self.bases.iter().map(|b| dir.join(b.file_name().unwrap_or_default())).collect();
                 self.day = Some(today.to_string());
             }
-        }
         let sinks = Take::open(&self.bases, self.part + 1, &self.spec)?;
         self.part += 1;
         let at = self.file_frames(self.rate_frames);
@@ -1495,7 +1489,7 @@ fn convert_note(server: u32, file: u32) -> String {
 /// `48`, `44.1`.
 fn khz(rate: u32) -> String {
     let k = rate as f64 / 1000.0;
-    if rate % 1000 == 0 { format!("{k:.0}") } else { format!("{k:.1}") }
+    if rate.is_multiple_of(1000) { format!("{k:.0}") } else { format!("{k:.1}") }
 }
 
 fn with_ext(base: &Path, part: u32, format: Format) -> PathBuf {
@@ -1812,13 +1806,11 @@ fn writer_thread(tap: &RecTap, status: &Mutex<Status>, rx: &mpsc::Receiver<Cmd>)
             Some(Cmd::Exit) | None => {}
         }
         drain(tap, &mut cur, status);
-        if let Some(t) = cur.as_mut() {
-            if t.refreshed.elapsed() >= HEADER_REFRESH {
-                if let Err(e) = t.refresh() {
+        if let Some(t) = cur.as_mut()
+            && t.refreshed.elapsed() >= HEADER_REFRESH
+                && let Err(e) = t.refresh() {
                     fail(cur.take(), tap, status, &e);
                 }
-            }
-        }
         if exit {
             if let Some(t) = cur.take() {
                 tap.deactivate_if(t.word);
@@ -1848,8 +1840,8 @@ fn drain(tap: &RecTap, cur: &mut Option<Take>, status: &Mutex<Status>) {
             st.error = Some("recorder stream lost sync; the take may contain a gap".into());
             break;
         }
-        if let Some(t) = cur.as_mut() {
-            if t.session as u32 == w0 & 0xFFFF && t.channels == ch {
+        if let Some(t) = cur.as_mut()
+            && t.session as u32 == w0 & 0xFFFF && t.channels == ch {
                 if let Err(e) = t.write_block(ring, n, gap, rate) {
                     ring.consume(len);
                     fail(cur.take(), tap, status, &e);
@@ -1857,11 +1849,10 @@ fn drain(tap: &RecTap, cur: &mut Option<Take>, status: &Mutex<Status>) {
                 }
                 wrote = true;
             }
-        }
         ring.consume(len);
     }
-    if wrote {
-        if let Some(t) = cur.as_ref() {
+    if wrote
+        && let Some(t) = cur.as_ref() {
             let mut st = lock(status);
             st.frames = t.frames;
             st.secs = t.secs();
@@ -1875,7 +1866,6 @@ fn drain(tap: &RecTap, cur: &mut Option<Take>, status: &Mutex<Status>) {
                 st.files = t.files.clone();
             }
         }
-    }
 }
 
 fn finish(t: Take, status: &Mutex<Status>) {

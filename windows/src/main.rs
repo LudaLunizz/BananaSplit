@@ -13,6 +13,8 @@
 
 #[path = "gui.rs"]
 mod gui;
+// The same file as linux/src/tui.rs; the Windows console uses part of it.
+#[allow(dead_code)]
 #[path = "tui.rs"]
 mod tui;
 #[path = "update.rs"]
@@ -38,7 +40,7 @@ use bananasplit::recorder::{self, RecTap, Recorder};
 use bananasplit::scenes::SceneStore;
 use bananasplit::vban::{InState, OutState, Vban, VbanTap};
 use gui::Request;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
@@ -655,19 +657,16 @@ fn main() -> ExitCode {
     }
     if args.quit {
         let defq = Config::default();
-        if let Some(p) = gui::find_running(&defq.client_name, args.explicit_port.then_some(args.port)) {
-            if let Some((code, _)) = gui::request_quit(p) {
-                if code == 200 {
+        if let Some(p) = gui::find_running(&defq.client_name, args.explicit_port.then_some(args.port))
+            && let Some((code, _)) = gui::request_quit(p)
+                && code == 200 {
                     return ExitCode::SUCCESS;
                 }
-            }
-        }
-        if let Ok(c) = Config::load_or_default(&args.path) {
-            if let Some(p) = gui::find_running(&c.client_name, args.explicit_port.then_some(args.port)) {
+        if let Ok(c) = Config::load_or_default(&args.path)
+            && let Some(p) = gui::find_running(&c.client_name, args.explicit_port.then_some(args.port)) {
                 let _ = gui::request_quit(p);
                 return ExitCode::SUCCESS;
             }
-        }
         eprintln!("no running BananaSplit found");
         return ExitCode::SUCCESS;
     }
@@ -687,8 +686,8 @@ fn main() -> ExitCode {
     // A second launch (the Start Menu shortcut while autostart already runs
     // BananaSplit) brings up the running mixer's page instead of starting a
     // second audio engine.
-    if !args.headless {
-        if let Some(port) = gui::find_running(&cfg.client_name, args.explicit_port.then_some(args.port)) {
+    if !args.headless
+        && let Some(port) = gui::find_running(&cfg.client_name, args.explicit_port.then_some(args.port)) {
             let url = gui::url(port);
             if args.no_open {
                 eprintln!("bananasplit: already running at {url}");
@@ -701,7 +700,6 @@ fn main() -> ExitCode {
             }
             return ExitCode::SUCCESS;
         }
-    }
 
     // What an update left next to the program (the old one, now unused).
     update::clean_leftovers();

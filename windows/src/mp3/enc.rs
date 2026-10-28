@@ -850,7 +850,7 @@ impl Encoder {
     }
 
     fn push(&mut self, lr: &[f32]) {
-        for f in lr.chunks_exact(2) {
+        for f in lr.as_chunks::<2>().0 {
             for ch in 0..2 {
                 // beyond full scale MP3 players clip anyway (and the
                 // quantizer's range stays bounded)

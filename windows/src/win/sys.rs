@@ -1,12 +1,9 @@
 //! Windows helpers used by the GUI and main loop.
 
 use crate::win::ffi::*;
-use crate::win::console;
 use std::ffi::c_void;
-use std::io::{self, Write};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::path::Path;
 
 pub use crate::win::console::{install_signal_handlers, pause_on_error, spawn_input_thread, stdin_is_tty, RawTerminal, QUIT};
 
@@ -374,8 +371,11 @@ mod tests {
         assert_eq!(std::mem::offset_of!(IpAdapterAddresses, oper_status), 104);
     }
 
+    /// One row: local address and port, remote address and port, owner pid.
+    type V4Row = ([u8; 4], u16, [u8; 4], u16, u32);
+
     /// A table as `GetExtendedTcpTable` writes it: the count, then rows.
-    fn v4_table(rows: &[([u8; 4], u16, [u8; 4], u16, u32)]) -> Vec<u8> {
+    fn v4_table(rows: &[V4Row]) -> Vec<u8> {
         let mut t = (rows.len() as u32).to_le_bytes().to_vec();
         for (la, lp, ra, rp, pid) in rows {
             t.extend_from_slice(&5u32.to_le_bytes()); // ESTABLISHED
