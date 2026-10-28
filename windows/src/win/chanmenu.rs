@@ -51,7 +51,7 @@ fn is_vb_pair_base(name: &str) -> Option<String> {
 }
 
 fn enumerate() -> Result<(Vec<wasapi::Device>, Vec<wasapi::Device>), String> {
-    let _com = ffi::ComInit::mta();
+    let _com = ffi::ComInit::mta()?;
     let en = wasapi::Enumerator::new()?;
     let caps = en.devices(true)?; // capture
     let rens = en.devices(false)?; // render
@@ -289,7 +289,8 @@ fn route_devs() -> Vec<crate::win::route::DevInfo> {
 }
 
 pub fn list(cfg: &Config) -> String {
-    let _com = ffi::ComInit::mta();
+    // Without COM the lists below are just empty.
+    let _com = ffi::ComInit::mta().ok();
     let plan = build_plan(cfg);
     let (caps, rens) = enumerate().unwrap_or((vec![],vec![]));
     // build candidates

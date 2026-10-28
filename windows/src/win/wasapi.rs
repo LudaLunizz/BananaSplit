@@ -241,7 +241,7 @@ fn open_stream(dev: &Device, capture: bool) -> Result<Stream, String> {
         return Err(fail("Initialize", hr));
     }
     let event = Event::new()?;
-    let hr = unsafe { (c.SetEventHandle)(client.as_ptr(), event.0) };
+    let hr = unsafe { (c.SetEventHandle)(client.as_ptr(), event.raw()) };
     if hr < 0 {
         return Err(fail("SetEventHandle", hr));
     }
@@ -308,7 +308,7 @@ impl Stream {
 
     /// Like [`Stream::wait`], with an explicit timeout in milliseconds.
     fn wait_ms(&self, ms: u32) -> bool {
-        unsafe { WaitForSingleObject(self.event.0, ms) == WAIT_OBJECT_0 }
+        unsafe { WaitForSingleObject(self.event.raw(), ms) == WAIT_OBJECT_0 }
     }
 
     /// Frames the render buffer can take right now.
@@ -512,6 +512,8 @@ impl Graph {
             .map_or(480, |(_, s)| s.period_frames as usize);
 
         let mut threads = Vec::new();
+        // The loops below shadow `stop` with clones for their closures.
+        let halt = stop.clone();
 
         // ---- other sinks: master -> ring -> device ------------------------
         let mut sink_prods: Vec<(usize, Producer)> = Vec::new();
@@ -525,9 +527,9 @@ impl Graph {
             let rd = DriftReader::new(cons, target);
             sink_prods.push((b, prod));
             let (stop, stats, shared) = (stop.clone(), stats.clone(), shared.clone());
-            threads.push(spawn("vmix-sink", move || {
+            start(&mut threads, &halt, "vmix-sink", move || {
                 sink_thread(s, rd, &stop, &stats, &shared)
-            }));
+            })?;
         }
 
         // ---- capture: device -> ring -> master -----------------------------
@@ -542,9 +544,9 @@ impl Graph {
                         max_in_lat = max_in_lat.max(target as u32 + s.latency_frames);
                         readers[st].push(DriftReader::new(cons, target));
                         let (stop, stats) = (stop.clone(), stats.clone());
-                        threads.push(spawn("vmix-capture", move || {
+                        start(&mut threads, &halt, "vmix-capture", move || {
                             capture_thread(s, prod, &stop, &stats)
-                        }));
+                        })?;
                     }
                     Err(e) => errs.push(format!("strip {}: {e}", st + 1)),
                 }
@@ -566,7 +568,7 @@ impl Graph {
         };
         {
             let (stop, stats, shared) = (stop.clone(), stats.clone(), shared.clone());
-            threads.push(spawn("vmix-mixer", move || {
+            start(&mut threads, &halt, "vmix-mixer", move || {
                 master_thread(
                     master_stream,
                     engine,
@@ -577,7 +579,7 @@ impl Graph {
                     &stats,
                     &shared,
                 )
-            }));
+            })?;
         }
 
         Ok(Graph {
@@ -590,17 +592,31 @@ impl Graph {
     }
 }
 
-fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> JoinHandle<()> {
-    std::thread::Builder::new()
-        .name(name.into())
-        .spawn(f)
-        .expect("spawn audio thread")
+/// Start an audio thread. If it can't start, the threads already started
+/// are stopped and joined, so their devices are closed.
+fn start(threads: &mut Vec<JoinHandle<()>>, stop: &AtomicBool, name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), String> {
+    match std::thread::Builder::new().name(name.into()).spawn(f) {
+        Ok(t) => {
+            threads.push(t);
+            Ok(())
+        }
+        Err(e) => {
+            stop.store(true, Relaxed);
+            for t in threads.drain(..) {
+                let _ = t.join();
+            }
+            Err(format!("cannot start the {name} thread: {e}"))
+        }
+    }
 }
 
 // ------------------------------------------------------------------ threads
 
 fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stats) {
-    let _com = ComInit::mta();
+    let Ok(_com) = ComInit::mta() else {
+        stats.invalidated.store(true, Relaxed);
+        return;
+    };
     // Rebound after COM is up, so the stream is released before COM ends
     // (parameters are dropped after the function's locals).
     let s = s;
@@ -670,7 +686,10 @@ fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stat
 }
 
 fn sink_thread(s: Stream, mut rd: DriftReader, stop: &AtomicBool, stats: &Stats, shared: &Shared) {
-    let _com = ComInit::mta();
+    let Ok(_com) = ComInit::mta() else {
+        stats.invalidated.store(true, Relaxed);
+        return;
+    };
     // Rebound after COM is up, so the stream is released before COM ends
     // (parameters are dropped after the function's locals).
     let s = s;
@@ -717,7 +736,10 @@ fn master_thread(
     stats: &Stats,
     shared: &Shared,
 ) {
-    let _com = ComInit::mta();
+    let Ok(_com) = ComInit::mta() else {
+        stats.invalidated.store(true, Relaxed);
+        return;
+    };
     // Rebound after COM is up, so the stream is released before COM ends
     // (parameters are dropped after the function's locals).
     let out = out;

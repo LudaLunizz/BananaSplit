@@ -41,7 +41,7 @@ pub fn first_run(en: &Enumerator, _cfg: &mut Config, headless: bool, notes: &mut
 /// when Windows can't list its devices: then nothing is known about the
 /// cables, which is not the same as "none installed".
 pub fn report() -> Result<String, String> {
-    let _com = super::ffi::ComInit::mta();
+    let _com = super::ffi::ComInit::mta()?;
     let en = Enumerator::new()?;
     let (caps, rens) = (infos(&en, true)?, infos(&en, false)?);
     Ok(report_json(&caps, &rens, en.default_id(true).as_deref(), en.default_id(false).as_deref()))

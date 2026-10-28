@@ -36,6 +36,16 @@ pub struct CtlCtx {
     pub shutdown: AtomicBool,
 }
 
+// JACK's RT thread owns the Engine (in RtCtx) and its other callbacks share
+// CtlCtx with the control thread. Both reach them as `*mut c_void`, which
+// hides that from the compiler, so it is checked here.
+const _: () = {
+    const fn send<T: Send>() {}
+    const fn send_sync<T: Send + Sync>() {}
+    send::<Engine>();
+    send_sync::<CtlCtx>();
+};
+
 unsafe extern "C" fn process_cb(nframes: u32, arg: *mut c_void) -> c_int {
     // SAFETY: `arg` is the RtCtx box owned by Backend, alive until the client
     // is closed; JACK never runs two process callbacks of one client at once.
@@ -47,7 +57,7 @@ unsafe extern "C" fn process_cb(nframes: u32, arg: *mut c_void) -> c_int {
     //    so an input that aliases one of our outputs is still read correctly).
     for s in 0..NUM_STRIPS {
         for c in 0..2 {
-            let p = unsafe { (lib.jack_port_get_buffer)(ctx.ins[s][c], nframes) }.cast::<f32>();
+            let p = unsafe { (lib.jack_port_get_buffer)(ctx.ins[s][c].as_ptr(), nframes) }.cast::<f32>();
             if p.is_null() || n > MAX_FRAMES {
                 ctx.engine.clear_input(s, c, n);
             } else {
@@ -61,7 +71,7 @@ unsafe extern "C" fn process_cb(nframes: u32, arg: *mut c_void) -> c_int {
     let mut ptrs = [[std::ptr::null_mut::<f32>(); 2]; NUM_BUSES];
     for b in 0..NUM_BUSES {
         for c in 0..2 {
-            let p = unsafe { (lib.jack_port_get_buffer)(ctx.outs[b][c], nframes) }.cast::<f32>();
+            let p = unsafe { (lib.jack_port_get_buffer)(ctx.outs[b][c].as_ptr(), nframes) }.cast::<f32>();
             if p.is_null() {
                 return 0;
             }
@@ -182,16 +192,22 @@ impl Backend {
         vban: Option<Arc<VbanTap>>,
         play: Option<Arc<PlayTap>>,
     ) -> Result<Backend, String> {
-        let mut in_ports = [[std::ptr::null_mut(); 2]; NUM_STRIPS];
-        let mut out_ports = [[std::ptr::null_mut(); 2]; NUM_BUSES];
-        for (s, pair) in in_ports.iter_mut().enumerate() {
-            pair[0] = client.register_audio_port(&format!("in{}_L", s + 1), true)?;
-            pair[1] = client.register_audio_port(&format!("in{}_R", s + 1), true)?;
+        let pair = |name: &str, input: bool| -> Result<[Port; 2], String> {
+            Ok([
+                client.register_audio_port(&format!("{name}_L"), input)?,
+                client.register_audio_port(&format!("{name}_R"), input)?,
+            ])
+        };
+        let mut ins = Vec::with_capacity(NUM_STRIPS);
+        for s in 0..NUM_STRIPS {
+            ins.push(pair(&format!("in{}", s + 1), true)?);
         }
-        for (b, pair) in out_ports.iter_mut().enumerate() {
-            pair[0] = client.register_audio_port(&format!("{}_L", BUS_IDS[b]), false)?;
-            pair[1] = client.register_audio_port(&format!("{}_R", BUS_IDS[b]), false)?;
+        let mut outs = Vec::with_capacity(NUM_BUSES);
+        for id in BUS_IDS {
+            outs.push(pair(id, false)?);
         }
+        let in_ports: [[Port; 2]; NUM_STRIPS] = ins.try_into().unwrap_or_else(|_| unreachable!());
+        let out_ports: [[Port; 2]; NUM_BUSES] = outs.try_into().unwrap_or_else(|_| unreachable!());
         let in_names = in_ports.map(|p| p.map(|x| client.port_name(x)));
         let out_names = out_ports.map(|p| p.map(|x| client.port_name(x)));
 

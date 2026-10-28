@@ -15,11 +15,26 @@
 //! explicitly.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_ulong, c_void};
+use std::ptr::NonNull;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 
 pub type Client = *mut c_void;
-pub type Port = *mut c_void;
+/// A raw `jack_port_t *`, for the function table only.
+type RawPort = *mut c_void;
+
+/// One of our registered ports. Only `register_audio_port` makes one, so
+/// it is never null; it stays valid while its client is open.
+#[derive(Clone, Copy)]
+pub struct Port(NonNull<c_void>);
+
+impl Port {
+    /// The `jack_port_t *`, for calls made outside this module (the
+    /// process callback's `jack_port_get_buffer`).
+    pub fn as_ptr(self) -> *mut c_void {
+        self.0.as_ptr()
+    }
+}
 
 pub const PORT_IS_INPUT: c_ulong = 0x1;
 pub const PORT_IS_OUTPUT: c_ulong = 0x2;
@@ -90,13 +105,13 @@ jack_api! {
     jack_set_sample_rate_callback: unsafe extern "C" fn(Client, Option<SrateCb>, *mut c_void) -> c_int,
     jack_set_port_connect_callback: unsafe extern "C" fn(Client, Option<ConnectCb>, *mut c_void) -> c_int,
     jack_on_shutdown: unsafe extern "C" fn(Client, Option<ShutdownCb>, *mut c_void),
-    jack_port_register: unsafe extern "C" fn(Client, *const c_char, *const c_char, c_ulong, c_ulong) -> Port,
-    jack_port_get_buffer: unsafe extern "C" fn(Port, u32) -> *mut c_void,
-    jack_port_name: unsafe extern "C" fn(Port) -> *const c_char,
-    jack_port_get_latency_range: unsafe extern "C" fn(Port, c_int, *mut LatencyRange),
+    jack_port_register: unsafe extern "C" fn(Client, *const c_char, *const c_char, c_ulong, c_ulong) -> RawPort,
+    jack_port_get_buffer: unsafe extern "C" fn(RawPort, u32) -> *mut c_void,
+    jack_port_name: unsafe extern "C" fn(RawPort) -> *const c_char,
+    jack_port_get_latency_range: unsafe extern "C" fn(RawPort, c_int, *mut LatencyRange),
     jack_connect: unsafe extern "C" fn(Client, *const c_char, *const c_char) -> c_int,
     jack_disconnect: unsafe extern "C" fn(Client, *const c_char, *const c_char) -> c_int,
-    jack_port_get_all_connections: unsafe extern "C" fn(Client, Port) -> *mut *const c_char,
+    jack_port_get_all_connections: unsafe extern "C" fn(Client, RawPort) -> *mut *const c_char,
     jack_get_ports: unsafe extern "C" fn(Client, *const c_char, *const c_char, c_ulong) -> *mut *const c_char,
     jack_free: unsafe extern "C" fn(*mut c_void),
     jack_get_sample_rate: unsafe extern "C" fn(Client) -> u32,
@@ -355,17 +370,17 @@ impl JackClient {
         let flags = if input { PORT_IS_INPUT } else { PORT_IS_OUTPUT };
         // SAFETY: valid client and C strings.
         let p = unsafe { (self.lib.jack_port_register)(self.raw, n.as_ptr(), AUDIO_TYPE.as_ptr(), flags, 0) };
-        if p.is_null() { Err(format!("cannot register JACK port {short:?}")) } else { Ok(p) }
+        NonNull::new(p).map(Port).ok_or_else(|| format!("cannot register JACK port {short:?}"))
     }
 
     pub fn port_name(&self, p: Port) -> String {
-        let s = unsafe { (self.lib.jack_port_name)(p) };
+        let s = unsafe { (self.lib.jack_port_name)(p.as_ptr()) };
         if s.is_null() { String::new() } else { unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned() }
     }
 
     pub fn latency(&self, p: Port, mode: c_int) -> LatencyRange {
         let mut r = LatencyRange::default();
-        unsafe { (self.lib.jack_port_get_latency_range)(p, mode, &mut r) };
+        unsafe { (self.lib.jack_port_get_latency_range)(p.as_ptr(), mode, &mut r) };
         r
     }
 
@@ -381,7 +396,7 @@ impl JackClient {
     /// The ports `p` (one of ours) is connected to.
     pub fn connections(&self, p: Port) -> Vec<String> {
         // SAFETY: valid client and port.
-        let arr = unsafe { (self.lib.jack_port_get_all_connections)(self.raw, p) };
+        let arr = unsafe { (self.lib.jack_port_get_all_connections)(self.raw, p.as_ptr()) };
         self.take_names(arr)
     }
 
