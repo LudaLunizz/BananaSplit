@@ -1,31 +1,11 @@
 //! Windows desktop integration.
 
-use crate::win::ffi::{to_wide, wide};
+use crate::win::ffi::{
+    GetModuleFileNameW, MessageBoxW, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW, ShellExecuteW, to_wide, wide,
+};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-#[link(name = "shell32")]
-unsafe extern "system" {
-    fn ShellExecuteW(hwnd: *mut std::ffi::c_void, op: *const u16, file: *const u16, params: *const u16, dir: *const u16, show: i32) -> *mut std::ffi::c_void;
-}
-
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn GetModuleFileNameW(h: *mut std::ffi::c_void, buf: *mut u16, size: u32) -> u32;
-}
-
-#[link(name = "user32")]
-unsafe extern "system" {
-    fn MessageBoxW(hwnd: *mut std::ffi::c_void, text: *const u16, caption: *const u16, ty: u32) -> i32;
-}
-
-#[link(name = "advapi32")]
-unsafe extern "system" {
-    fn RegGetValueW(key: *mut std::ffi::c_void, sub: *const u16, value: *const u16, flags: u32, ty: *mut u32, data: *mut std::ffi::c_void, len: *mut u32) -> i32;
-    fn RegSetKeyValueW(key: *mut std::ffi::c_void, sub: *const u16, value: *const u16, ty: u32, data: *const std::ffi::c_void, len: u32) -> i32;
-    fn RegDeleteKeyValueW(key: *mut std::ffi::c_void, sub: *const u16, value: *const u16) -> i32;
-}
 
 /// `HKEY_CURRENT_USER`: `(HKEY)(ULONG_PTR)(LONG)0x80000001`, sign-extended.
 fn hkcu() -> *mut std::ffi::c_void {

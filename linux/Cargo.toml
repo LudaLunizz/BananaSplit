@@ -1,6 +1,6 @@
 [package]
 name = "bananasplit"
-version = "2.8.12"
+version = "2.8.13"
 edition = "2024"
 description = "6-strip, 5-bus low-latency virtual audio mixer for Linux (JACK / PipeWire) as a desktop app, with EQ, a recorder and player, scenes and Voicemeeter-compatible VBAN"
 license = "MIT"
