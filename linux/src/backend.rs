@@ -57,6 +57,7 @@ unsafe extern "C" fn process_cb(nframes: u32, arg: *mut c_void) -> c_int {
     //    so an input that aliases one of our outputs is still read correctly).
     for s in 0..NUM_STRIPS {
         for c in 0..2 {
+            // SAFETY: our port on the open client; `lib` is the dlsym'd libjack table.
             let p = unsafe { (lib.jack_port_get_buffer)(ctx.ins[s][c].as_ptr(), nframes) }.cast::<f32>();
             if p.is_null() || n > MAX_FRAMES {
                 ctx.engine.clear_input(s, c, n);
@@ -71,6 +72,7 @@ unsafe extern "C" fn process_cb(nframes: u32, arg: *mut c_void) -> c_int {
     let mut ptrs = [[std::ptr::null_mut::<f32>(); 2]; NUM_BUSES];
     for b in 0..NUM_BUSES {
         for c in 0..2 {
+            // SAFETY: our port on the open client; `lib` is the dlsym'd libjack table.
             let p = unsafe { (lib.jack_port_get_buffer)(ctx.outs[b][c].as_ptr(), nframes) }.cast::<f32>();
             if p.is_null() {
                 return 0;
@@ -90,17 +92,20 @@ unsafe extern "C" fn process_cb(nframes: u32, arg: *mut c_void) -> c_int {
 // it outlives the client, and they only touch atomics.
 
 unsafe extern "C" fn xrun_cb(arg: *mut c_void) -> c_int {
+    // SAFETY: `arg` points into the Arc<CtlCtx> Backend holds past client close; shared, atomics only.
     let ctl = unsafe { &*arg.cast::<CtlCtx>() };
     ctl.shared.xruns.fetch_add(1, Relaxed);
     0
 }
 
 unsafe extern "C" fn port_reg_cb(_port: u32, _register: c_int, arg: *mut c_void) {
+    // SAFETY: `arg` points into the Arc<CtlCtx> Backend holds past client close; shared, atomics only.
     let ctl = unsafe { &*arg.cast::<CtlCtx>() };
     ctl.ports_changed.store(true, Relaxed);
 }
 
 unsafe extern "C" fn srate_cb(nframes: u32, arg: *mut c_void) -> c_int {
+    // SAFETY: `arg` points into the Arc<CtlCtx> Backend holds past client close; shared, atomics only.
     let ctl = unsafe { &*arg.cast::<CtlCtx>() };
     if nframes > 0 {
         ctl.shared.sample_rate.store(nframes, Relaxed);
@@ -109,11 +114,13 @@ unsafe extern "C" fn srate_cb(nframes: u32, arg: *mut c_void) -> c_int {
 }
 
 unsafe extern "C" fn connect_cb(_a: u32, _b: u32, _connect: c_int, arg: *mut c_void) {
+    // SAFETY: `arg` points into the Arc<CtlCtx> Backend holds past client close; shared, atomics only.
     let ctl = unsafe { &*arg.cast::<CtlCtx>() };
     ctl.conns_changed.store(true, Relaxed);
 }
 
 unsafe extern "C" fn shutdown_cb(arg: *mut c_void) {
+    // SAFETY: `arg` points into the Arc<CtlCtx> Backend holds past client close; shared, atomics only.
     let ctl = unsafe { &*arg.cast::<CtlCtx>() };
     ctl.shutdown.store(true, Relaxed);
 }

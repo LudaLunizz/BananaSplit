@@ -421,6 +421,7 @@ pub unsafe fn from_wide(p: *const u16) -> String {
     while unsafe { *p.add(n) } != 0 {
         n += 1;
     }
+    // SAFETY: `p` is non-NULL and `p[n]` is the NUL found above, so `p[..n]` are readable u16s.
     String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(p, n) })
 }
 
@@ -469,7 +470,8 @@ impl<V> Com<V> {
     }
     /// The interface's vtable.
     pub fn vt(&self) -> &V {
-        // SAFETY: a COM object pointer points at its vtable pointer.
+        // SAFETY: `ptr` is a live COM object of interface V (`from_raw`'s contract), whose first
+        // field is its vtable pointer; the vtable outlives the object, and V matches the SDK order.
         unsafe { &**(self.ptr as *const *const V) }
     }
 }
@@ -492,6 +494,7 @@ unsafe impl Send for Event {}
 impl Event {
     pub fn new() -> Result<Event, String> {
         // auto-reset, initially non-signalled
+        // SAFETY: plain call: no security attributes and no name.
         let h = unsafe { CreateEventW(std::ptr::null_mut(), 0, 0, std::ptr::null()) };
         if h.is_null() {
             Err("CreateEventW failed".into())
@@ -506,6 +509,7 @@ impl Event {
 }
 impl Drop for Event {
     fn drop(&mut self) {
+        // SAFETY: `self.0` came from CreateEventW in `Event::new`, is owned here and closed once.
         unsafe { CloseHandle(self.0) };
     }
 }
@@ -518,6 +522,7 @@ impl ComInit {
     /// on a thread already in a single-threaded apartment (RPC_E_CHANGED_MODE)
     /// or when COM can't start.
     pub fn mta() -> Result<ComInit, String> {
+        // SAFETY: plain call; the matching CoUninitialize runs on drop, on this thread.
         let hr = unsafe { CoInitializeEx(std::ptr::null_mut(), COINIT_MULTITHREADED) };
         // S_FALSE (already initialised) also needs a matching CoUninitialize.
         if hr == RPC_E_CHANGED_MODE {
@@ -533,6 +538,7 @@ impl ComInit {
     /// thread already in the multithreaded apartment this stays a no-op
     /// (RPC_E_CHANGED_MODE), and COM is initialised either way.
     pub fn sta() -> ComInit {
+        // SAFETY: plain call; the matching CoUninitialize runs on drop, on this thread.
         let hr = unsafe { CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
         ComInit(hr >= 0, std::marker::PhantomData)
     }
@@ -540,6 +546,7 @@ impl ComInit {
 impl Drop for ComInit {
     fn drop(&mut self) {
         if self.0 {
+            // SAFETY: CoInitializeEx succeeded on this thread (`self.0`), and ComInit is !Send, so this balances it here.
             unsafe { CoUninitialize() };
         }
     }
@@ -576,6 +583,7 @@ mod tests {
         let w = wide("CABLE Output (VB-Audio Virtual Cable) ü");
         assert_eq!(*w.last().unwrap(), 0);
         assert_eq!(
+            // SAFETY: `w` is NUL-terminated (`wide` appends a 0) and outlives the call.
             unsafe { from_wide(w.as_ptr()) },
             "CABLE Output (VB-Audio Virtual Cable) ü"
         );
