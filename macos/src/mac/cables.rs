@@ -8,7 +8,8 @@ use super::route::{self, DevInfo};
 use crate::gui::jstr;
 
 /// The channel menus and the status line, while none is installed.
-pub const MISSING: &str = "No virtual cables are installed (they are optional): Menu › Virtual cables… explains what they are for";
+pub const MISSING: &str =
+    "No virtual cables are installed (they are optional): Menu › Virtual cables… explains what they are for";
 
 /// The cables that can serve a channel: loopback devices with an input
 /// and an output (one device on macOS), in the order of their names.
@@ -39,24 +40,15 @@ pub fn first_run(s: &Snapshot, headless: bool, notes: &mut Vec<String>) -> bool 
 }
 
 /// `GET /api/cables`: the cables, and the macOS defaults as they are now.
-/// `welcome`: the first start, so the page opens the window by itself.
-pub fn report(welcome: bool) -> String {
-    match super::snapshot() {
-        Ok(s) => report_json(&s, welcome, None),
-        Err(e) => {
-            let none = Snapshot { caps: Vec::new(), rens: Vec::new(), def_cap: None, def_ren: None };
-            report_json(&none, welcome, Some(&e))
-        }
-    }
+/// An error when macOS can't list its devices: then nothing is known about
+/// the cables, which is not the same as "none installed".
+pub fn report() -> Result<String, String> {
+    Ok(report_json(&super::snapshot()?))
 }
 
-fn report_json(s: &Snapshot, welcome: bool, error: Option<&str>) -> String {
-    let mut o = String::from("{\"error\":");
-    match error {
-        Some(e) => jstr(&mut o, e),
-        None => o.push_str("null"),
-    }
-    o.push_str(",\"cables\":[");
+fn report_json(s: &Snapshot) -> String {
+    let mut o = String::from("{");
+    o.push_str("\"cables\":[");
     for (k, c) in installed(&s.caps, &s.rens).iter().enumerate() {
         if k > 0 {
             o.push(',');
@@ -78,8 +70,6 @@ fn report_json(s: &Snapshot, welcome: bool, error: Option<&str>) -> String {
             None => o.push_str("null"),
         }
     }
-    o.push_str(",\"welcome\":");
-    o.push_str(if welcome { "true" } else { "false" });
     o.push('}');
     o
 }
@@ -89,7 +79,10 @@ mod tests {
     use super::*;
 
     fn devs(names: &[&str]) -> Vec<DevInfo> {
-        names.iter().map(|n| DevInfo { name: n.to_string(), id: format!("uid-{n}"), virt: route::is_cable(n) }).collect()
+        names
+            .iter()
+            .map(|n| DevInfo { name: n.to_string(), id: format!("uid-{n}"), virt: route::is_cable(n) })
+            .collect()
     }
 
     #[test]
@@ -110,26 +103,29 @@ mod tests {
             def_ren: Some("uid-BlackHole 2ch".into()),
         };
         assert_eq!(
-            report_json(&s, true, None),
-            r#"{"error":null,"cables":["BlackHole 2ch"],"output":{"name":"BlackHole 2ch","cable":true},"input":{"name":"MacBook Pro Microphone","cable":false},"welcome":true}"#
+            report_json(&s),
+            r#"{"cables":["BlackHole 2ch"],"output":{"name":"BlackHole 2ch","cable":true},"input":{"name":"MacBook Pro Microphone","cable":false}}"#
         );
         let none = Snapshot { caps: vec![], rens: vec![], def_cap: None, def_ren: None };
-        assert_eq!(
-            report_json(&none, false, Some("cannot list the audio devices")),
-            r#"{"error":"cannot list the audio devices","cables":[],"output":null,"input":null,"welcome":false}"#
-        );
+        assert_eq!(report_json(&none), r#"{"cables":[],"output":null,"input":null}"#);
     }
 
     #[test]
     fn first_run_notes() {
-        let s = Snapshot { caps: devs(&["MacBook Pro Microphone"]), rens: devs(&["MacBook Pro Speakers"]), def_cap: None, def_ren: None };
+        let s = Snapshot {
+            caps: devs(&["MacBook Pro Microphone"]),
+            rens: devs(&["MacBook Pro Speakers"]),
+            def_cap: None,
+            def_ren: None,
+        };
         let mut notes = Vec::new();
         assert!(first_run(&s, false, &mut notes));
         assert_eq!(notes, [MISSING]);
         notes.clear();
         assert!(first_run(&s, true, &mut notes));
         assert!(notes[0].contains(route::BLACKHOLE_PAGE));
-        let s = Snapshot { caps: devs(&["BlackHole 2ch"]), rens: devs(&["BlackHole 2ch"]), def_cap: None, def_ren: None };
+        let s =
+            Snapshot { caps: devs(&["BlackHole 2ch"]), rens: devs(&["BlackHole 2ch"]), def_cap: None, def_ren: None };
         assert!(!first_run(&s, false, &mut notes));
     }
 }

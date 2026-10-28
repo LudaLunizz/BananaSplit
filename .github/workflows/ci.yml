@@ -141,6 +141,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -148,6 +149,16 @@ jobs:
 
       - name: Unit tests
         run: cargo test --locked
+
+      # Lint settings are in Cargo.toml ([lints]); every unsafe block needs
+      # a `// SAFETY:` note. Intel too: the runner is Apple silicon.
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: |
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo clippy --locked --all-targets --target x86_64-apple-darwin -- -D warnings
 
       - name: Build the app (Apple silicon and Intel)
         run: sh packaging/bundle.sh

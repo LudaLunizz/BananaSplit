@@ -101,7 +101,7 @@ cargo build --release        # target/release/bananasplit, for this Mac
 sh packaging/bundle.sh       # dist/BananaSplit.app (Apple silicon and Intel) and the release zip
 ```
 
-Needs Rust 1.85 or newer and Xcode's command line tools (`xcode-select --install`). The app is signed ad hoc; a Developer ID signature and notarization need Apple's developer program.
+Needs Rust 1.88 or newer and Xcode's command line tools (`xcode-select --install`). The app is signed ad hoc; a Developer ID signature and notarization need Apple's developer program.
 
 ## Testing
 

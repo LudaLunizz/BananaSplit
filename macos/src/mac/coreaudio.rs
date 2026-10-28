@@ -24,7 +24,10 @@
 
 #![allow(clippy::needless_range_loop)] // index loops mirror the [strip]/[bus] layout
 
-use super::catypes::{self, AudioBufferList, AudioObjectID, AudioTimeStamp, OSStatus, kAudioHardwareBadDeviceError, kAudioHardwareBadObjectError};
+use super::catypes::{
+    self, AudioBufferList, AudioObjectID, AudioTimeStamp, OSStatus, kAudioHardwareBadDeviceError,
+    kAudioHardwareBadObjectError,
+};
 use super::ffi::{self, IoProc, IoProcId};
 use super::route::{self, DevInfo};
 use bananasplit::config::{Config, DEFAULT_DEVICE};
@@ -164,7 +167,13 @@ impl<S> Proc<S> {
     /// Register `f` with `state` on the device and start it. `input`: it
     /// records the device; otherwise it plays on it. On failure the state
     /// comes back (it was never used).
-    fn start(dev: &Device, f: IoProc, state: Box<S>, beat: Arc<Beat>, input: bool) -> Result<Proc<S>, (String, Box<S>)> {
+    fn start(
+        dev: &Device,
+        f: IoProc,
+        state: Box<S>,
+        beat: Arc<Beat>,
+        input: bool,
+    ) -> Result<Proc<S>, (String, Box<S>)> {
         let raw = Box::into_raw(state);
         let mut id: IoProcId = None;
         // SAFETY: `raw` stays valid until the IOProc is removed (Drop), or
@@ -575,13 +584,13 @@ impl Graph {
             let mut idx: Vec<usize> = Vec::new();
             let mut shown: Vec<String> = Vec::new();
             for pat in patterns {
-                if pat == DEFAULT_DEVICE {
-                    if let Some(c) = route::default_cable(infos, def) {
-                        errs.push(format!(
+                if pat == DEFAULT_DEVICE
+                    && let Some(c) = route::default_cable(infos, def)
+                {
+                    errs.push(format!(
                             "{row}: the macOS default is {}, a virtual cable BananaSplit uses, so it would feed back; using the real device instead",
                             c.name
                         ));
-                    }
                 }
                 match route::resolve(pat, infos, def) {
                     Some(d) => {
@@ -605,10 +614,10 @@ impl Graph {
         let mut strip_devs = Vec::with_capacity(NUM_STRIPS);
         for s in 0..NUM_STRIPS {
             let mut patterns = cfg.strips[s].connect.clone();
-            if let Some(c) = &strip_cable[s] {
-                if !patterns.iter().any(|p| p.eq_ignore_ascii_case(c)) {
-                    patterns.push(c.clone());
-                }
+            if let Some(c) = &strip_cable[s]
+                && !patterns.iter().any(|p| p.eq_ignore_ascii_case(c))
+            {
+                patterns.push(c.clone());
             }
             let (idx, text) = pick(&format!("strip {}", s + 1), &patterns, &cap_info, def_cap.as_deref());
             strip_devs.push(idx);
@@ -617,10 +626,10 @@ impl Graph {
         let mut bus_devs = Vec::with_capacity(NUM_BUSES);
         for b in 0..NUM_BUSES {
             let mut patterns = cfg.buses[b].connect.clone();
-            if let Some(c) = &bus_cable[b] {
-                if !patterns.iter().any(|p| p.eq_ignore_ascii_case(c)) {
-                    patterns.push(c.clone());
-                }
+            if let Some(c) = &bus_cable[b]
+                && !patterns.iter().any(|p| p.eq_ignore_ascii_case(c))
+            {
+                patterns.push(c.clone());
             }
             let (idx, text) = pick(&format!("bus {}", BUS_IDS[b]), &patterns, &ren_info, def_ren.as_deref());
             bus_devs.push(idx);
@@ -679,7 +688,8 @@ impl Graph {
                 Ok(p) => {
                     procs.push(Box::new(p));
                     sinks.push((b, prod));
-                    max_out_lat = max_out_lat.max(target as u32 + to_mixer(dev_frames + ffi::latency_frames(d.id, false), d.rate));
+                    max_out_lat = max_out_lat
+                        .max(target as u32 + to_mixer(dev_frames + ffi::latency_frames(d.id, false), d.rate));
                 }
                 Err((e, _)) => errs.push(format!("bus {}: {}: {e}", BUS_IDS[b], d.info.name)),
             }
@@ -697,7 +707,9 @@ impl Graph {
                 }
                 // in the device's frames
                 let scale = d.rate / f64::from(RATE);
-                let target = (period as f64 * scale).ceil() as usize + frames(d) as usize + (RING_MARGIN as f64 * scale).ceil() as usize;
+                let target = (period as f64 * scale).ceil() as usize
+                    + frames(d) as usize
+                    + (RING_MARGIN as f64 * scale).ceil() as usize;
                 let rate = d.rate.round() as u32;
                 let (prod, cons) = ring((rate as usize).max(RATE as usize).max(4 * target));
                 let beat = Arc::new(Beat::default());
@@ -728,7 +740,16 @@ impl Graph {
                 });
                 let beat = Arc::new(Beat::default());
                 let pair = ffi::stereo_pair(d.id, false);
-                let state = Box::new(Master { beat: beat.clone(), mix, bus: b, pair, convert, rate: d.rate as f32, cpu: 0.0, stats: stats.clone() });
+                let state = Box::new(Master {
+                    beat: beat.clone(),
+                    mix,
+                    bus: b,
+                    pair,
+                    convert,
+                    rate: d.rate as f32,
+                    cpu: 0.0,
+                    stats: stats.clone(),
+                });
                 match Proc::start(d, master_proc, state, beat, false) {
                     Ok(p) => {
                         master_at = Some(procs.len());
@@ -793,7 +814,8 @@ impl Graph {
                     let is_master = self.master_at == Some(k);
                     let found = if is_master { &mut master } else { &mut other };
                     if found.is_none() {
-                        *found = Some(Stall { name: p.name().to_string(), uid: p.uid().to_string(), master: is_master });
+                        *found =
+                            Some(Stall { name: p.name().to_string(), uid: p.uid().to_string(), master: is_master });
                     }
                 }
             } else {

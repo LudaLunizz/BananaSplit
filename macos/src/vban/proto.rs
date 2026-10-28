@@ -42,8 +42,8 @@ const CODEC_PCM: u8 = 0x00;
 
 /// The sample rates a VBAN stream can have, by index.
 pub const SAMPLE_RATES: [u32; 21] = [
-    6000, 12000, 24000, 48000, 96000, 192000, 384000, 8000, 16000, 32000, 64000, 128000, 256000, 512000, 11025,
-    22050, 44100, 88200, 176400, 352800, 705600,
+    6000, 12000, 24000, 48000, 96000, 192000, 384000, 8000, 16000, 32000, 64000, 128000, 256000, 512000, 11025, 22050,
+    44100, 88200, 176400, 352800, 705600,
 ];
 
 /// Index of `rate` in [`SAMPLE_RATES`].
@@ -177,7 +177,10 @@ pub enum ParseError {
     /// 10- or 12-bit packed samples.
     DataType(u8),
     /// Payload size differs from samples x channels x sample size.
-    Size { expected: usize, got: usize },
+    Size {
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl std::fmt::Display for ParseError {
@@ -189,7 +192,9 @@ impl std::fmt::Display for ParseError {
             ParseError::Reserved => write!(f, "reserved bit set"),
             ParseError::Codec(c) => write!(f, "compressed VBAN stream (codec 0x{c:02x}); BananaSplit needs PCM"),
             ParseError::DataType(t) => write!(f, "unsupported VBAN sample type {t} (10/12-bit)"),
-            ParseError::Size { expected, got } => write!(f, "VBAN packet holds {got} bytes of samples, header says {expected}"),
+            ParseError::Size { expected, got } => {
+                write!(f, "VBAN packet holds {got} bytes of samples, header says {expected}")
+            }
         }
     }
 }
@@ -323,7 +328,7 @@ pub fn encode(frames: &[f32], channels: usize, format: SampleFormat, out: &mut [
         }
         o += format.bytes();
     };
-    for f in frames.chunks_exact(2) {
+    for f in frames.as_chunks::<2>().0 {
         if channels == 1 {
             put(0.5 * (f[0] + f[1]));
         } else {
@@ -357,7 +362,10 @@ mod tests {
     fn parses_a_packet_built_from_the_spec() {
         let p = spec_packet();
         let Ok(Packet::Audio(h, data)) = parse(&p) else { panic!("{:?}", parse(&p)) };
-        assert_eq!((h.sample_rate(), h.samples, h.channels, h.format, h.frame), (48000, 2, 2, SampleFormat::I16, 0x0102_0304));
+        assert_eq!(
+            (h.sample_rate(), h.samples, h.channels, h.format, h.frame),
+            (48000, 2, 2, SampleFormat::I16, 0x0102_0304)
+        );
         assert_eq!(h.name_bytes(), b"Stream1");
         assert!(name_matches(h.name_bytes(), "stream1") && !name_matches(h.name_bytes(), "Stream10"));
         let mut out = Vec::new();
@@ -456,7 +464,14 @@ mod tests {
     #[test]
     fn every_format_round_trips() {
         let frames = [0.0f32, 0.5, -0.5, 0.25, 1.0, -1.0, 0.123_456_7, -0.999];
-        for f in [SampleFormat::U8, SampleFormat::I16, SampleFormat::I24, SampleFormat::I32, SampleFormat::F32, SampleFormat::F64] {
+        for f in [
+            SampleFormat::U8,
+            SampleFormat::I16,
+            SampleFormat::I24,
+            SampleFormat::I32,
+            SampleFormat::F32,
+            SampleFormat::F64,
+        ] {
             let mut buf = vec![0u8; frames.len() * 8];
             let n = encode(&frames, 2, f, &mut buf);
             assert_eq!(n, frames.len() * f.bytes());

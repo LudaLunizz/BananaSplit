@@ -56,7 +56,8 @@ until curl -fsS "$url/api/state" 2>/dev/null | grep -q '^{"client":"BananaSplit"
     sleep 0.2
 done
 curl -fsS "$url/api/devices" | grep -q '^{"cables":{"ok":' || fail "/api/devices"
-curl -fsS "$url/api/cables" | grep -q '"welcome":' || fail "/api/cables"
+curl -fsS "$url/api/cables" | grep -q '^{"cables":\[' || fail "/api/cables"
+curl -fsS "$url/api/state" | grep -q '"welcome":' || fail "the welcome flag in /api/state"
 curl -fsS "$url/" | grep -q '<title>' || fail "the page"
 
 # A second start asks the running one to show its window, and ends.

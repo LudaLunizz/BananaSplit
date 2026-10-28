@@ -22,7 +22,7 @@ pub fn packet_frames(period: usize, max: usize) -> usize {
     if period <= max {
         return period;
     }
-    let d = (1..=max).rev().find(|d| period % d == 0).unwrap_or(1);
+    let d = (1..=max).rev().find(|d| period.is_multiple_of(*d)).unwrap_or(1);
     if d * 2 >= max { d } else { max }
 }
 
@@ -44,7 +44,12 @@ pub struct TxStream {
 
 impl Default for TxStream {
     fn default() -> Self {
-        TxStream { frame: 0, pending: Vec::with_capacity(2 * 8192), packet: vec![0u8; proto::MAX_PACKET], stats: TxStats::default() }
+        TxStream {
+            frame: 0,
+            pending: Vec::with_capacity(2 * 8192),
+            packet: vec![0u8; proto::MAX_PACKET],
+            stats: TxStats::default(),
+        }
     }
 }
 
@@ -88,9 +93,21 @@ impl TxStream {
         let n = packet_frames(p.period, proto::max_samples(p.channels, p.format));
         let mut done = 0;
         while self.pending.len() - done >= 2 * n {
-            let h = AudioHeader { sr_index: p.sr_index, samples: n, channels: p.channels, format: p.format, name: *p.name, frame: self.frame };
+            let h = AudioHeader {
+                sr_index: p.sr_index,
+                samples: n,
+                channels: p.channels,
+                format: p.format,
+                name: *p.name,
+                frame: self.frame,
+            };
             proto::write_header(&mut self.packet, &h);
-            let len = proto::encode(&self.pending[done..done + 2 * n], p.channels, p.format, &mut self.packet[proto::HEADER_LEN..]);
+            let len = proto::encode(
+                &self.pending[done..done + 2 * n],
+                p.channels,
+                p.format,
+                &mut self.packet[proto::HEADER_LEN..],
+            );
             match sock.send_to(&self.packet[..proto::HEADER_LEN + len], p.to) {
                 Ok(_) => self.stats.packets += 1,
                 Err(e) => {
@@ -139,7 +156,15 @@ mod tests {
         // 3 periods of 1024 frames: 24-bit stereo -> 128 per packet
         let frames: Vec<f32> = (0..3 * 1024).flat_map(|i| [i as f32 / 4096.0, -(i as f32) / 4096.0]).collect();
         assert!(ring.push(&frames));
-        let p = TxParams { name: &name, to, sr_index: 3, format: SampleFormat::I24, channels: 2, period: 1024, max_pending: 48_000 };
+        let p = TxParams {
+            name: &name,
+            to,
+            sr_index: 3,
+            format: SampleFormat::I24,
+            channels: 2,
+            period: 1024,
+            max_pending: 48_000,
+        };
         st.pump(&ring, &tx, &p);
         assert_eq!(st.stats.packets, 24);
         let mut buf = [0u8; 2000];
@@ -148,7 +173,10 @@ mod tests {
             let n = rx.recv(&mut buf).unwrap();
             assert!(n <= proto::MAX_PACKET);
             let Ok(Packet::Audio(h, d)) = proto::parse(&buf[..n]) else { panic!("{:?}", proto::parse(&buf[..n])) };
-            assert_eq!((h.sample_rate(), h.samples, h.channels, h.format, h.frame), (48_000, 128, 2, SampleFormat::I24, k));
+            assert_eq!(
+                (h.sample_rate(), h.samples, h.channels, h.format, h.frame),
+                (48_000, 128, 2, SampleFormat::I24, k)
+            );
             assert_eq!(h.name_bytes(), b"Stream2");
             let mut out = Vec::new();
             proto::decode_stereo(d, 2, SampleFormat::I24, &mut out);
