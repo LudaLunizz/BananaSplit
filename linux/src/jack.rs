@@ -64,36 +64,8 @@ pub type MessageCb = unsafe extern "C" fn(msg: *const c_char);
 
 unsafe extern "C" fn quiet(_msg: *const c_char) {}
 
-unsafe extern "C" {
-    fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
-    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-    fn dlerror() -> *mut c_char;
-}
-const RTLD_NOW: c_int = 2;
-
-macro_rules! jack_api {
-    ($( $name:ident : $ty:ty ),* $(,)?) => {
-        pub struct Lib { $( pub $name: $ty, )* }
-        impl Lib {
-            /// # Safety
-            /// `h` must be a valid handle returned by `dlopen` for a JACK library.
-            unsafe fn resolve(h: *mut c_void) -> Result<Self, String> {
-                Ok(Self { $( $name: {
-                    let sym = concat!(stringify!($name), "\0");
-                    // SAFETY: valid handle + NUL-terminated name.
-                    let p = unsafe { dlsym(h, sym.as_ptr().cast()) };
-                    if p.is_null() {
-                        return Err(format!("libjack has no symbol `{}`", stringify!($name)));
-                    }
-                    // SAFETY: the symbol has the C signature declared in the JACK headers.
-                    unsafe { std::mem::transmute::<*mut c_void, $ty>(p) }
-                }, )* })
-            }
-        }
-    };
-}
-
-jack_api! {
+crate::dl::dl_api! {
+    pub struct Lib {
     jack_client_open: unsafe extern "C" fn(*const c_char, c_int, *mut c_int, ...) -> Client,
     jack_client_close: unsafe extern "C" fn(Client) -> c_int,
     jack_get_client_name: unsafe extern "C" fn(Client) -> *const c_char,
@@ -120,6 +92,7 @@ jack_api! {
     jack_cpu_load: unsafe extern "C" fn(Client) -> f32,
     jack_set_error_function: unsafe extern "C" fn(Option<MessageCb>),
     jack_set_info_function: unsafe extern "C" fn(Option<MessageCb>),
+    }
 }
 
 static LIB: OnceLock<Result<Lib, String>> = OnceLock::new();
@@ -128,33 +101,19 @@ static PW_LIB: OnceLock<Option<Lib>> = OnceLock::new();
 /// every client from now on uses PipeWire's.
 static USE_PW: AtomicBool = AtomicBool::new(false);
 
-fn dlerror_text() -> String {
-    // SAFETY: dlerror returns NULL or a valid C string.
-    let e = unsafe { dlerror() };
-    // SAFETY: non-null here, a NUL-terminated string from dlerror.
-    if e.is_null() { String::new() } else { unsafe { CStr::from_ptr(e) }.to_string_lossy().into_owned() }
-}
-
 /// The libjack the dynamic loader finds (`libjack.so.0`): JACK2's, or
 /// PipeWire's when the distribution installs it in its place, or whatever
 /// `LD_LIBRARY_PATH` / `pw-jack` points at.
 fn system_lib() -> Result<&'static Lib, String> {
     LIB.get_or_init(|| {
-        let mut errs = Vec::new();
-        for name in [c"libjack.so.0", c"libjack.so"] {
-            // SAFETY: NUL-terminated library name.
-            let h = unsafe { dlopen(name.as_ptr(), RTLD_NOW) };
-            if !h.is_null() {
-                // SAFETY: handle just returned by dlopen.
-                return unsafe { Lib::resolve(h) };
-            }
-            errs.push(dlerror_text());
+        match crate::dl::open(&[c"libjack.so.0", c"libjack.so"]) {
+            // SAFETY: the handle is a libjack, which declares these functions.
+            Ok(h) => unsafe { Lib::load(h) }.map_err(|e| format!("libjack has {e}")),
+            Err(e) => Err(format!(
+                "could not load libjack ({e}).\n  Install PipeWire's JACK support (Fedora: pipewire-jack-audio-connection-kit, \
+                 Arch: pipewire-jack, Debian/Ubuntu: pipewire-jack) or JACK2."
+            )),
         }
-        Err(format!(
-            "could not load libjack ({}).\n  Install PipeWire's JACK support (Fedora: pipewire-jack-audio-connection-kit, \
-             Arch: pipewire-jack, Debian/Ubuntu: pipewire-jack) or JACK2.",
-            errs.join("; ")
-        ))
     })
     .as_ref()
     .map_err(Clone::clone)
@@ -200,11 +159,9 @@ fn pipewire_lib() -> Option<&'static Lib> {
                     continue;
                 }
                 let Ok(c) = CString::new(path) else { continue };
-                // SAFETY: NUL-terminated path.
-                let h = unsafe { dlopen(c.as_ptr(), RTLD_NOW) };
-                if !h.is_null() {
-                    // SAFETY: handle just returned by dlopen.
-                    if let Ok(lib) = unsafe { Lib::resolve(h) } {
+                if let Ok(h) = crate::dl::open(&[&c]) {
+                    // SAFETY: the handle is PipeWire's libjack, which declares these functions.
+                    if let Ok(lib) = unsafe { Lib::load(h) } {
                         return Some(lib);
                     }
                 }

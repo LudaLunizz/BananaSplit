@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.13" date="2026-10-28">
+      <description>
+        <p>The last part of the Rust code review: every unsafe block explains why it is sound, the code is lint-clean and checked on every change, and all calls into C and Windows libraries are declared in one place per platform.</p>
+      </description>
+    </release>
     <release version="2.8.12" date="2026-10-28">
       <description>
         <p>More under-the-hood hardening from the Rust code review: the code that talks to JACK, the tray and Windows audio is harder to misuse, and a Windows audio thread that cannot start no longer leaves devices open.</p>
