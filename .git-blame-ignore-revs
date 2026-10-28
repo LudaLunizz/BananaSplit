@@ -1,0 +1,5 @@
+# Formatting-only commits, skipped by `git blame` (GitHub does this by
+# itself; locally: git config blame.ignoreRevsFile .git-blame-ignore-revs).
+
+# Format the code with rustfmt (#31)
+cd34c3af032fa5f84939f8201fc0362046045db6
