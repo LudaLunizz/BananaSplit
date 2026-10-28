@@ -125,8 +125,11 @@ grep -q "^eq1 = lowcut 80 +0 0.71$" "$TMP/bananasplit.ini" && grep -q "^eq4 = be
 sed -n '/^\[vban.in2\]$/,/^$/p' "$TMP/bananasplit.ini" | tr '\n' ' ' | grep -q "on = true name = Laptop from = 192.168.1.30 strip = 6 buffer_ms = 20" || fail "VBAN in not saved"
 sed -n '/^\[vban.out3\]$/,/^$/p' "$TMP/bananasplit.ini" | tr '\n' ' ' | grep -q "on = true name = Mix to = 127.0.0.1 port = 9 source = A1 format = int24 channels = 2" || fail "VBAN out not saved"
 grep -q "^enabled = false$" "$TMP/bananasplit.ini" || fail "VBAN switched itself on"
-F1=$(ls "$TMP"/rec/*_1-Mic.wav); FA=$(ls "$TMP"/rec/*_A1-Speakers.wav)
-[ "$(ls "$TMP"/rec | wc -l)" -eq 2 ] || fail "expected exactly 2 tracks: $(ls "$TMP"/rec)"
+# takes go into a folder per day, named like the start of their files
+DAY=$(ls "$TMP"/rec)
+[ "$(printf '%s\n' "$DAY" | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')" -eq 1 ] && [ -d "$TMP/rec/$DAY" ] || fail "expected one day folder: $DAY"
+F1=$(ls "$TMP/rec/$DAY"/"$DAY"_*_1-Mic.wav); FA=$(ls "$TMP/rec/$DAY"/"$DAY"_*_A1-Speakers.wav)
+[ "$(ls "$TMP/rec/$DAY" | wc -l)" -eq 2 ] || fail "expected exactly 2 tracks: $(ls "$TMP/rec/$DAY")"
 SZ=$(stat -c %s "$F1")
 [ "$SZ" = "$(stat -c %s "$FA")" ] || fail "tracks differ in length"
 [ "$(od -A n -t u4 -j 54 -N 4 "$F1" | tr -d ' ')" -eq $((SZ - 58)) ] || fail "WAV data size"

@@ -713,7 +713,7 @@ fn main() -> ExitCode {
     let rec_tap = RecTap::new();
     let vban_tap = VbanTap::new();
     let play_tap = PlayTap::new();
-    let recorder = Arc::new(Recorder::new(rec_tap.clone(), rate, cfg.recorder.settings()));
+    let recorder = Arc::new(Recorder::new(rec_tap.clone(), rate, cfg.recorder.settings()).with_clock(sys::local_timestamp));
     let vban = Arc::new(Vban::start(vban_tap.clone(), rate, cfg.vban.clone()));
     let player = Arc::new(Player::new(play_tap.clone(), rate));
     player.set_routes(cfg.recorder.play_to);
