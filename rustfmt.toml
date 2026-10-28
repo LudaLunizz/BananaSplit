@@ -1,0 +1,3 @@
+# Fits the existing style: long lines and short one-line ifs and literals.
+max_width = 120
+use_small_heuristics = "Max"

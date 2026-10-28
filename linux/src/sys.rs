@@ -256,9 +256,27 @@ pub struct LocalIp {
 
 /// Interfaces that are usually not the LAN (containers, VMs, VPNs): listed last.
 fn virtual_iface(name: &str) -> bool {
-    ["docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "lxc", "lxd", "podman", "cni", "flannel", "tun", "tap", "wg", "tailscale", "zt", "ham"]
-        .iter()
-        .any(|p| name.starts_with(p))
+    [
+        "docker",
+        "br-",
+        "veth",
+        "virbr",
+        "vmnet",
+        "vboxnet",
+        "lxc",
+        "lxd",
+        "podman",
+        "cni",
+        "flannel",
+        "tun",
+        "tap",
+        "wg",
+        "tailscale",
+        "zt",
+        "ham",
+    ]
+    .iter()
+    .any(|p| name.starts_with(p))
 }
 
 /// This computer's IPv4 addresses that are up and running (an unplugged
@@ -282,21 +300,32 @@ pub fn local_ipv4() -> Vec<LocalIp> {
         while !p.is_null() {
             let i = &*p;
             p = i.next;
-            if i.addr.is_null() || (*i.addr).family != AF_INET || i.flags & (IFF_UP | IFF_RUNNING) != IFF_UP | IFF_RUNNING || i.flags & IFF_LOOPBACK != 0 {
+            if i.addr.is_null()
+                || (*i.addr).family != AF_INET
+                || i.flags & (IFF_UP | IFF_RUNNING) != IFF_UP | IFF_RUNNING
+                || i.flags & IFF_LOOPBACK != 0
+            {
                 continue;
             }
-            let name = if i.name.is_null() { String::new() } else { std::ffi::CStr::from_ptr(i.name).to_string_lossy().into_owned() };
+            let name = if i.name.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(i.name).to_string_lossy().into_owned()
+            };
             let ip = std::net::Ipv4Addr::from((*i.addr).addr);
-            let broadcast = (i.flags & IFF_BROADCAST != 0 && !i.broadaddr.is_null() && (*i.broadaddr).family == AF_INET)
-                .then(|| std::net::Ipv4Addr::from((*i.broadaddr).addr))
-                .filter(|b| !b.is_unspecified());
+            let broadcast =
+                (i.flags & IFF_BROADCAST != 0 && !i.broadaddr.is_null() && (*i.broadaddr).family == AF_INET)
+                    .then(|| std::net::Ipv4Addr::from((*i.broadaddr).addr))
+                    .filter(|b| !b.is_unspecified());
             if !out.iter().any(|x: &LocalIp| x.ip == ip) {
                 out.push(LocalIp { iface: name, ip, broadcast });
             }
         }
         freeifaddrs(head);
     }
-    let rank = |x: &LocalIp| (virtual_iface(&x.iface), x.ip.is_link_local(), !(x.iface.starts_with("en") || x.iface.starts_with("eth")));
+    let rank = |x: &LocalIp| {
+        (virtual_iface(&x.iface), x.ip.is_link_local(), !(x.iface.starts_with("en") || x.iface.starts_with("eth")))
+    };
     out.sort_by_key(|x| rank(x));
     out
 }
@@ -387,10 +416,8 @@ impl Drop for RawTerminal {
 /// glibc and musl. On 32-bit targets its width differs between libcs, so
 /// UTC is used there instead (marked with a trailing `Z`).
 pub fn local_timestamp() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let secs =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     #[cfg(target_pointer_width = "64")]
     {
         // SAFETY: plain-old-data out-parameter large enough for struct tm.
@@ -434,7 +461,12 @@ mod tests {
     fn local_addresses() {
         let ips = local_ipv4();
         assert!(ips.iter().all(|x| !x.ip.is_loopback() && !x.iface.is_empty()), "{ips:?}");
-        assert!(virtual_iface("docker0") && virtual_iface("tailscale0") && !virtual_iface("enp3s0") && !virtual_iface("wlan0"));
+        assert!(
+            virtual_iface("docker0")
+                && virtual_iface("tailscale0")
+                && !virtual_iface("enp3s0")
+                && !virtual_iface("wlan0")
+        );
     }
 
     #[test]

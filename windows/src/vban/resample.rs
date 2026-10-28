@@ -73,7 +73,17 @@ impl Resampler {
             .collect();
         let half = ZEROS as f64 / (2.0 * fc);
         let lead = half.ceil() as usize + 1;
-        Resampler { table, scale: 2.0 * fc, half, lead, hist: vec![0.0; 2 * lead], ipos: lead, frac: 0.0, fs_in, fs_out }
+        Resampler {
+            table,
+            scale: 2.0 * fc,
+            half,
+            lead,
+            hist: vec![0.0; 2 * lead],
+            ipos: lead,
+            frac: 0.0,
+            fs_in,
+            fs_out,
+        }
     }
 
     pub fn rates(&self) -> (u32, u32) {
@@ -155,11 +165,12 @@ mod tests {
     use std::f64::consts::PI;
 
     fn sine(fs: u32, f: f64, n: usize, amp: f64) -> Vec<f32> {
-        (0..n).flat_map(|i| {
-            let v = (amp * (2.0 * PI * f * i as f64 / fs as f64).sin()) as f32;
-            [v, -v]
-        })
-        .collect()
+        (0..n)
+            .flat_map(|i| {
+                let v = (amp * (2.0 * PI * f * i as f64 / fs as f64).sin()) as f32;
+                [v, -v]
+            })
+            .collect()
     }
 
     /// Feed in uneven chunks; returns the output.
@@ -192,7 +203,10 @@ mod tests {
     fn equal_rates_pass_the_audio_band_cleanly() {
         for f in [100.0, 1000.0, 10_000.0, 20_000.0] {
             let mut rs = Resampler::new(48_000, 48_000);
-            let out = { let st = rs.nominal_step(); run(&mut rs, &sine(48_000, f, 48_000, 0.5), st) };
+            let out = {
+                let st = rs.nominal_step();
+                run(&mut rs, &sine(48_000, f, 48_000, 0.5), st)
+            };
             assert!(out.len() / 2 > 47_800, "{}", out.len() / 2);
             let e = worst(&out, 48_000, f, 0.5, 200);
             assert!(e < 0.5 * 2e-4, "{f} Hz: error {e:e} (-74 dB re signal)");
@@ -201,9 +215,19 @@ mod tests {
 
     #[test]
     fn converts_44100_to_48000_and_back() {
-        for (a, b, f) in [(44_100, 48_000, 1000.0), (48_000, 44_100, 1000.0), (44_100, 48_000, 18_000.0), (8000, 48_000, 3000.0), (96_000, 48_000, 15_000.0), (192_000, 48_000, 440.0)] {
+        for (a, b, f) in [
+            (44_100, 48_000, 1000.0),
+            (48_000, 44_100, 1000.0),
+            (44_100, 48_000, 18_000.0),
+            (8000, 48_000, 3000.0),
+            (96_000, 48_000, 15_000.0),
+            (192_000, 48_000, 440.0),
+        ] {
             let mut rs = Resampler::new(a, b);
-            let out = { let st = rs.nominal_step(); run(&mut rs, &sine(a, f, a as usize, 0.5), st) };
+            let out = {
+                let st = rs.nominal_step();
+                run(&mut rs, &sine(a, f, a as usize, 0.5), st)
+            };
             let expect = b as f64 * (a as f64 - rs.delay()) / a as f64;
             assert!((out.len() as f64 / 2.0 - expect).abs() < 3.0, "{a}->{b}: {} frames, want {expect}", out.len() / 2);
             let e = worst(&out, b, f, 0.5, 400);
@@ -230,11 +254,17 @@ mod tests {
     fn no_aliasing_or_images() {
         // 96k -> 48k: a 30 kHz tone must not fold back to 18 kHz
         let mut rs = Resampler::new(96_000, 48_000);
-        let out = { let st = rs.nominal_step(); run(&mut rs, &sine(96_000, 30_000.0, 96_000, 1.0), st) };
+        let out = {
+            let st = rs.nominal_step();
+            run(&mut rs, &sine(96_000, 30_000.0, 96_000, 1.0), st)
+        };
         assert!(level_db(&out[800..], 48_000, 18_000.0) < -85.0, "{}", level_db(&out[800..], 48_000, 18_000.0));
         // 8k -> 48k: a 3 kHz tone must not leave an image at 5 kHz
         let mut rs = Resampler::new(8000, 48_000);
-        let out = { let st = rs.nominal_step(); run(&mut rs, &sine(8000, 3000.0, 8000, 1.0), st) };
+        let out = {
+            let st = rs.nominal_step();
+            run(&mut rs, &sine(8000, 3000.0, 8000, 1.0), st)
+        };
         assert!(level_db(&out[2000..], 48_000, 5000.0) < -85.0, "{}", level_db(&out[2000..], 48_000, 5000.0));
         assert!(level_db(&out[2000..], 48_000, 3000.0) > -0.1);
     }
@@ -249,7 +279,8 @@ mod tests {
             let step = 1.0 + if k % 2 == 0 { 1e-3 } else { -1e-3 };
             rs.process(chunk, step, &mut out);
         }
-        let jump = out.chunks(2).collect::<Vec<_>>().windows(2).map(|w| (w[1][0] - w[0][0]).abs()).fold(0.0f32, f32::max);
+        let jump =
+            out.chunks(2).collect::<Vec<_>>().windows(2).map(|w| (w[1][0] - w[0][0]).abs()).fold(0.0f32, f32::max);
         let max_slope = 0.5 * 2.0 * std::f32::consts::PI * 1000.0 / 48_000.0;
         assert!(jump < max_slope * 1.01, "{jump} vs {max_slope}");
         assert!((out.len() as i64 / 2 - (48_000 - 51)).abs() < 5);
@@ -263,7 +294,10 @@ mod tests {
         let mut oa = Vec::new();
         let st = a.nominal_step();
         a.process(&input, st, &mut oa);
-        let ob = { let st = b.nominal_step(); run(&mut b, &input, st) };
+        let ob = {
+            let st = b.nominal_step();
+            run(&mut b, &input, st)
+        };
         assert_eq!(oa, ob);
         // and reset() starts again from silence
         a.reset();

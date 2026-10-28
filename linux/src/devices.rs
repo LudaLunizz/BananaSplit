@@ -13,6 +13,7 @@
 use crate::cables::{self, CableSet};
 use crate::jack::{JackClient, PORT_IS_INPUT, PORT_IS_OUTPUT, PORT_IS_PHYSICAL, regex_escape};
 use crate::sys;
+use bananasplit::config::{Config, DEFAULT_DEVICE, PHYSICAL};
 use std::cell::OnceCell;
 use std::ffi::c_ulong;
 use std::fmt::Write as _;
@@ -22,7 +23,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
-use bananasplit::config::{Config, DEFAULT_DEVICE, PHYSICAL};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Device {
@@ -59,7 +59,14 @@ fn parse_list(text: &str, is_source: bool) -> Vec<Device> {
             // "Sink #52" / "Source #53" starts the next device
             out.extend(cur.take());
             let index = line.rsplit_once('#').and_then(|(_, n)| n.trim().parse().ok()).unwrap_or(0);
-            cur = Some(Device { index, name: String::new(), description: String::new(), nick: None, is_source, is_monitor: false });
+            cur = Some(Device {
+                index,
+                name: String::new(),
+                description: String::new(),
+                nick: None,
+                is_source,
+                is_monitor: false,
+            });
             continue;
         }
         let Some(d) = cur.as_mut() else { continue };
@@ -141,10 +148,20 @@ impl Stream {
     /// the app set one); "application.name/<that>" when the two differ; plus
     /// "-<id>" when the name is taken.
     pub fn is_jack_client(&self, client: &str) -> bool {
-        let base = client.rsplit_once('-').filter(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).map_or(client, |(b, _)| b);
+        let base = client
+            .rsplit_once('-')
+            .filter(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            .map_or(client, |(b, _)| b);
         let names = [self.desc.as_str(), self.nick.as_str(), self.node.as_str()];
-        let joined = names.iter().filter(|n| !n.is_empty() && !self.app.is_empty()).map(|n| format!("{}/{n}", self.app));
-        names.iter().map(|n| n.to_string()).chain([self.app.clone()]).chain(joined).filter(|n| !n.is_empty()).any(|n| n == client || n == base)
+        let joined =
+            names.iter().filter(|n| !n.is_empty() && !self.app.is_empty()).map(|n| format!("{}/{n}", self.app));
+        names
+            .iter()
+            .map(|n| n.to_string())
+            .chain([self.app.clone()])
+            .chain(joined)
+            .filter(|n| !n.is_empty())
+            .any(|n| n == client || n == base)
     }
 }
 
@@ -242,8 +259,10 @@ impl PulseInfo {
         if !devices.pipewire {
             return PulseInfo { devices: Some(devices), ..PulseInfo::default() };
         }
-        let (playing, mut other) = cables::pactl(&["list", "sink-inputs"]).map(|t| parse_streams_all(&t, "Sink:")).unwrap_or_default();
-        let (recording, more) = cables::pactl(&["list", "source-outputs"]).map(|t| parse_streams_all(&t, "Source:")).unwrap_or_default();
+        let (playing, mut other) =
+            cables::pactl(&["list", "sink-inputs"]).map(|t| parse_streams_all(&t, "Sink:")).unwrap_or_default();
+        let (recording, more) =
+            cables::pactl(&["list", "source-outputs"]).map(|t| parse_streams_all(&t, "Source:")).unwrap_or_default();
         other.extend(more);
         PulseInfo { devices: Some(devices), playing, recording, other }
     }
@@ -262,7 +281,12 @@ impl PulseInfo {
 
     /// Description of the sink / source with this index.
     pub fn description(&self, index: u32, source: bool) -> Option<&str> {
-        self.devices.as_ref()?.list.iter().find(|d| d.index == index && d.is_source == source).map(|d| d.description.as_str())
+        self.devices
+            .as_ref()?
+            .list
+            .iter()
+            .find(|d| d.index == index && d.is_source == source)
+            .map(|d| d.description.as_str())
     }
 }
 
@@ -472,7 +496,10 @@ fn watch_thread(inner: &Arc<WatchInner>) {
         if inner.quit.load(SeqCst) {
             break;
         }
-        if !inner.listening.load(SeqCst) && answers && (inner.again.swap(false, SeqCst) || tried.elapsed() >= Duration::from_secs(10)) {
+        if !inner.listening.load(SeqCst)
+            && answers
+            && (inner.again.swap(false, SeqCst) || tried.elapsed() >= Duration::from_secs(10))
+        {
             tried = Instant::now();
             subscribe(inner);
         }
@@ -511,9 +538,11 @@ fn label_score(label: &str, client: &str) -> u8 {
         return 3;
     }
     if let Some(rest) = client.strip_prefix(label).and_then(|r| r.strip_prefix('-'))
-        && !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
-            return 2;
-        }
+        && !rest.is_empty()
+        && rest.bytes().all(|b| b.is_ascii_digit())
+    {
+        return 2;
+    }
     if client.chars().count() >= 60 && label.starts_with(client) {
         return 1;
     }
@@ -723,14 +752,21 @@ pub struct Resolver<'a> {
 
 impl<'a> Resolver<'a> {
     pub fn new(client: &'a JackClient, own_client: &str, cables: CableSet) -> Self {
-        Resolver { client, own: format!("{own_client}:"), cables, devs: OnceCell::new(), claimed: [Vec::new(), Vec::new()] }
+        Resolver {
+            client,
+            own: format!("{own_client}:"),
+            cables,
+            devs: OnceCell::new(),
+            claimed: [Vec::new(), Vec::new()],
+        }
     }
 
     /// Know which clients the config's `^Name:` lines name exactly: a line
     /// for a client PipeWire numbered never takes one of those instead
     /// (see [`Resolver::renumbered`]).
     pub fn with_lines(mut self, cfg: &Config) -> Self {
-        let named = |lines: &mut dyn Iterator<Item = &String>| lines.filter_map(|p| literal_client(p)).collect::<Vec<String>>();
+        let named =
+            |lines: &mut dyn Iterator<Item = &String>| lines.filter_map(|p| literal_client(p)).collect::<Vec<String>>();
         self.claimed = [
             named(&mut cfg.strips.iter().flat_map(|s| &s.connect)),
             named(&mut cfg.buses.iter().flat_map(|b| &b.connect)),
@@ -752,7 +788,8 @@ impl<'a> Resolver<'a> {
         let physical = self.ports(None, side.flag() | PORT_IS_PHYSICAL);
         let default = self.default_device(side).ok();
         let devs = self.devices().ok();
-        let gs: Vec<Group> = groups(self.ports(None, side.flag())).into_iter().filter(|(c, _)| !self.cables.owns(c, c)).collect();
+        let gs: Vec<Group> =
+            groups(self.ports(None, side.flag())).into_iter().filter(|(c, _)| !self.cables.owns(c, c)).collect();
         let default_i = default.and_then(|d| device_index(&gs, d));
         let mut out: Vec<Candidate> = gs
             .iter()
@@ -766,7 +803,10 @@ impl<'a> Resolver<'a> {
                     Kind::App
                 };
                 let dev = devs.and_then(|d| {
-                    d.list.iter().filter(|x| !x.is_monitor && client_score(x, client) >= 2).max_by_key(|x| client_score(x, client))
+                    d.list
+                        .iter()
+                        .filter(|x| !x.is_monitor && client_score(x, client) >= 2)
+                        .max_by_key(|x| client_score(x, client))
                 });
                 let label = dev
                     .and_then(|d| d.nick.clone().filter(|n| n.len() < client.len()))
@@ -820,11 +860,19 @@ impl<'a> Resolver<'a> {
             PHYSICAL => self.physical(side, None),
             DEFAULT_DEVICE => match self.default_device(side) {
                 Ok(dev) => {
-                    let gs = groups(self.ports(None, side.flag()).into_iter().filter(|p| !is_monitor_port(p)).collect());
+                    let gs =
+                        groups(self.ports(None, side.flag()).into_iter().filter(|p| !is_monitor_port(p)).collect());
                     match best_index(&gs, dev) {
-                        Some(i) => Resolved { ports: gs.into_iter().nth(i).map(|g| g.1).unwrap_or_default(), ..Default::default() },
+                        Some(i) => Resolved {
+                            ports: gs.into_iter().nth(i).map(|g| g.1).unwrap_or_default(),
+                            ..Default::default()
+                        },
                         None => Resolved {
-                            note: Some(format!("the default {} \"{}\" has no JACK ports yet", side.device(), dev.description)),
+                            note: Some(format!(
+                                "the default {} \"{}\" has no JACK ports yet",
+                                side.device(),
+                                dev.description
+                            )),
                             ..Default::default()
                         },
                     }
@@ -860,7 +908,9 @@ impl<'a> Resolver<'a> {
         let claimed = &self.claimed[side as usize];
         let gs: Vec<Group> = groups(self.ports(None, side.flag()))
             .into_iter()
-            .filter(|(c, _)| (c == base || numbered(c) == Some(base)) && !self.cables.owns(c, c) && !claimed.contains(c))
+            .filter(|(c, _)| {
+                (c == base || numbered(c) == Some(base)) && !self.cables.owns(c, c) && !claimed.contains(c)
+            })
             .collect();
         match gs.as_slice() {
             [] => None,
@@ -882,16 +932,23 @@ impl<'a> Resolver<'a> {
     /// Physical ports of one device: the default device if it is physical,
     /// else the first one JACK lists (and `fallback` says why).
     fn physical(&self, side: Side, note: Option<String>) -> Resolved {
-        let gs = groups(self.ports(None, side.flag() | PORT_IS_PHYSICAL).into_iter().filter(|p| !is_monitor_port(p)).collect());
+        let gs = groups(
+            self.ports(None, side.flag() | PORT_IS_PHYSICAL).into_iter().filter(|p| !is_monitor_port(p)).collect(),
+        );
         if gs.is_empty() {
             let what = if side == Side::Strip { "capture" } else { "playback" };
             let prefix = note.map_or(String::new(), |n| format!("{n}, but "));
-            return Resolved { note: Some(format!("{prefix}there is no physical {what} device")), ..Default::default() };
+            return Resolved {
+                note: Some(format!("{prefix}there is no physical {what} device")),
+                ..Default::default()
+            };
         }
         let (i, fallback) = match self.default_device(side) {
             Ok(d) => match best_index(&gs, d) {
                 Some(i) => (i, None),
-                None => (0, Some(format!("the default {} \"{}\" is not a physical device", side.device(), d.description))),
+                None => {
+                    (0, Some(format!("the default {} \"{}\" is not a physical device", side.device(), d.description)))
+                }
             },
             Err(why) => (0, Some(why)),
         };
@@ -906,8 +963,12 @@ impl<'a> Resolver<'a> {
         let wrong = self.ports(Some(pat), side.other().flag());
         if let Some(p) = wrong.first() {
             return match side {
-                Side::Strip => format!(" that sends audio; \"{p}\" is an input (a strip needs capture, monitor or app output ports)"),
-                Side::Bus => format!(" that takes audio; \"{p}\" is an output (a bus needs playback or app input ports)"),
+                Side::Strip => format!(
+                    " that sends audio; \"{p}\" is an input (a strip needs capture, monitor or app output ports)"
+                ),
+                Side::Bus => {
+                    format!(" that takes audio; \"{p}\" is an output (a bus needs playback or app input ports)")
+                }
             };
         }
         let all = groups(self.ports(None, side.flag()));
@@ -916,7 +977,9 @@ impl<'a> Resolver<'a> {
                 let group = best_index(&all, dev).map(|i| &all[i]);
                 let hit = sys::regex_match(pat, &dev.name) == Some(true)
                     || group.is_some_and(|(_, ports)| {
-                        ports.iter().any(|p| sys::regex_match(pat, &format!("{}:{}", dev.name, short_of(p))) == Some(true))
+                        ports
+                            .iter()
+                            .any(|p| sys::regex_match(pat, &format!("{}:{}", dev.name, short_of(p))) == Some(true))
                     });
                 if hit {
                     return match group {
@@ -924,7 +987,10 @@ impl<'a> Resolver<'a> {
                             " — that is the PipeWire node name; JACK calls this device \"{client}\": use connect = ^{}:",
                             regex_escape(client)
                         ),
-                        None => format!(" — that is the PipeWire node name of \"{}\", which has no such JACK ports", dev.description),
+                        None => format!(
+                            " — that is the PipeWire node name of \"{}\", which has no such JACK ports",
+                            dev.description
+                        ),
                     };
                 }
             }
@@ -935,7 +1001,8 @@ impl<'a> Resolver<'a> {
             }
         }
         let low = pat.to_lowercase();
-        if let Some(p) = all.iter().flat_map(|g| &g.1).find(|p| sys::regex_match(&low, &p.to_lowercase()) == Some(true)) {
+        if let Some(p) = all.iter().flat_map(|g| &g.1).find(|p| sys::regex_match(&low, &p.to_lowercase()) == Some(true))
+        {
             return format!(" — names are case-sensitive: did you mean \"{p}\"?");
         }
         " (bananasplit --list-ports shows the names)".into()
@@ -1075,8 +1142,15 @@ mod tests {
                     Sink Input #203\n\tSink: 52\n\tProperties:\n\t\tnode.name = \"speech-dispatcher\"\n";
         let st = parse_streams(play, "Sink:");
         assert_eq!(st.len(), 3);
-        assert_eq!((st[0].id, st[0].app.as_str(), st[0].media.as_str(), st[0].target), (201, "Discord", "Playback", 51));
-        assert_eq!((st[1].app.as_str(), st[1].binary.as_str()), ("firefox", "firefox"), "no application.name: the program");
+        assert_eq!(
+            (st[0].id, st[0].app.as_str(), st[0].media.as_str(), st[0].target),
+            (201, "Discord", "Playback", 51)
+        );
+        assert_eq!(
+            (st[1].app.as_str(), st[1].binary.as_str()),
+            ("firefox", "firefox"),
+            "no application.name: the program"
+        );
         assert_eq!(st[2].app, "speech-dispatcher", "else the node name");
         // pavucontrol's peak meters, monitor streams and BananaSplit itself are no apps
         let rec = "Source Output #301\n\tSource: 52\n\tProperties:\n\t\tapplication.name = \"OBS\"\n\n\
@@ -1127,7 +1201,11 @@ mod tests {
         assert!(!s("Ardour", "").is_jack_client("ardour"));
         // named after its description (module-echo-cancel, loopbacks), with
         // or without the application in front
-        let echo = Stream { desc: "Echo-Cancel Capture".into(), nick: "echo-cancel".into(), ..s("PipeWire", "echo-cancel-capture") };
+        let echo = Stream {
+            desc: "Echo-Cancel Capture".into(),
+            nick: "echo-cancel".into(),
+            ..s("PipeWire", "echo-cancel-capture")
+        };
         assert!(echo.is_jack_client("Echo-Cancel Capture"));
         assert!(echo.is_jack_client("PipeWire/Echo-Cancel Capture"));
         assert!(echo.is_jack_client("echo-cancel"));
@@ -1141,8 +1219,14 @@ mod tests {
     fn monitor_ports_only_when_nothing_else_matches() {
         let v = |p: &[&str]| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(prefer_non_monitor(v(&["H:capture_MONO", "H:monitor_FL", "H:monitor_FR"])), ["H:capture_MONO"]);
-        assert_eq!(prefer_non_monitor(v(&["H:monitor_FL", "H:capture_FL", "H:capture_FR"])), ["H:capture_FL", "H:capture_FR"]);
-        assert_eq!(prefer_non_monitor(v(&["Speakers:monitor_FL", "Speakers:monitor_FR"])), ["Speakers:monitor_FL", "Speakers:monitor_FR"]);
+        assert_eq!(
+            prefer_non_monitor(v(&["H:monitor_FL", "H:capture_FL", "H:capture_FR"])),
+            ["H:capture_FL", "H:capture_FR"]
+        );
+        assert_eq!(
+            prefer_non_monitor(v(&["Speakers:monitor_FL", "Speakers:monitor_FR"])),
+            ["Speakers:monitor_FL", "Speakers:monitor_FR"]
+        );
         assert!(prefer_non_monitor(Vec::new()).is_empty());
     }
 
@@ -1156,14 +1240,24 @@ mod tests {
         assert_eq!(client_score(yeti_in, "Yeti Stereo Microphone Analog Stereo-6x"), 0);
         assert_eq!(client_score(yeti_in, "Yeti"), 0);
         assert_eq!(client_score(&d.list[1], "Yeti Stereo Microphone Analog Stereo"), 0);
-        let long = Device { index: 0, name: "n".into(), description: "x".repeat(80), nick: None, is_source: true, is_monitor: false };
+        let long = Device {
+            index: 0,
+            name: "n".into(),
+            description: "x".repeat(80),
+            nick: None,
+            is_source: true,
+            is_monitor: false,
+        };
         assert_eq!(client_score(&long, &"x".repeat(63)), 1);
         assert_eq!(client_score(&long, &"x".repeat(20)), 0);
     }
 
     #[test]
     fn menu_lines_and_numbered_names() {
-        assert_eq!(literal_client("^Yeti Stereo Microphone Analog Stereo-63:").as_deref(), Some("Yeti Stereo Microphone Analog Stereo-63"));
+        assert_eq!(
+            literal_client("^Yeti Stereo Microphone Analog Stereo-63:").as_deref(),
+            Some("Yeti Stereo Microphone Analog Stereo-63")
+        );
         assert_eq!(literal_client(r"^Built-in Audio \(HDMI\) \[2\]:").as_deref(), Some("Built-in Audio (HDMI) [2]"));
         assert_eq!(literal_client("^system:capture_1"), None, "a port, not a client");
         assert_eq!(literal_client("^Yeti.*:"), None, "a regex");
@@ -1182,7 +1276,12 @@ mod tests {
     fn default_input_is_never_a_monitor_group() {
         // PipeWire gave the output (playback + monitor) the device's name
         // and the input the -NN one
-        let ports = ["Yeti Stereo Microphone Analog Stereo:monitor_FL", "Yeti Stereo Microphone Analog Stereo:monitor_FR", "Yeti Stereo Microphone Analog Stereo-63:capture_FL", "Yeti Stereo Microphone Analog Stereo-63:capture_FR"];
+        let ports = [
+            "Yeti Stereo Microphone Analog Stereo:monitor_FL",
+            "Yeti Stereo Microphone Analog Stereo:monitor_FR",
+            "Yeti Stereo Microphone Analog Stereo-63:capture_FL",
+            "Yeti Stereo Microphone Analog Stereo-63:capture_FR",
+        ];
         let gs = groups(ports.iter().map(|s| s.to_string()).collect());
         let d = parse(INFO, SINKS, SOURCES);
         assert_eq!(best_index(&gs, &d.list[2]), Some(0));
@@ -1192,7 +1291,13 @@ mod tests {
 
     #[test]
     fn grouping_and_best_group() {
-        let ports = ["Razer Kiyo Analog Stereo:capture_FL", "Razer Kiyo Analog Stereo:capture_FR", "Yeti Stereo Microphone Analog Stereo-63:capture_FL", "Yeti Stereo Microphone Analog Stereo-63:capture_FR", "Yeti Stereo Microphone Analog Stereo:capture_FL"];
+        let ports = [
+            "Razer Kiyo Analog Stereo:capture_FL",
+            "Razer Kiyo Analog Stereo:capture_FR",
+            "Yeti Stereo Microphone Analog Stereo-63:capture_FL",
+            "Yeti Stereo Microphone Analog Stereo-63:capture_FR",
+            "Yeti Stereo Microphone Analog Stereo:capture_FL",
+        ];
         let gs = groups(ports.iter().map(|s| s.to_string()).collect());
         assert_eq!(gs.len(), 3);
         assert_eq!(gs[0].1.len(), 2);

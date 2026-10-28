@@ -99,7 +99,9 @@ fn consts() -> &'static Consts {
                 .collect(),
             mdct36: (0..18)
                 .map(|i| {
-                    std::array::from_fn(|k| (2.0 / 18.0 * (PI / 72.0 * (2 * k + 1 + 18) as f64 * (2 * i + 1) as f64).cos()) as f32)
+                    std::array::from_fn(|k| {
+                        (2.0 / 18.0 * (PI / 72.0 * (2 * k + 1 + 18) as f64 * (2 * i + 1) as f64).cos()) as f32
+                    })
                 })
                 .collect(),
             mdct12,
@@ -272,9 +274,19 @@ impl Gr {
     /// `None` if they do not fit any.
     fn part2(&mut self) -> Option<u32> {
         let (n1, max1, n2, max2) = if self.block_type == 2 {
-            (18, self.sf[..18].iter().copied().max().unwrap_or(0), 18, self.sf[18..36].iter().copied().max().unwrap_or(0))
+            (
+                18,
+                self.sf[..18].iter().copied().max().unwrap_or(0),
+                18,
+                self.sf[18..36].iter().copied().max().unwrap_or(0),
+            )
         } else {
-            (11, self.sf[..11].iter().copied().max().unwrap_or(0), 10, self.sf[11..21].iter().copied().max().unwrap_or(0))
+            (
+                11,
+                self.sf[..11].iter().copied().max().unwrap_or(0),
+                10,
+                self.sf[11..21].iter().copied().max().unwrap_or(0),
+            )
         };
         let mut best: Option<(u32, usize)> = None;
         for (k, &(s1, s2)) in SLEN.iter().enumerate() {
@@ -376,8 +388,29 @@ impl Gr {
 /// Region 0 and 1 band counts for `big` lines of big values (LAME's table).
 fn subdivide(sfb: &[u16; 23], big: usize) -> (usize, usize) {
     const SUBDV: [(usize, usize); 23] = [
-        (0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (0, 1), (1, 1), (1, 1), (1, 2), (2, 2), (2, 3), (2, 3),
-        (3, 4), (3, 4), (3, 4), (4, 5), (4, 5), (4, 6), (5, 6), (5, 6), (5, 7), (6, 7), (6, 7),
+        (0, 0),
+        (0, 0),
+        (0, 0),
+        (0, 0),
+        (0, 0),
+        (0, 1),
+        (1, 1),
+        (1, 1),
+        (1, 2),
+        (2, 2),
+        (2, 3),
+        (2, 3),
+        (3, 4),
+        (3, 4),
+        (3, 4),
+        (4, 5),
+        (4, 5),
+        (4, 6),
+        (5, 6),
+        (5, 6),
+        (5, 7),
+        (6, 7),
+        (6, 7),
     ];
     if big == 0 {
         return (0, 0);
@@ -628,12 +661,15 @@ impl Psy {
         let line_hz = |lines: f64, i: f64| (i + 0.5) * f64::from(rate) / 2.0 / lines;
         let make = |edges: &[u16], lines: f64, scale: f64| {
             let n = edges.len() - 1;
-            let z: Vec<f64> = (0..n).map(|b| bark(line_hz(lines, (f64::from(edges[b]) + f64::from(edges[b + 1]) - 1.0) / 2.0))).collect();
+            let z: Vec<f64> = (0..n)
+                .map(|b| bark(line_hz(lines, (f64::from(edges[b]) + f64::from(edges[b + 1]) - 1.0) / 2.0)))
+                .collect();
             let spread: Vec<Vec<f32>> =
                 (0..n).map(|b| (0..n).map(|k| 10f64.powf(spread_db(z[b] - z[k]) / 10.0) as f32).collect()).collect();
             let ath: Vec<f32> = (0..n)
                 .map(|b| {
-                    let db = (edges[b]..edges[b + 1]).map(|i| ath_db(line_hz(lines, f64::from(i)))).fold(f64::MAX, f64::min);
+                    let db =
+                        (edges[b]..edges[b + 1]).map(|i| ath_db(line_hz(lines, f64::from(i)))).fold(f64::MAX, f64::min);
                     (full_scale_energy * scale * 10f64.powf((db - FULL_SCALE_DB_SPL - ATH_LOWER_DB) / 10.0)) as f32
                 })
                 .collect();
@@ -721,8 +757,17 @@ pub struct Encoder {
 /// Lowpass corner by bitrate (LAME's table for stereo).
 fn lowpass_hz(kbps: u32) -> f64 {
     const MAP: [(u32, f64); 11] = [
-        (64, 11000.0), (80, 13500.0), (96, 15100.0), (112, 15600.0), (128, 17000.0), (160, 17500.0),
-        (192, 18600.0), (224, 19400.0), (256, 19700.0), (320, 20500.0), (u32::MAX, 20500.0),
+        (64, 11000.0),
+        (80, 13500.0),
+        (96, 15100.0),
+        (112, 15600.0),
+        (128, 17000.0),
+        (160, 17500.0),
+        (192, 18600.0),
+        (224, 19400.0),
+        (256, 19700.0),
+        (320, 20500.0),
+        (u32::MAX, 20500.0),
     ];
     MAP.iter().find(|&&(k, _)| kbps <= k).map_or(20500.0, |&(_, f)| f)
 }
@@ -1140,7 +1185,13 @@ impl Encoder {
                                 .sum();
                         }
                         let mut t = [0f32; 13];
-                        Psy::thresholds(&e, &self.psy.short_spread, &self.psy.short_ath, &self.psy.short_offset, &mut t);
+                        Psy::thresholds(
+                            &e,
+                            &self.psy.short_spread,
+                            &self.psy.short_ath,
+                            &self.psy.short_offset,
+                            &mut t,
+                        );
                         for s in 0..13 {
                             thr[3 * s + w] = t[s];
                         }
@@ -1161,7 +1212,8 @@ impl Encoder {
                 for ch in 0..2 {
                     let mut e = [0f32; 22];
                     for (s, es) in e.iter_mut().enumerate() {
-                        *es = xr[ch][usize::from(sfb_long[s])..usize::from(sfb_long[s + 1])].iter().map(|v| v * v).sum();
+                        *es =
+                            xr[ch][usize::from(sfb_long[s])..usize::from(sfb_long[s + 1])].iter().map(|v| v * v).sum();
                     }
                     let mut t = vec![0f32; 22];
                     Psy::thresholds(&e, &self.psy.long_spread, &self.psy.long_ath, &self.psy.long_offset, &mut t);
@@ -1229,7 +1281,8 @@ impl Encoder {
             let p = &preps[g];
             let left = main_bits - used_total;
             let later: f64 = want[k + 1..].iter().sum();
-            let budget = (want[k] + (f64::from(left) - want[k] - later).max(0.0)).min(f64::from(left)).min(4095.0) as u32;
+            let budget =
+                (want[k] + (f64::from(left) - want[k] - later).max(0.0)).min(f64::from(left)).min(4095.0) as u32;
             let w = &mut self.work[ch];
             w.block_type = gr[g].1;
             w.n_sf = if w.block_type == 2 { 36 } else { 21 };
@@ -1303,7 +1356,10 @@ fn write_main(bw: &mut BitWriter, r: &Gr, sfb: &[u16; 23]) {
     }
     let big = 2 * r.big_values;
     let (e0, e1) = if r.block_type == 0 {
-        (usize::from(sfb[r.region0_count + 1]).min(big), usize::from(sfb[r.region0_count + r.region1_count + 2]).min(big))
+        (
+            usize::from(sfb[r.region0_count + 1]).min(big),
+            usize::from(sfb[r.region0_count + r.region1_count + 2]).min(big),
+        )
     } else {
         (36.min(big), big)
     };
@@ -1362,7 +1418,9 @@ fn full_scale_energy() -> f64 {
         let mut count = 0;
         for g in 0..8 {
             for ch in 0..2 {
-                enc.input[ch] = (0..GRANULE).map(|i| (2.0 * PI * 1000.0 * (g * GRANULE + i) as f64 / 48000.0).sin() as f32).collect();
+                enc.input[ch] = (0..GRANULE)
+                    .map(|i| (2.0 * PI * 1000.0 * (g * GRANULE + i) as f64 / 48000.0).sin() as f32)
+                    .collect();
             }
             let sb = enc.analyze();
             if g >= 4 {
@@ -1400,7 +1458,14 @@ impl Encoder {
             bitrate_index: 14,
             num: 1,
             den: 1,
-            psy: Psy { long_spread: vec![], short_spread: vec![], long_ath: [0.0; 22], short_ath: [0.0; 13], long_offset: [0.0; 22], short_offset: [0.0; 13] },
+            psy: Psy {
+                long_spread: vec![],
+                short_spread: vec![],
+                long_ath: [0.0; 22],
+                short_ath: [0.0; 13],
+                long_offset: [0.0; 22],
+                short_offset: [0.0; 13],
+            },
             lowpass: [1.0; 576],
             lowpass_short: [1.0; 192],
             input: [Vec::new(), Vec::new()],

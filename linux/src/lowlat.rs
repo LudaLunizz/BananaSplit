@@ -90,7 +90,10 @@ pub fn install(dir: &Path) -> Result<Vec<String>, String> {
         match std::fs::read_to_string(&path) {
             Ok(s) if s == want => out.push(format!("already installed: {}", path.display())),
             Ok(_) => {
-                out.push(format!("left alone (not BananaSplit's version, compare it with contrib/pipewire): {}", path.display()));
+                out.push(format!(
+                    "left alone (not BananaSplit's version, compare it with contrib/pipewire): {}",
+                    path.display()
+                ));
                 continue; // keep vmix's file too: the user manages these
             }
             Err(_) => {
@@ -156,7 +159,10 @@ pub fn command(on: bool) -> Result<(), String> {
     }
     match apply_live(on) {
         Ok(()) if on => {
-            println!("applied to the running PipeWire: {QUANTUM}-frame periods ({:.2} ms at 48 kHz)", QUANTUM as f64 / 48.0);
+            println!(
+                "applied to the running PipeWire: {QUANTUM}-frame periods ({:.2} ms at 48 kHz)",
+                QUANTUM as f64 / 48.0
+            );
             println!("the smaller default buffers for browsers/Discord apply after: {RESTART}");
         }
         Ok(()) => println!("the running PipeWire is back to its configured periods"),
@@ -246,7 +252,15 @@ mod tests {
         for st in [State::Missing, State::Changed, State::Installed] {
             for (p, l) in [(1024, 0), (8192, 9999), (128, 9999)] {
                 for pw in [Some(true), Some(false), None] {
-                    let f = Facts { sample_rate: 44100, period: p, requested: 128, lat_in: l, lat_out: l, pipewire: pw, state: st };
+                    let f = Facts {
+                        sample_rate: 44100,
+                        period: p,
+                        requested: 128,
+                        lat_in: l,
+                        lat_out: l,
+                        pipewire: pw,
+                        state: st,
+                    };
                     if let Some(a) = advice(&f) {
                         assert!(a.chars().count() <= 78, "{} chars: {a}", a.chars().count());
                     }

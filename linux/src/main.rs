@@ -16,6 +16,12 @@ mod tui;
 mod update;
 
 use backend::{Backend, Wiring};
+use bananasplit::config::Config;
+use bananasplit::engine::{NUM_STRIPS, Shared};
+use bananasplit::player::{PlayTap, Player};
+use bananasplit::recorder::{self, RecTap, Recorder};
+use bananasplit::scenes::SceneStore;
+use bananasplit::vban::{InState, NUM_IN, NUM_OUT, OutState, Vban, VbanConfig, VbanStatus, VbanTap};
 use cables::{CableSet, Cables};
 use devices::Side;
 use std::cell::RefCell;
@@ -26,12 +32,6 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use bananasplit::config::Config;
-use bananasplit::engine::{NUM_STRIPS, Shared};
-use bananasplit::player::{PlayTap, Player};
-use bananasplit::recorder::{self, RecTap, Recorder};
-use bananasplit::scenes::SceneStore;
-use bananasplit::vban::{InState, NUM_IN, NUM_OUT, OutState, Vban, VbanConfig, VbanStatus, VbanTap};
 
 const HELP: &str = "\
 BananaSplit — 6-strip, 5-bus low-latency virtual audio mixer (JACK / PipeWire),
@@ -167,7 +167,9 @@ fn parse_args() -> Result<Option<Args>, String> {
         }
     }
     if a.gui && a.headless {
-        return Err("--gui and --headless cannot be combined (for a background service with a GUI use --gui --no-open)".into());
+        return Err(
+            "--gui and --headless cannot be combined (for a background service with a GUI use --gui --no-open)".into(),
+        );
     }
     if a.mode == Mode::QuitRunning && !(a.gui || a.headless || a.no_cables || a.no_open || a.hidden) {
         return Ok(Some(a)); // --quit [--gui-port PORT]
@@ -228,7 +230,9 @@ fn main() -> ExitCode {
             if let Err(e) = update::spawn_restarted(own) {
                 eprintln!("bananasplit: could not restart: {e}");
                 if gui && !sys::stdin_is_tty() {
-                    show_error(&format!("BananaSplit was updated, but could not start again: {e}\n\nStart it from the app menu."));
+                    show_error(&format!(
+                        "BananaSplit was updated, but could not start again: {e}\n\nStart it from the app menu."
+                    ));
                 }
                 return ExitCode::FAILURE;
             }
@@ -332,7 +336,8 @@ fn run(args: Args) -> Result<(), String> {
     }
     // Upgrading from vmix (2.4 and older): bring its settings along once.
     let migrated = if args.config == Config::default_path() {
-        Config::migrate_legacy(&args.config, &Config::legacy_path()).unwrap_or_else(|e| Some(format!("vmix settings not copied: {e}")))
+        Config::migrate_legacy(&args.config, &Config::legacy_path())
+            .unwrap_or_else(|e| Some(format!("vmix settings not copied: {e}")))
     } else {
         None
     };
@@ -383,10 +388,13 @@ fn run(args: Args) -> Result<(), String> {
         }
     };
     let mut notes: Vec<String> = migrated.into_iter().collect();
-    if cfg.force_buffer_size && cfg.buffer_size > 0 && client.buffer_size() != cfg.buffer_size
-        && let Err(e) = client.set_buffer_size(cfg.buffer_size) {
-            notes.push(e);
-        }
+    if cfg.force_buffer_size
+        && cfg.buffer_size > 0
+        && client.buffer_size() != cfg.buffer_size
+        && let Err(e) = client.set_buffer_size(cfg.buffer_size)
+    {
+        notes.push(e);
+    }
 
     // We own the JACK name now, so cables with our names that are still
     // loaded were left by a BananaSplit that was killed: let its watchdog finish,
@@ -400,7 +408,10 @@ fn run(args: Args) -> Result<(), String> {
             notes.push("the cable watchdog of an earlier BananaSplit is still running".into());
         }
         if let Ok(n @ 1..) = cables::sweep(&cable_set.node_names()) {
-            notes.push(format!("removed {} left behind by a BananaSplit that was killed", plural(n, "virtual cable", "virtual cables")));
+            notes.push(format!(
+                "removed {} left behind by a BananaSplit that was killed",
+                plural(n, "virtual cable", "virtual cables")
+            ));
         }
     }
     // Cables before ports so they exist when we auto-connect.
@@ -429,7 +440,8 @@ fn run(args: Args) -> Result<(), String> {
     let backend = Backend::start(client, shared.clone(), tap.clone(), Some(vban_tap.clone()), play_tap.clone())?;
     // The rate the server really runs the mixer at (see Backend::start).
     let rate = backend.sample_rate();
-    let recorder = tap.map(|t| Arc::new(Recorder::new(t, rate, cfg.recorder.settings()).with_clock(sys::local_timestamp)));
+    let recorder =
+        tap.map(|t| Arc::new(Recorder::new(t, rate, cfg.recorder.settings()).with_clock(sys::local_timestamp)));
     let vban = Arc::new(Vban::start(vban_tap, rate, cfg.vban.clone()));
     let player = play_tap.map(|t| {
         let p = Arc::new(Player::new(t, rate));
@@ -456,7 +468,8 @@ fn run(args: Args) -> Result<(), String> {
     let result = match (&recorder, &player) {
         (None, _) => run_headless(&ctx, &cfg, notes),
         (Some(rec), Some(player)) => {
-            let opts = GuiOpts { port: gui_port, explicit: args.gui_port.is_some(), open: !args.no_open, hidden: args.hidden };
+            let opts =
+                GuiOpts { port: gui_port, explicit: args.gui_port.is_some(), open: !args.no_open, hidden: args.hidden };
             run_gui(&ctx, &mut cfg, rec, player, notes, &opts)
         }
         (Some(rec), None) => run_tui(&ctx, &mut cfg, rec, notes),
@@ -711,7 +724,12 @@ impl PulseSeen {
 
     /// Look at the latest report, if it is new: did the defaults change,
     /// and what happened to cables that had disappeared?
-    fn poll(&mut self, pulse: &devices::PulseWatch, cfg: &Config, cables: &RefCell<Cables>) -> (bool, Vec<cables::CableEvent>) {
+    fn poll(
+        &mut self,
+        pulse: &devices::PulseWatch,
+        cfg: &Config,
+        cables: &RefCell<Cables>,
+    ) -> (bool, Vec<cables::CableEvent>) {
         // a cable could not be made again yet: try again every 2 s
         if cables.borrow().retrying() && self.kicked.is_none_or(|t| t.elapsed() >= Duration::from_secs(2)) {
             pulse.kick();
@@ -749,7 +767,8 @@ fn print_wiring(backend: &Backend, cfg: &Config, w: &Wiring, last: &mut Vec<Stri
     for e in &w.errs {
         eprintln!("bananasplit: {e}");
     }
-    for (side, what) in [(Side::Strip, "a strip can take (JACK outputs)"), (Side::Bus, "a bus can feed (JACK inputs)")] {
+    for (side, what) in [(Side::Strip, "a strip can take (JACK outputs)"), (Side::Bus, "a bus can feed (JACK inputs)")]
+    {
         if w.missed[side as usize] {
             eprintln!("bananasplit:   ports {what}:");
             for l in backend.port_listing(cfg, side) {
@@ -792,9 +811,7 @@ impl LatencyCheck {
 
 /// A line for the user when the audio server changed its sample rate.
 fn rate_change(backend: &Backend) -> Option<String> {
-    backend.poll_rate().map(|r| {
-        format!("the audio server now runs at {r} Hz; recording, VBAN and playback follow it")
-    })
+    backend.poll_rate().map(|r| format!("the audio server now runs at {r} Hz; recording, VBAN and playback follow it"))
 }
 
 fn append(status: &mut String, msg: &str) {
@@ -882,7 +899,9 @@ fn rec_line(rec: &Recorder, shared: &Shared) -> tui::RecLine {
             recorder::Format::Mp3 => format!("mp3 {}", set.kbps),
             f => f.as_str().to_string(),
         };
-        tui::RecLine { on: false, text: format!("{} · {format} · links {links} → {}", set.mode.as_str(), set.folder) }
+        tui::RecLine {
+            on: false, text: format!("{} · {format} · links {links} → {}", set.mode.as_str(), set.folder)
+        }
     }
 }
 
@@ -1106,7 +1125,9 @@ impl Window {
         match gui::WindowProc::spawn(&opts) {
             Ok(p) => {
                 if p.mode == gui::WinMode::Tray {
-                    eprintln!("bananasplit: WebKitGTK not found, showing the mixer in a browser (tray icon still works)");
+                    eprintln!(
+                        "bananasplit: WebKitGTK not found, showing the mixer in a browser (tray icon still works)"
+                    );
                     if !hidden {
                         self.open_browser();
                     }
@@ -1129,7 +1150,9 @@ impl Window {
     fn show(&mut self, cfg: &Config, token: &str) {
         let alive = self.proc.as_mut().is_some_and(gui::WindowProc::alive);
         match &mut self.proc {
-            Some(p) if alive && p.mode == gui::WinMode::App => p.send(&format!("show {}", if token.is_empty() { "-" } else { token })),
+            Some(p) if alive && p.mode == gui::WinMode::App => {
+                p.send(&format!("show {}", if token.is_empty() { "-" } else { token }))
+            }
             Some(_) if alive => self.open_browser(),
             _ => {
                 self.proc = None;
@@ -1303,16 +1326,19 @@ fn run_gui(
                     // an app put on a strip (or back on the computer's device)
                     // in the menu: BananaSplit puts it there whenever it plays
                     let home = match &op {
-                        gui::DevOp::Stream { rec: false, id, ch } => {
-                            info.playing.iter().find(|s| s.id == *id).map(|s| (apphome::key(s).to_string(), ch.filter(|c| *c < NUM_STRIPS)))
-                        }
+                        gui::DevOp::Stream { rec: false, id, ch } => info
+                            .playing
+                            .iter()
+                            .find(|s| s.id == *id)
+                            .map(|s| (apphome::key(s).to_string(), ch.filter(|c| *c < NUM_STRIPS))),
                         _ => None,
                     };
                     let mut r = chanmenu::handle(op, backend, cfg, &mut ctx.cables.borrow_mut(), &info);
                     if let (Ok(m), Some((app, strip)), Some(h)) = (&mut r, home, seen.homes.as_mut())
-                        && let Err(e) = h.set(&app, strip) {
-                            m.push_str(&format!(" ({e})"));
-                        }
+                        && let Err(e) = h.set(&app, strip)
+                    {
+                        m.push_str(&format!(" ({e})"));
+                    }
                     if !list {
                         pulse.kick();
                         conns_at = Instant::now() - Duration::from_secs(10);
@@ -1342,7 +1368,9 @@ fn run_gui(
                 }
             }
             if !p.alive() {
-                eprintln!("bananasplit: the window closed; run `bananasplit --gui` (or use the app menu) to open it again");
+                eprintln!(
+                    "bananasplit: the window closed; run `bananasplit --gui` (or use the app menu) to open it again"
+                );
                 window.proc = None;
             }
         }
@@ -1451,8 +1479,10 @@ fn run_gui(
         let (vst, vcfg) = (vban.status(), vban.config());
         // what each channel is connected to now (also what the menus and
         // other programs connected since the last auto-connect pass)
-        let now: Vec<String> =
-            conns.iter().map(|c| if c.is_empty() { "(nothing connected)".to_string() } else { c.join(" + ") }).collect();
+        let now: Vec<String> = conns
+            .iter()
+            .map(|c| if c.is_empty() { "(nothing connected)".to_string() } else { c.join(" + ") })
+            .collect();
         let conn_all = with_vban(&now, &vst, &vcfg, backend.sample_rate());
         let play = player.status();
         let (takes_rev, list) = takes.snapshot();

@@ -71,7 +71,9 @@ impl FromAddr {
         } else if v.eq_ignore_ascii_case("any") {
             Ok(FromAddr::Any)
         } else {
-            v.parse().map(FromAddr::Ip).map_err(|_| format!("expected the sender's IPv4 address (like 192.168.1.20) or any, got {v:?}"))
+            v.parse()
+                .map(FromAddr::Ip)
+                .map_err(|_| format!("expected the sender's IPv4 address (like 192.168.1.20) or any, got {v:?}"))
         }
     }
 
@@ -98,7 +100,8 @@ pub fn parse_to(v: &str) -> Result<Option<Ipv4Addr>, String> {
     if v.is_empty() {
         return Ok(None);
     }
-    let ip: Ipv4Addr = v.parse().map_err(|_| format!("expected the receiver's IPv4 address (like 192.168.1.20), got {v:?}"))?;
+    let ip: Ipv4Addr =
+        v.parse().map_err(|_| format!("expected the receiver's IPv4 address (like 192.168.1.20), got {v:?}"))?;
     if ip.is_unspecified() || ip.is_multicast() {
         return Err(format!("{ip} cannot receive a VBAN stream"));
     }
@@ -111,17 +114,28 @@ pub fn parse_port(v: &str) -> Result<u16, String> {
 
 /// `1`..`6` -> strip index.
 pub fn parse_strip(v: &str) -> Result<usize, String> {
-    v.trim().parse::<usize>().ok().filter(|s| (1..=NUM_STRIPS).contains(s)).map(|s| s - 1).ok_or_else(|| format!("expected a strip 1-{NUM_STRIPS}, got {v:?}"))
+    v.trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|s| (1..=NUM_STRIPS).contains(s))
+        .map(|s| s - 1)
+        .ok_or_else(|| format!("expected a strip 1-{NUM_STRIPS}, got {v:?}"))
 }
 
 /// `1`..`6`, `A1`..`B2` -> source index (same numbering as the recorder).
 pub fn parse_source(v: &str) -> Result<usize, String> {
     let v = v.trim();
-    (0..NUM_SOURCES).find(|&i| source_id(i).eq_ignore_ascii_case(v)).ok_or_else(|| format!("expected a source 1-6, A1, A2, A3, B1 or B2, got {v:?}"))
+    (0..NUM_SOURCES)
+        .find(|&i| source_id(i).eq_ignore_ascii_case(v))
+        .ok_or_else(|| format!("expected a source 1-6, A1, A2, A3, B1 or B2, got {v:?}"))
 }
 
 pub fn parse_buffer_ms(v: &str) -> Result<u32, String> {
-    v.trim().parse::<u32>().ok().filter(|&b| b <= MAX_BUFFER_MS).ok_or_else(|| format!("expected a buffer of 0-{MAX_BUFFER_MS} ms, got {v:?}"))
+    v.trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|&b| b <= MAX_BUFFER_MS)
+        .ok_or_else(|| format!("expected a buffer of 0-{MAX_BUFFER_MS} ms, got {v:?}"))
 }
 
 pub fn parse_channels(v: &str) -> Result<u8, String> {
@@ -157,7 +171,13 @@ pub struct OutStream {
 
 impl InStream {
     pub fn default_for(k: usize) -> InStream {
-        InStream { on: false, name: format!("Stream{}", k + 1), from: FromAddr::Unset, strip: NUM_STRIPS - 1, buffer_ms: DEFAULT_BUFFER_MS }
+        InStream {
+            on: false,
+            name: format!("Stream{}", k + 1),
+            from: FromAddr::Unset,
+            strip: NUM_STRIPS - 1,
+            buffer_ms: DEFAULT_BUFFER_MS,
+        }
     }
 
     /// Why this stream cannot run, if it cannot.
@@ -319,7 +339,14 @@ impl InStatus {
             InState::Blocked => self.error.clone().unwrap_or_default(),
             InState::Waiting => match &self.error {
                 Some(e) => e.clone(),
-                None => format!("waiting for \"{}\" from {}", cfg.name, match cfg.from { FromAddr::Ip(ip) => ip.to_string(), _ => "any sender".into() }),
+                None => format!(
+                    "waiting for \"{}\" from {}",
+                    cfg.name,
+                    match cfg.from {
+                        FromAddr::Ip(ip) => ip.to_string(),
+                        _ => "any sender".into(),
+                    }
+                ),
             },
             InState::Receiving => {
                 let mut s = format!(
@@ -617,11 +644,14 @@ fn rx_thread(inner: &Inner) {
                         _ if own => ignored += 1,
                         Ok(proto::Packet::Audio(h, data)) => {
                             let k = (0..NUM_IN).find(|&k| {
-                                cfg.in_runs(k) && proto::name_matches(h.name_bytes(), &cfg.ins[k].name) && cfg.ins[k].from.accepts(*from.ip())
+                                cfg.in_runs(k)
+                                    && proto::name_matches(h.name_bytes(), &cfg.ins[k].name)
+                                    && cfg.ins[k].from.accepts(*from.ip())
                             });
                             match k {
                                 Some(k) => {
-                                    let r = streams[k].packet(tap, k, &h, data, from, now, fs, cfg.ins[k].buffer_ms as f64);
+                                    let r =
+                                        streams[k].packet(tap, k, &h, data, from, now, fs, cfg.ins[k].buffer_ms as f64);
                                     errors[k] = r.err();
                                     if streams[k].from != Some(from) {
                                         // a second sender of this stream (not played)
@@ -635,7 +665,11 @@ fn rx_thread(inner: &Inner) {
                     }
                 }
                 Ok(_) => ignored += 1, // IPv6: not on an IPv4 socket
-                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => {}
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted
+                    ) => {}
                 Err(_) => std::thread::sleep(Duration::from_millis(20)), // e.g. ICMP errors reported on the socket
             },
             None => std::thread::sleep(Duration::from_millis(20)),
@@ -658,11 +692,14 @@ fn rx_thread(inner: &Inner) {
                 } else if let Some(p) = c.problem() {
                     InStatus { state: InState::Blocked, error: Some(p.into()), ..InStatus::default() }
                 } else if !s.receiving(now) {
-                    let error = errors[k].clone().or_else(|| cfg.shadowed_by(k).map(|j| format!("in{} receives this stream", j + 1))).or_else(|| {
-                        seen.iter()
-                            .find(|x| x.name.eq_ignore_ascii_case(&c.name))
-                            .map(|x| format!("\"{}\" arrives from {}, not from {}", x.name, x.from.ip(), c.from.as_string()))
-                    });
+                    let error = errors[k]
+                        .clone()
+                        .or_else(|| cfg.shadowed_by(k).map(|j| format!("in{} receives this stream", j + 1)))
+                        .or_else(|| {
+                            seen.iter().find(|x| x.name.eq_ignore_ascii_case(&c.name)).map(|x| {
+                                format!("\"{}\" arrives from {}, not from {}", x.name, x.from.ip(), c.from.as_string())
+                            })
+                        });
                     InStatus { state: InState::Waiting, error, ..InStatus::default() }
                 } else {
                     InStatus {
@@ -807,7 +844,11 @@ fn tx_thread(inner: &Inner) {
                 } else if let Some(p) = c.problem() {
                     OutStatus { state: OutState::Blocked, error: Some(p.into()), ..OutStatus::default() }
                 } else if sr_index.is_none() {
-                    OutStatus { state: OutState::Blocked, error: Some(format!("VBAN has no {fs} Hz sample rate")), ..OutStatus::default() }
+                    OutStatus {
+                        state: OutState::Blocked,
+                        error: Some(format!("VBAN has no {fs} Hz sample rate")),
+                        ..OutStatus::default()
+                    }
                 } else if sock.is_none() {
                     OutStatus { state: OutState::Blocked, error: fallback_error.clone(), ..OutStatus::default() }
                 } else {
@@ -892,9 +933,18 @@ mod tests {
         let port = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let (ta, tb) = (VbanTap::new(), VbanTap::new());
         let mut ca = VbanConfig { enabled: true, port: 0, ..VbanConfig::default() }; // the sender listens anywhere
-        ca.outs[1] = OutStream { on: true, name: "Mix".into(), to: Some(Ipv4Addr::LOCALHOST), port, source: 9, format: SampleFormat::I24, channels: 2 };
+        ca.outs[1] = OutStream {
+            on: true,
+            name: "Mix".into(),
+            to: Some(Ipv4Addr::LOCALHOST),
+            port,
+            source: 9,
+            format: SampleFormat::I24,
+            channels: 2,
+        };
         let mut cb = VbanConfig { enabled: true, port, ..VbanConfig::default() };
-        cb.ins[4] = InStream { on: true, name: "mix".into(), from: FromAddr::Ip(Ipv4Addr::LOCALHOST), strip: 2, buffer_ms: 5 };
+        cb.ins[4] =
+            InStream { on: true, name: "mix".into(), from: FromAddr::Ip(Ipv4Addr::LOCALHOST), strip: 2, buffer_ms: 5 };
         let (va, vb) = (Vban::start(ta.clone(), 48_000, ca), Vban::start(tb.clone(), 48_000, cb));
         wait_for("both rings", || ta.outs[1].source.load(Relaxed) == 9 && tb.ins[4].strip.load(Relaxed) == 2);
         // engine A produces a constant on B1 (as if B1 carried it), engine B pulls
@@ -910,7 +960,8 @@ mod tests {
         while t0.elapsed() < Duration::from_secs(5) && !got {
             {
                 let mut it = store.iter_mut();
-                let buses: [[&mut [f32]; 2]; NUM_BUSES] = std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
+                let buses: [[&mut [f32]; 2]; NUM_BUSES] =
+                    std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
                 rta.push(&ta, 128, &strips, &[true; NUM_STRIPS], &buses);
             }
             sc.fill(0.0);
@@ -925,7 +976,9 @@ mod tests {
             std::thread::sleep(Duration::from_micros(2667));
         }
         assert!(got, "strip 3 never received B1");
-        wait_for("status", || vb.status().ins[4].state == InState::Receiving && va.status().outs[1].state == OutState::Sending);
+        wait_for("status", || {
+            vb.status().ins[4].state == InState::Receiving && va.status().outs[1].state == OutState::Sending
+        });
         let si = &vb.status().ins[4];
         assert_eq!((si.sample_rate, si.channels, si.format), (48_000, 2, Some(SampleFormat::I24)));
         assert!(si.describe(&vb.config().ins[4]).starts_with("48 kHz · 2 ch · 24-bit from 127.0.0.1"));
@@ -938,7 +991,8 @@ mod tests {
         .unwrap();
         wait_for("seen", || {
             let mut it = store.iter_mut();
-            let buses: [[&mut [f32]; 2]; NUM_BUSES] = std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
+            let buses: [[&mut [f32]; 2]; NUM_BUSES] =
+                std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
             rta.push(&ta, 128, &strips, &[true; NUM_STRIPS], &buses);
             vb.status().seen.iter().any(|s| s.name == "Other")
         });
@@ -973,7 +1027,14 @@ mod tests {
         let port = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let tap = VbanTap::new();
         let mut c = VbanConfig { enabled: true, port, ..VbanConfig::default() };
-        c.outs[0] = OutStream { on: true, name: "Loop".into(), to: Some(Ipv4Addr::LOCALHOST), port, source: 0, ..OutStream::default_for(0) };
+        c.outs[0] = OutStream {
+            on: true,
+            name: "Loop".into(),
+            to: Some(Ipv4Addr::LOCALHOST),
+            port,
+            source: 0,
+            ..OutStream::default_for(0)
+        };
         c.ins[0] = InStream { on: true, name: "Loop".into(), from: FromAddr::Any, strip: 0, buffer_ms: 5 };
         let v = Vban::start(tap.clone(), 48_000, c);
         wait_for("rings", || tap.outs[0].source.load(Relaxed) == 0 && tap.ins[0].strip.load(Relaxed) == 0);
@@ -985,7 +1046,8 @@ mod tests {
         let t0 = Instant::now();
         while t0.elapsed() < Duration::from_millis(1000) {
             let mut it = store.iter_mut();
-            let buses: [[&mut [f32]; 2]; NUM_BUSES] = std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
+            let buses: [[&mut [f32]; 2]; NUM_BUSES] =
+                std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
             rt.push(&tap, 128, &strips, &[true; NUM_STRIPS], &buses);
             sc.fill(0.0);
             rt.pull(&tap, 128, &mut sc, Instant::now());
@@ -1009,7 +1071,8 @@ mod tests {
         let rport = rx.local_addr().unwrap().port();
         let tap = VbanTap::new();
         let mut c = VbanConfig { enabled: true, port, ..VbanConfig::default() };
-        c.outs[0] = OutStream { on: true, to: Some(Ipv4Addr::LOCALHOST), port: rport, source: 0, ..OutStream::default_for(0) };
+        c.outs[0] =
+            OutStream { on: true, to: Some(Ipv4Addr::LOCALHOST), port: rport, source: 0, ..OutStream::default_for(0) };
         let v = Vban::start(tap.clone(), 44_100, c);
         wait_for("error", || v.status().error.as_deref().is_some_and(|e| e.contains("in use")));
         wait_for("source", || tap.outs[0].source.load(Relaxed) == 0);
@@ -1018,7 +1081,8 @@ mod tests {
         strips[..256].fill(0.5);
         let mut store = vec![vec![0.0f32; 256]; crate::engine::NUM_BUSES * 2];
         let mut it = store.iter_mut();
-        let buses: [[&mut [f32]; 2]; crate::engine::NUM_BUSES] = std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
+        let buses: [[&mut [f32]; 2]; crate::engine::NUM_BUSES] =
+            std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
         rt.push(&tap, 256, &strips, &[true; NUM_STRIPS], &buses);
         let mut buf = [0u8; 2000];
         let n = rx.recv(&mut buf).unwrap();

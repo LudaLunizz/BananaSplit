@@ -175,9 +175,10 @@ fn pipewire_lib() -> Option<&'static Lib> {
 /// PipeWire's, else the system's.
 pub fn lib() -> Result<&'static Lib, String> {
     if USE_PW.load(SeqCst)
-        && let Some(l) = pipewire_lib() {
-            return Ok(l);
-        }
+        && let Some(l) = pipewire_lib()
+    {
+        return Ok(l);
+    }
     system_lib()
 }
 
