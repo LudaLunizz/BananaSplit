@@ -13,6 +13,10 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.11
+
+* **Code review fixes.** A review of the Rust code against the current Rust and Linux state found no memory bugs that can happen today, and fixed a handful of small ones that could later: the tray and dark-style checks free their errors and check D-Bus replies, recording passes less data between threads, Windows audio threads release their devices before ending COM, and the network list and autostart path are read safely. Needs Rust 1.88 or newer to build (#24).
+
 ## What's new in 2.8.10
 
 * **A quieter silence warning.** When a take records only silence, the recorder's label still turns orange and says **Recording silence**, but the long notice below the recorder is gone (#22).

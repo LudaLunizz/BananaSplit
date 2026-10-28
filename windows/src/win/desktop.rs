@@ -60,7 +60,8 @@ fn exe_path() -> PathBuf {
     let mut buf = vec![0u16; 1024];
     unsafe {
         let n = GetModuleFileNameW(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32);
-        if n == 0 {
+        // n == the buffer's length: the path was cut short.
+        if n == 0 || n as usize >= buf.len() {
             return std::env::current_exe().unwrap_or_else(|_| PathBuf::from("bananasplit.exe"));
         }
         use std::os::windows::ffi::OsStringExt;
