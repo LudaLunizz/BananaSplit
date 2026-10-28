@@ -37,6 +37,7 @@ struct Ring {
 // consumer only reads slots in [tail, head); head/tail use Release/Acquire so
 // a slot's contents are visible before its index is published.
 unsafe impl Sync for Ring {}
+// SAFETY: the ring owns its slots (plain f32 frames) and two atomics; nothing in it is tied to a thread.
 unsafe impl Send for Ring {}
 
 impl Ring {
@@ -44,9 +45,7 @@ impl Ring {
         self.buf.len()
     }
     fn len(&self) -> usize {
-        self.head
-            .load(Acquire)
-            .wrapping_sub(self.tail.load(Acquire))
+        self.head.load(Acquire).wrapping_sub(self.tail.load(Acquire))
     }
 }
 
@@ -54,11 +53,7 @@ impl Ring {
 pub fn ring(capacity: usize) -> (Producer, Consumer) {
     let capacity = capacity.max(2);
     let buf: Box<[UnsafeCell<Frame>]> = (0..capacity).map(|_| UnsafeCell::new([0.0; 2])).collect();
-    let r = Arc::new(Ring {
-        buf,
-        head: AtomicUsize::new(0),
-        tail: AtomicUsize::new(0),
-    });
+    let r = Arc::new(Ring { buf, head: AtomicUsize::new(0), tail: AtomicUsize::new(0) });
     (Producer { r: r.clone() }, Consumer { r })
 }
 
@@ -95,7 +90,7 @@ impl Producer {
     /// Push interleaved stereo. Returns how many frames were dropped.
     pub fn push_interleaved(&mut self, x: &[f32]) -> usize {
         let mut dropped = 0;
-        for f in x.chunks_exact(2) {
+        for f in x.as_chunks::<2>().0 {
             if !self.push([f[0], f[1]]) {
                 dropped += 1;
             }
@@ -291,12 +286,7 @@ impl DriftReader {
 
     /// Like [`read`](Self::read) but writes interleaved stereo into `out`
     /// (`out.len() / 2` frames), using `scratch` (>= 2 * frames) as space.
-    pub fn read_interleaved(
-        &mut self,
-        out: &mut [f32],
-        scratch_l: &mut [f32],
-        scratch_r: &mut [f32],
-    ) -> bool {
+    pub fn read_interleaved(&mut self, out: &mut [f32], scratch_l: &mut [f32], scratch_r: &mut [f32]) -> bool {
         let n = (out.len() / 2).min(scratch_l.len()).min(scratch_r.len());
         let ok = self.read(&mut scratch_l[..n], &mut scratch_r[..n], false);
         for i in 0..n {
@@ -664,12 +654,7 @@ mod tests {
 
     /// Simulates two devices whose clocks differ by `ppm`, exchanging blocks
     /// of different sizes, for `seconds` of audio at 48 kHz.
-    fn simulate(
-        ppm: f64,
-        prod_block: usize,
-        cons_block: usize,
-        seconds: f64,
-    ) -> (DriftReader, f64) {
+    fn simulate(ppm: f64, prod_block: usize, cons_block: usize, seconds: f64) -> (DriftReader, f64) {
         let (mut p, c) = ring(48_000);
         let target = prod_block + cons_block;
         let mut rd = DriftReader::new(c, target);
@@ -711,11 +696,7 @@ mod tests {
             assert!(rd.glitches <= 1, "ppm {ppm}: {} glitches", rd.glitches);
             // ratio converged to the clock ratio
             let want = 1.0 + ppm * 1e-6;
-            assert!(
-                (rd.ratio() - want).abs() < 60e-6,
-                "ppm {ppm}: ratio {} want {want}",
-                rd.ratio()
-            );
+            assert!((rd.ratio() - want).abs() < 60e-6, "ppm {ppm}: ratio {} want {want}", rd.ratio());
             // fill stays within about one block of the target
             assert!(worst < 1000.0, "ppm {ppm}: fill strayed {worst} frames");
         }

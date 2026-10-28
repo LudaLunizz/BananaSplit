@@ -64,7 +64,9 @@ fn side(s: &Snapshot, ch: usize) -> (&[DevInfo], Option<&str>) {
 
 /// Does one of channel `ch`'s own `connect` lines bring in device `name`?
 fn brings_in(cfg: &Config, ch: usize, devs: &[DevInfo], def: Option<&str>, name: &str) -> bool {
-    connect(cfg, ch).iter().any(|x| x.eq_ignore_ascii_case(name) || route::resolve(x, devs, def).is_some_and(|d| d.name.eq_ignore_ascii_case(name)))
+    connect(cfg, ch).iter().any(|x| {
+        x.eq_ignore_ascii_case(name) || route::resolve(x, devs, def).is_some_and(|d| d.name.eq_ignore_ascii_case(name))
+    })
 }
 
 /// Which cable each channel gets. `held`: what each had before, which it
@@ -77,18 +79,23 @@ pub fn plan(cfg: &Config, caps: &[DevInfo], rens: &[DevInfo], held: &Cables) -> 
     let mut out: Cables = Default::default();
     let own = |ch: usize, c: &str| {
         let devs = if ch < NUM_STRIPS { caps } else { rens };
-        connect(cfg, ch).iter().any(|x| x != DEFAULT_DEVICE && x != PHYSICAL && route::resolve(x, devs, None).is_some_and(|d| d.name.eq_ignore_ascii_case(c)))
+        connect(cfg, ch).iter().any(|x| {
+            x != DEFAULT_DEVICE
+                && x != PHYSICAL
+                && route::resolve(x, devs, None).is_some_and(|d| d.name.eq_ignore_ascii_case(c))
+        })
     };
     // the ones channels had
     for ch in 0..NUM_CHANNELS {
         if !cable_on(cfg, ch) {
             continue;
         }
-        if let Some(k) = held[ch].as_deref().and_then(|h| installed.iter().position(|c| c == h)) {
-            if !used[k] && !own(ch, &installed[k]) {
-                used[k] = true;
-                out[ch] = Some(installed[k].clone());
-            }
+        if let Some(k) = held[ch].as_deref().and_then(|h| installed.iter().position(|c| c == h))
+            && !used[k]
+            && !own(ch, &installed[k])
+        {
+            used[k] = true;
+            out[ch] = Some(installed[k].clone());
         }
     }
     // free ones for the rest
@@ -112,7 +119,9 @@ pub fn to_hold(cfg: &Config, now: &Cables, held: &Cables, installed: &[String]) 
         if !cable_on(cfg, ch) {
             return None;
         }
-        now[ch].clone().or_else(|| held[ch].clone().filter(|h| !installed.contains(h) && !now.contains(&Some(h.clone()))))
+        now[ch]
+            .clone()
+            .or_else(|| held[ch].clone().filter(|h| !installed.contains(h) && !now.contains(&Some(h.clone()))))
     })
 }
 
@@ -136,10 +145,10 @@ pub fn parse_held(text: &str) -> Cables {
         }
         let Some((id, name)) = line.split_once('=') else { continue };
         let (id, name) = (id.trim(), name.trim());
-        if let Some(ch) = (0..NUM_CHANNELS).find(|&ch| id_of(ch).eq_ignore_ascii_case(id)) {
-            if !name.is_empty() {
-                c[ch] = Some(name.to_string());
-            }
+        if let Some(ch) = (0..NUM_CHANNELS).find(|&ch| id_of(ch).eq_ignore_ascii_case(id))
+            && !name.is_empty()
+        {
+            c[ch] = Some(name.to_string());
         }
     }
     c
@@ -176,10 +185,10 @@ fn with_held<T>(f: impl FnOnce(&mut Cables) -> T) -> T {
     let mut h = held();
     let before = h.cables.clone();
     let r = f(&mut h.cables);
-    if h.cables != before {
-        if let Some(file) = &h.file {
-            let _ = bananasplit::config::write_replacing(file, &held_text(&h.cables));
-        }
+    if h.cables != before
+        && let Some(file) = &h.file
+    {
+        let _ = bananasplit::config::write_replacing(file, &held_text(&h.cables));
     }
     r
 }
@@ -191,7 +200,11 @@ fn current(cfg: &Config, caps: &[DevInfo], rens: &[DevInfo]) -> Cables {
 
 /// The cables for a device list the caller already has (the audio graph
 /// uses this, so what the menus show is what is connected).
-pub fn cable_extra(cfg: &Config, caps: &[DevInfo], rens: &[DevInfo]) -> ([Option<String>; NUM_STRIPS], [Option<String>; NUM_BUSES]) {
+pub fn cable_extra(
+    cfg: &Config,
+    caps: &[DevInfo],
+    rens: &[DevInfo],
+) -> ([Option<String>; NUM_STRIPS], [Option<String>; NUM_BUSES]) {
     let c = current(cfg, caps, rens);
     (std::array::from_fn(|s| c[s].clone()), std::array::from_fn(|b| c[NUM_STRIPS + b].clone()))
 }
@@ -201,10 +214,11 @@ pub fn cable_extra(cfg: &Config, caps: &[DevInfo], rens: &[DevInfo]) -> ([Option
 fn connected<'a>(cfg: &Config, ch: usize, devs: &'a [DevInfo], def: Option<&str>, cable: Option<&str>) -> Vec<&'a str> {
     let mut v: Vec<&str> = Vec::new();
     for x in connect(cfg, ch) {
-        if let Some(d) = route::resolve(x, devs, def) {
-            if Some(d.name.as_str()) != cable && !v.contains(&d.name.as_str()) {
-                v.push(&d.name);
-            }
+        if let Some(d) = route::resolve(x, devs, def)
+            && Some(d.name.as_str()) != cable
+            && !v.contains(&d.name.as_str())
+        {
+            v.push(&d.name);
         }
     }
     v
@@ -231,7 +245,8 @@ fn candidates(o: &mut String, devs: &[DevInfo], def: Option<&str>) {
 pub fn list_json(cfg: &Config, s: &Snapshot, cables: &Cables) -> String {
     let none = cables::installed(&s.caps, &s.rens).is_empty();
     let mut o = String::from("{\"cables\":{\"ok\":");
-    o.push_str(if none { "false" } else { "true" });
+    // `none`: not one is installed (the menus explain what they are for)
+    o.push_str(if none { "false,\"none\":true" } else { "true,\"none\":false" });
     o.push_str(",\"why\":");
     jstr(&mut o, if none { cables::MISSING } else { "" });
     o.push_str("},\"pulse\":false,\"strip\":");
@@ -396,7 +411,10 @@ mod tests {
     use super::*;
 
     fn devs(names: &[&str]) -> Vec<DevInfo> {
-        names.iter().map(|n| DevInfo { name: n.to_string(), id: format!("uid-{n}"), virt: route::is_cable(n) }).collect()
+        names
+            .iter()
+            .map(|n| DevInfo { name: n.to_string(), id: format!("uid-{n}"), virt: route::is_cable(n) })
+            .collect()
     }
 
     fn snap() -> Snapshot {
@@ -456,7 +474,8 @@ mod tests {
         assert_eq!(names(&c), [(0, "BlackHole 16ch"), (1, "BlackHole 2ch")]);
         // BlackHole 2ch is gone (a driver update): strip 2 has none for now,
         // and keeps its claim
-        let (caps, rens) = (devs(&["MacBook Pro Microphone", "BlackHole 16ch"]), devs(&["MacBook Pro Speakers", "BlackHole 16ch"]));
+        let (caps, rens) =
+            (devs(&["MacBook Pro Microphone", "BlackHole 16ch"]), devs(&["MacBook Pro Speakers", "BlackHole 16ch"]));
         let c = plan(&cfg, &caps, &rens, &held);
         assert_eq!(names(&c), [(0, "BlackHole 16ch")]);
         let held = to_hold(&cfg, &c, &held, &cables::installed(&caps, &rens));
@@ -481,17 +500,28 @@ mod tests {
         cfg.strips[1].connect = vec!["usb".into(), "Nothing Here".into()];
         let c = plan(&cfg, &s.caps, &s.rens, &NONE);
         let j = list_json(&cfg, &s, &c);
-        assert!(j.starts_with(r#"{"cables":{"ok":true,"why":""},"pulse":false,"strip":[{"client":"MacBook Pro Microphone","label":"MacBook Pro Microphone","kind":"device","default":true},"#), "{j}");
+        assert!(j.starts_with(r#"{"cables":{"ok":true,"none":false,"why":""},"pulse":false,"strip":[{"client":"MacBook Pro Microphone","label":"MacBook Pro Microphone","kind":"device","default":true},"#), "{j}");
         // strip 1: the default mic, its cable apart
         assert!(j.contains(r#"{"id":"1","cable":{"on":true,"name":"BlackHole 2ch"},"conn":["MacBook Pro Microphone"],"connect":["@default"]}"#), "{j}");
         // strip 2: the USB mic through a part of its name; the line that matches nothing is only a line
         assert!(j.contains(r#"{"id":"2","cable":{"on":true,"name":"BlackHole 16ch"},"conn":["USB Mic"],"connect":["usb","Nothing Here"]}"#), "{j}");
         assert!(j.contains(r#"{"id":"3","cable":{"on":false,"name":"Virtual cable"},"conn":[],"connect":[]}"#), "{j}");
-        assert!(j.contains(r#"{"id":"B1","cable":{"on":false,"name":"Virtual microphone"},"conn":[],"connect":[]}"#), "{j}");
+        assert!(
+            j.contains(r#"{"id":"B1","cable":{"on":false,"name":"Virtual microphone"},"conn":[],"connect":[]}"#),
+            "{j}"
+        );
         assert!(j.ends_with("]}"));
         // no cables at all
-        let bare = Snapshot { caps: devs(&["MacBook Pro Microphone"]), rens: devs(&["MacBook Pro Speakers"]), def_cap: None, def_ren: None };
-        assert!(list_json(&cfg, &bare, &NONE).starts_with(&format!(r#"{{"cables":{{"ok":false,"why":"{}"}}"#, cables::MISSING)));
+        let bare = Snapshot {
+            caps: devs(&["MacBook Pro Microphone"]),
+            rens: devs(&["MacBook Pro Speakers"]),
+            def_cap: None,
+            def_ren: None,
+        };
+        assert!(
+            list_json(&cfg, &bare, &NONE)
+                .starts_with(&format!(r#"{{"cables":{{"ok":false,"none":true,"why":"{}"}}"#, cables::MISSING))
+        );
     }
 
     #[test]
@@ -514,21 +544,46 @@ mod tests {
         let mut held = NONE;
         let mut cfg = Config::default();
         // a device on and off; the @default line that brings it in goes too
-        assert_eq!(apply(DevOp::Client { ch: 0, client: "USB Mic".into(), on: true }, &mut cfg, &s, &mut held).unwrap(), "strip 1 takes in USB Mic");
+        assert_eq!(
+            apply(DevOp::Client { ch: 0, client: "USB Mic".into(), on: true }, &mut cfg, &s, &mut held).unwrap(),
+            "strip 1 takes in USB Mic"
+        );
         assert_eq!(cfg.strips[0].connect, ["@default", "USB Mic"]);
         apply(DevOp::Client { ch: 0, client: "usb mic".into(), on: true }, &mut cfg, &s, &mut held).unwrap();
         assert_eq!(cfg.strips[0].connect.len(), 2, "already in");
-        assert_eq!(apply(DevOp::Client { ch: 0, client: "MacBook Pro Microphone".into(), on: false }, &mut cfg, &s, &mut held).unwrap(), "strip 1 and MacBook Pro Microphone disconnected");
+        assert_eq!(
+            apply(DevOp::Client { ch: 0, client: "MacBook Pro Microphone".into(), on: false }, &mut cfg, &s, &mut held)
+                .unwrap(),
+            "strip 1 and MacBook Pro Microphone disconnected"
+        );
         assert_eq!(cfg.strips[0].connect, ["USB Mic"]);
-        assert_eq!(apply(DevOp::Client { ch: NUM_STRIPS, client: "External Headphones".into(), on: true }, &mut cfg, &s, &mut held).unwrap(), "A1 plays on External Headphones");
+        assert_eq!(
+            apply(
+                DevOp::Client { ch: NUM_STRIPS, client: "External Headphones".into(), on: true },
+                &mut cfg,
+                &s,
+                &mut held
+            )
+            .unwrap(),
+            "A1 plays on External Headphones"
+        );
         // the default
-        assert_eq!(apply(DevOp::Default { ch: 0, on: true }, &mut cfg, &s, &mut held).unwrap(), "strip 1 follows the macOS default input");
-        assert_eq!(apply(DevOp::Default { ch: 0, on: false }, &mut cfg, &s, &mut held).unwrap(), "strip 1 no longer follows the macOS default input");
+        assert_eq!(
+            apply(DevOp::Default { ch: 0, on: true }, &mut cfg, &s, &mut held).unwrap(),
+            "strip 1 follows the macOS default input"
+        );
+        assert_eq!(
+            apply(DevOp::Default { ch: 0, on: false }, &mut cfg, &s, &mut held).unwrap(),
+            "strip 1 no longer follows the macOS default input"
+        );
         assert_eq!(cfg.strips[0].connect, ["USB Mic"]);
         // a config line
         assert!(apply(DevOp::Unpattern { ch: 0, pattern: "nope".into() }, &mut cfg, &s, &mut held).is_err());
         assert!(apply(DevOp::Unpattern { ch: 0, pattern: "USB Mic".into() }, &mut cfg, &s, &mut held).is_ok());
-        assert_eq!(apply(DevOp::Nothing { ch: NUM_STRIPS }, &mut cfg, &s, &mut held).unwrap(), "A1 is not connected to anything");
+        assert_eq!(
+            apply(DevOp::Nothing { ch: NUM_STRIPS }, &mut cfg, &s, &mut held).unwrap(),
+            "A1 is not connected to anything"
+        );
         assert!(cfg.buses[0].connect.is_empty());
         assert!(apply(DevOp::Stream { rec: false, id: 1, ch: Some(0) }, &mut cfg, &s, &mut held).is_err());
         assert!(apply(DevOp::Nothing { ch: 11 }, &mut cfg, &s, &mut held).is_err());
@@ -547,14 +602,26 @@ mod tests {
         // B1 on: the first free cable
         let m = apply(DevOp::Cable { ch: NUM_STRIPS + 3, on: true }, &mut cfg, &s, &mut held).unwrap();
         assert!(m.starts_with("\"BlackHole 2ch\" is on: choose it as the microphone in an app to record B1"), "{m}");
-        assert!(apply(DevOp::Cable { ch: 2, on: true }, &mut cfg, &s, &mut held).unwrap().starts_with("\"BlackHole 16ch\" is on: choose it as an app's output to play into strip 3"));
+        assert!(
+            apply(DevOp::Cable { ch: 2, on: true }, &mut cfg, &s, &mut held)
+                .unwrap()
+                .starts_with("\"BlackHole 16ch\" is on: choose it as an app's output to play into strip 3")
+        );
         // a third: none is free, nothing changes
         let e = apply(DevOp::Cable { ch: 0, on: true }, &mut cfg, &s, &mut held).unwrap_err();
         assert!(e.starts_with("All 2 installed virtual cable(s) are in use"), "{e}");
         assert!(!cfg.strips[0].cable);
-        assert_eq!(apply(DevOp::Cable { ch: 2, on: false }, &mut cfg, &s, &mut held).unwrap(), "strip 3's virtual cable is off");
+        assert_eq!(
+            apply(DevOp::Cable { ch: 2, on: false }, &mut cfg, &s, &mut held).unwrap(),
+            "strip 3's virtual cable is off"
+        );
         // no cables installed at all
-        let bare = Snapshot { caps: devs(&["MacBook Pro Microphone"]), rens: devs(&["MacBook Pro Speakers"]), def_cap: None, def_ren: None };
+        let bare = Snapshot {
+            caps: devs(&["MacBook Pro Microphone"]),
+            rens: devs(&["MacBook Pro Speakers"]),
+            def_cap: None,
+            def_ren: None,
+        };
         assert_eq!(apply(DevOp::Cable { ch: 0, on: true }, &mut cfg, &bare, &mut held).unwrap_err(), cables::MISSING);
     }
 }

@@ -39,7 +39,10 @@ pub const BLACKHOLE_PAGE: &str = "https://github.com/ExistentialAudio/BlackHole"
 /// Audio" until renamed) and the old Soundflower.
 pub fn is_cable(name: &str) -> bool {
     let n = name.trim().to_ascii_lowercase();
-    n.starts_with("blackhole") || n.starts_with("vb-cable") || n.starts_with("loopback audio") || n.starts_with("soundflower")
+    n.starts_with("blackhole")
+        || n.starts_with("vb-cable")
+        || n.starts_with("loopback audio")
+        || n.starts_with("soundflower")
 }
 
 /// A pattern that names a virtual cable: a missing cable is reported as
@@ -75,7 +78,9 @@ pub fn resolve<'a>(pattern: &str, devs: &'a [DevInfo], default_id: Option<&str>)
         if default_cable(devs, default_id).is_some() {
             return resolve(PHYSICAL, devs, default_id);
         }
-        return default_id.and_then(|id| devs.iter().find(|d| d.id == id)).or_else(|| devs.iter().find(|d| !is_cable(&d.name)));
+        return default_id
+            .and_then(|id| devs.iter().find(|d| d.id == id))
+            .or_else(|| devs.iter().find(|d| !is_cable(&d.name)));
     }
     if pattern == PHYSICAL {
         let default = default_id.and_then(|id| devs.iter().find(|d| d.id == id));
@@ -103,7 +108,12 @@ pub fn resolve<'a>(pattern: &str, devs: &'a [DevInfo], default_id: Option<&str>)
 /// itself as soon as that strip goes to that bus: a warning for each such
 /// pair. `strip_devs[s]` are the indices in `caps` that strip `s` records,
 /// `bus_devs[b]` the ones in `rens` that bus `b` plays on.
-pub fn cable_feedback(caps: &[DevInfo], rens: &[DevInfo], strip_devs: &[Vec<usize>], bus_devs: &[Vec<usize>]) -> Vec<String> {
+pub fn cable_feedback(
+    caps: &[DevInfo],
+    rens: &[DevInfo],
+    strip_devs: &[Vec<usize>],
+    bus_devs: &[Vec<usize>],
+) -> Vec<String> {
     let mut warnings = Vec::new();
     for (b, played) in bus_devs.iter().enumerate() {
         for &i in played {
@@ -172,7 +182,11 @@ mod tests {
         names
             .iter()
             .enumerate()
-            .map(|(i, n)| DevInfo { name: n.to_string(), id: format!("uid{i}"), virt: is_cable(n) || n.contains("Zoom") })
+            .map(|(i, n)| DevInfo {
+                name: n.to_string(),
+                id: format!("uid{i}"),
+                virt: is_cable(n) || n.contains("Zoom"),
+            })
             .collect()
     }
 
@@ -224,10 +238,26 @@ mod tests {
 
     #[test]
     fn cables_are_recognised() {
-        for n in ["BlackHole 2ch", "BlackHole 16ch", "blackhole 64ch", "BlackHole Discord", "VB-Cable", "Loopback Audio", "Loopback Audio 2", "Soundflower (2ch)"] {
+        for n in [
+            "BlackHole 2ch",
+            "BlackHole 16ch",
+            "blackhole 64ch",
+            "BlackHole Discord",
+            "VB-Cable",
+            "Loopback Audio",
+            "Loopback Audio 2",
+            "Soundflower (2ch)",
+        ] {
             assert!(is_cable(n), "{n}");
         }
-        for n in ["MacBook Pro Speakers", "ZoomAudioDevice", "Microsoft Teams Audio", "Aggregate Device", "My Loopback", "Black Hole"] {
+        for n in [
+            "MacBook Pro Speakers",
+            "ZoomAudioDevice",
+            "Microsoft Teams Audio",
+            "Aggregate Device",
+            "My Loopback",
+            "Black Hole",
+        ] {
             assert!(!is_cable(n), "{n}");
         }
         assert!(names_cable("BlackHole 16ch") && names_cable("vb-cable") && !names_cable("USB"));
@@ -250,7 +280,9 @@ mod tests {
         buses[0] = vec![0, 1];
         assert_eq!(
             cable_feedback(&caps, &rens, &strips, &buses),
-            ["bus A1 plays into BlackHole 2ch and strip 2 records that cable: if strip 2 goes to A1 (directly or through a send), it feeds back"]
+            [
+                "bus A1 plays into BlackHole 2ch and strip 2 records that cable: if strip 2 goes to A1 (directly or through a send), it feeds back"
+            ]
         );
         // a real device on both sides is no cable
         buses[0] = vec![0];
@@ -260,9 +292,26 @@ mod tests {
 
     #[test]
     fn natural_order() {
-        let mut v = vec!["BlackHole 64ch", "blackhole 16ch", "BlackHole 2ch", "Loopback Audio 10", "Loopback Audio 2", "Loopback Audio"];
+        let mut v = vec![
+            "BlackHole 64ch",
+            "blackhole 16ch",
+            "BlackHole 2ch",
+            "Loopback Audio 10",
+            "Loopback Audio 2",
+            "Loopback Audio",
+        ];
         v.sort_by(|a, b| natural_cmp(a, b));
-        assert_eq!(v, ["BlackHole 2ch", "blackhole 16ch", "BlackHole 64ch", "Loopback Audio", "Loopback Audio 2", "Loopback Audio 10"]);
+        assert_eq!(
+            v,
+            [
+                "BlackHole 2ch",
+                "blackhole 16ch",
+                "BlackHole 64ch",
+                "Loopback Audio",
+                "Loopback Audio 2",
+                "Loopback Audio 10"
+            ]
+        );
         assert_eq!(natural_cmp("a01", "a1"), Ordering::Less, "equal numbers: by the text, so the order is total");
         assert_eq!(natural_cmp("x", "x"), Ordering::Equal);
     }

@@ -239,7 +239,8 @@ impl Control {
         if self.hist.len() >= FLL_MIN_STEPS {
             let n = self.hist.len() as f64;
             let (mt, mu) = self.hist.iter().fold((0.0, 0.0), |(a, b), (t, u)| (a + t / n, b + u / n));
-            let (sxy, sxx) = self.hist.iter().fold((0.0, 0.0), |(a, b), (t, u)| (a + (t - mt) * (u - mu), b + (t - mt) * (t - mt)));
+            let (sxy, sxx) =
+                self.hist.iter().fold((0.0, 0.0), |(a, b), (t, u)| (a + (t - mt) * (u - mu), b + (t - mt) * (t - mt)));
             if sxx > 0.0 {
                 self.drift = (sxy / sxx / fs).clamp(-MAX_CORRECTION, MAX_CORRECTION);
             }
@@ -407,7 +408,10 @@ impl RxStream {
         };
         let sr = h.sample_rate();
         if sr as f64 > MAX_DOWN * fs_out as f64 {
-            return Err(format!("the stream is {sr} Hz; BananaSplit takes at most {} Hz here", (MAX_DOWN * fs_out as f64) as u32));
+            return Err(format!(
+                "the stream is {sr} Hz; BananaSplit takes at most {} Hz here",
+                (MAX_DOWN * fs_out as f64) as u32
+            ));
         }
         if self.rs.as_ref().is_none_or(|r| r.rates() != (sr, fs_out)) {
             if self.rs.is_some() {
@@ -544,17 +548,19 @@ impl RxStream {
             self.ctl.relevel();
         }
         self.playing = playing;
-        if rotated > 0 && playing && self.fill.full() {
-            if let Some(low) = self.fill.min() {
-                if low > target + (fs * 0.1).max(target) {
-                    // Way too much buffered (a stall delivered a pile of
-                    // packets at once): drop it rather than lag for a minute.
-                    self.stats.resyncs += 1;
-                    self.flush(slot);
-                    return Ok(());
-                }
-                self.ctl.step(now, BUCKET.as_secs_f64() * rotated as f64, low, target, fs);
+        if rotated > 0
+            && playing
+            && self.fill.full()
+            && let Some(low) = self.fill.min()
+        {
+            if low > target + (fs * 0.1).max(target) {
+                // Way too much buffered (a stall delivered a pile of
+                // packets at once): drop it rather than lag for a minute.
+                self.stats.resyncs += 1;
+                self.flush(slot);
+                return Ok(());
             }
+            self.ctl.step(now, BUCKET.as_secs_f64() * rotated as f64, low, target, fs);
         }
         Ok(())
     }
@@ -670,13 +676,18 @@ mod tests {
             };
             proto::write_header(&mut p, &h);
             let start = self.frame as u64 * self.nbs as u64;
-            let frames: Vec<f32> = (0..self.nbs as u64).flat_map(|k| { let v = self.sample(start + k); [v, v] }).collect();
+            let frames: Vec<f32> = (0..self.nbs as u64)
+                .flat_map(|k| {
+                    let v = self.sample(start + k);
+                    [v, v]
+                })
+                .collect();
             let mut data = vec![0u8; frames.len() * 2];
             proto::encode(&frames, 2, SampleFormat::I16, &mut data);
             p.extend_from_slice(&data);
             self.frame = self.frame.wrapping_add(1);
             self.sent += 1;
-            if self.drop_every > 0 && self.sent % self.drop_every == 0 {
+            if self.drop_every > 0 && self.sent.is_multiple_of(self.drop_every) {
                 return; // lost on the way
             }
             let Ok(proto::Packet::Audio(h, d)) = proto::parse(&p) else { panic!() };
@@ -703,10 +714,11 @@ mod tests {
                         if self.stall_every > 0.0 && (due / self.stall_every).fract() < burst_dt / self.stall_every {
                             t += self.stall_s;
                         }
-                        if let Some((a, b)) = self.stall {
-                            if due >= a && due < b {
-                                t = t.max(b);
-                            }
+                        if let Some((a, b)) = self.stall
+                            && due >= a
+                            && due < b
+                        {
+                            t = t.max(b);
                         }
                         let t = t.max(self.last_arrival);
                         self.next_arrival = Some(t);
@@ -903,7 +915,8 @@ mod tests {
         // one that started first plays on (the other used to make every
         // packet a restart: silence), and takes over when it stops.
         let mut s = Sim::new(48_000, 0.0, 256, 1);
-        let (a, b): (SocketAddrV4, SocketAddrV4) = ("192.168.1.20:6980".parse().unwrap(), "192.168.1.30:6980".parse().unwrap());
+        let (a, b): (SocketAddrV4, SocketAddrV4) =
+            ("192.168.1.20:6980".parse().unwrap(), "192.168.1.30:6980".parse().unwrap());
         let mut sc = vec![0.0f32; NUM_STRIPS * 2 * MAX_FRAMES];
         let base = s.base;
         let (mut fa, mut fb) = (1000u32, 5u32);
