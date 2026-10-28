@@ -43,6 +43,10 @@
 //! from the server, or the MP3 rate it was converted to), so a take always
 //! plays back at its own speed. If the server changes its rate during a
 //! take, the take continues in new files (`<time>-2_…`) at the new rate.
+//!
+//! Takes stamped with a date go into a folder per day, `<folder>/YYYY-MM-DD/`
+//! (the day each file starts on): a take that runs past midnight continues
+//! in the next day's folder with its next part.
 
 use crate::engine::{MAX_FRAMES, NUM_BUSES, NUM_STRIPS};
 use crate::mp3;
@@ -240,6 +244,14 @@ pub fn validate_folder(v: &str) -> Result<(), String> {
         return Err("recorder folder contains invalid characters".into());
     }
     Ok(())
+}
+
+/// The `YYYY-MM-DD` a time stamp starts with, if it does: the name of the
+/// day's folder.
+pub fn stamp_day(stamp: &str) -> Option<&str> {
+    let d = stamp.get(..10)?;
+    let ok = d.bytes().enumerate().all(|(i, c)| if i == 4 || i == 7 { c == b'-' } else { c.is_ascii_digit() });
+    ok.then_some(d)
 }
 
 /// Expand a leading `~` to the user's home folder (`%USERPROFILE%`).
@@ -1116,8 +1128,13 @@ pub struct Take {
     word: u32,
     spec: Spec,
     channels: usize,
-    /// Where and under which names (to continue at another sample rate).
-    folder: PathBuf,
+    /// Where and under which names (to continue at another sample rate):
+    /// the recordings folder, and the day folder in it the files go to.
+    root: PathBuf,
+    day: Option<String>,
+    /// Local time now, as a stamp (when a part starts on a new day, it goes
+    /// into that day's folder).
+    clock: Clock,
     stamp: String,
     labels: Vec<String>,
     bases: Vec<PathBuf>,
@@ -1144,22 +1161,37 @@ pub struct Take {
 }
 
 impl Take {
-    /// Create the first part of every track: `<folder>/<stamp>[-k]_<label>.mp3`
-    /// (or `.wav`). `-k` is added if any of the names already exists.
-    pub fn create(folder: &Path, stamp: &str, labels: &[String], spec: Spec) -> Result<Take, String> {
+    /// Create the first part of every track: `<root>/<day>/<stamp>[-k]_<label>.mp3`
+    /// (or `.wav`), `<day>` being today by `clock` (or the stamp's day; no
+    /// day folder if neither has a date). `-k` is added if any of the names
+    /// already exists.
+    pub fn create(root: &Path, stamp: &str, labels: &[String], spec: Spec, clock: Clock) -> Result<Take, String> {
         if labels.is_empty() {
             return Err("nothing to record".into());
         }
         if spec.format == Format::Mp3 && mp3::enc::bitrate_index(spec.kbps).is_none() {
             return Err(format!("{} kbit/s is not an MP3 bitrate", spec.kbps));
         }
+        let day = stamp_day(&clock()).or(stamp_day(stamp)).map(str::to_string);
+        let folder = day.as_ref().map_or_else(|| root.to_path_buf(), |d| root.join(d));
+        let folder = folder.as_path();
         std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         // A take's files share `<stamp>[-k]_`: that key must be new, not
         // only these file names (a mix take and a multi-track take started
-        // in the same second were listed, and played, as one take).
-        let taken: Vec<String> = std::fs::read_dir(folder)
-            .map(|d| d.flatten().filter_map(|e| e.file_name().to_str().map(str::to_string)).collect())
-            .unwrap_or_default();
+        // in the same second were listed, and played, as one take). Files
+        // of the key can be in the stamp's day folder too (a take that
+        // changes its sample rate after midnight).
+        let mut dirs = vec![folder.to_path_buf()];
+        for d in [Some(root.to_path_buf()), stamp_day(stamp).map(|d| root.join(d))].into_iter().flatten() {
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+        let taken: Vec<String> = dirs
+            .iter()
+            .filter_map(|d| std::fs::read_dir(d).ok())
+            .flat_map(|d| d.flatten().filter_map(|e| e.file_name().to_str().map(str::to_string)))
+            .collect();
         let mut chosen = None;
         for k in 1..1000u32 {
             let suffix = if k == 1 { String::new() } else { format!("-{k}") };
@@ -1198,7 +1230,9 @@ impl Take {
             word: 0,
             spec,
             channels: 2 * labels.len(),
-            folder: folder.to_path_buf(),
+            root: root.to_path_buf(),
+            day,
+            clock,
             stamp: stamp.to_string(),
             labels: labels.to_vec(),
             bases,
@@ -1328,7 +1362,7 @@ impl Take {
         let old_rate = self.spec.rate;
         self.end()?;
         let spec = Spec { rate, ..self.spec };
-        let mut next = Take::create(&self.folder, &self.stamp, &self.labels, spec).map_err(io::Error::other)?;
+        let mut next = Take::create(&self.root, &self.stamp, &self.labels, spec, self.clock).map_err(io::Error::other)?;
         next.session = self.session;
         next.word = self.word;
         next.frames = self.frames;
@@ -1350,9 +1384,19 @@ impl Take {
         Ok(())
     }
 
-    /// Continue every track in its next part, from the frame written last.
+    /// Continue every track in its next part, from the frame written last
+    /// (in a new day's folder, if the day changed).
     fn next_part(&mut self) -> io::Result<()> {
         self.flush()?;
+        let now = (self.clock)();
+        if let (Some(_), Some(today)) = (&self.day, stamp_day(&now)) {
+            if self.day.as_deref() != Some(today) {
+                let dir = self.root.join(today);
+                std::fs::create_dir_all(&dir).map_err(|e| at(&dir, e))?;
+                self.bases = self.bases.iter().map(|b| dir.join(b.file_name().unwrap_or_default())).collect();
+                self.day = Some(today.to_string());
+            }
+        }
         let sinks = Take::open(&self.bases, self.part + 1, &self.spec)?;
         self.part += 1;
         let at = self.file_frames(self.rate_frames);
@@ -1523,6 +1567,14 @@ enum Cmd {
     Exit,
 }
 
+/// Local time now as a stamp, `YYYY-MM-DD_HH-MM-SS` (see [`Recorder::with_clock`]).
+pub type Clock = fn() -> String;
+
+/// No clock: a take stays in the folder of the day it started.
+fn no_clock() -> String {
+    String::new()
+}
+
 struct Inner {
     settings: Settings,
     session: u16,
@@ -1534,6 +1586,7 @@ pub struct Recorder {
     tap: Arc<RecTap>,
     sample_rate: u32,
     max_data_bytes: u64,
+    clock: Clock,
     inner: Mutex<Inner>,
     status: Arc<Mutex<Status>>,
     thread: Mutex<Option<JoinHandle<()>>>,
@@ -1574,10 +1627,18 @@ impl Recorder {
             tap,
             sample_rate,
             max_data_bytes: max,
+            clock: no_clock,
             inner: Mutex::new(Inner { settings, session: 0, tx: thread.as_ref().map(|_| tx) }),
             status,
             thread: Mutex::new(thread),
         }
+    }
+
+    /// Tell the recorder the local time, so that a take that runs past
+    /// midnight continues in the next day's folder.
+    pub fn with_clock(mut self, clock: Clock) -> Recorder {
+        self.clock = clock;
+        self
     }
 
     pub fn tap(&self) -> &Arc<RecTap> {
@@ -1651,7 +1712,7 @@ impl Recorder {
             max_data_bytes: self.max_data_bytes,
             split_secs: u64::from(s.split_minutes) * 60,
         };
-        let mut take = Take::create(&expand_home(&s.folder), &stamp, &labels, spec)?;
+        let mut take = Take::create(&expand_home(&s.folder), &stamp, &labels, spec, self.clock)?;
         inner.session = inner.session.wrapping_add(1);
         let session = inner.session;
         let multi = s.mode == Mode::Multi;
@@ -2209,7 +2270,7 @@ mod tests {
         let dir = tmpdir("split");
         let labels = vec!["1-Mic".to_string(), "A1-Out".to_string()];
         // 6 bytes per frame (wav24) -> 100 frames per part
-        let mut t = Take::create(&dir, "S", &labels, spec(Format::Wav24, 48000, 600, 0)).unwrap();
+        let mut t = Take::create(&dir, "S", &labels, spec(Format::Wav24, 48000, 600, 0), no_clock).unwrap();
         t.emit(250, |tr, f| ((f as f32) / 1000.0, if tr == 0 { 0.5 } else { -0.5 })).unwrap();
         let files = t.files().to_vec();
         t.finish().unwrap();
@@ -2239,12 +2300,12 @@ mod tests {
             }
         }
         // same stamp again -> "-2" instead of overwriting
-        let t2 = Take::create(&dir, "S", &labels, spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
+        let t2 = Take::create(&dir, "S", &labels, spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0), no_clock).unwrap();
         assert!(t2.files()[0].ends_with("S-2_1-Mic.wav"));
         t2.finish().unwrap();
         // another take in that second with other tracks (a mix take after a
         // multi-track one): a key of its own, not one take with S's files
-        let t3 = Take::create(&dir, "S", &["mix".to_string()], spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
+        let t3 = Take::create(&dir, "S", &["mix".to_string()], spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0), no_clock).unwrap();
         assert!(t3.files()[0].ends_with("S-3_mix.wav"), "{:?}", t3.files());
         t3.finish().unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
@@ -2255,7 +2316,7 @@ mod tests {
         let dir = tmpdir("rate");
         let labels = vec!["1-Mic".to_string()];
         // Before any frame is written, the files just take the new rate.
-        let mut t = Take::create(&dir, "R", &labels, spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
+        let mut t = Take::create(&dir, "R", &labels, spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0), no_clock).unwrap();
         t.change_rate(44100).unwrap();
         t.emit(441, |_, _| (0.25, -0.25)).unwrap();
         assert!(t.rate_note.is_none());
@@ -2445,7 +2506,7 @@ mod tests {
         let dir = tmpdir("hourly");
         let labels = vec!["1-Mic".to_string(), "2-Discord".to_string()];
         // 2000 frames per part at 1 kHz
-        let mut t = Take::create(&dir, "H", &labels, spec(Format::Wav16, 1000, MAX_WAV_DATA_BYTES, 2)).unwrap();
+        let mut t = Take::create(&dir, "H", &labels, spec(Format::Wav16, 1000, MAX_WAV_DATA_BYTES, 2), no_clock).unwrap();
         t.emit(1500, |_, _| (0.25, -0.25)).unwrap();
         t.emit(3000, |tr, _| (0.5 * tr as f32, 0.0)).unwrap();
         // The server changes its rate: still 2 s per part (4000 frames at 2 kHz).
@@ -2466,6 +2527,71 @@ mod tests {
         let len = |i: usize| read_wav(&files[i]).4.len() / 2;
         assert_eq!([len(0), len(1), len(2), len(3), len(4), len(5)], [2000, 2000, 2000, 2000, 500, 500]);
         assert_eq!([len(6), len(7), len(8), len(9)], [4000, 4000, 1000, 1000]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The local time `test_clock` gives (only the day-folder tests use it).
+    static TEST_NOW: Mutex<&str> = Mutex::new("");
+    fn test_clock() -> String {
+        lock(&TEST_NOW).to_string()
+    }
+
+    #[test]
+    fn stamps_name_their_day() {
+        assert_eq!(stamp_day("2026-10-28_23-59-58"), Some("2026-10-28"));
+        assert_eq!(stamp_day("2026-10-28_23-59-58Z-2"), Some("2026-10-28"));
+        assert_eq!(stamp_day("T"), None);
+        assert_eq!(stamp_day("2026-1x-28_00"), None);
+        assert_eq!(stamp_day(""), None);
+    }
+
+    #[test]
+    fn takes_go_into_the_folder_of_each_files_day() {
+        let dir = tmpdir("days");
+        let labels = vec!["mix".to_string()];
+        let rel = |p: &PathBuf| p.strip_prefix(&dir).unwrap().to_string_lossy().replace('\\', "/");
+        // A take without a clock goes into the folder of its stamp's day;
+        // one without a date in its stamp straight into the folder.
+        let t = Take::create(&dir, "2026-10-27_10-00-00", &labels, spec(Format::Wav16, 1000, MAX_WAV_DATA_BYTES, 0), no_clock).unwrap();
+        assert_eq!(rel(&t.files()[0]), "2026-10-27/2026-10-27_10-00-00_mix.wav");
+        t.finish().unwrap();
+        let t = Take::create(&dir, "T", &labels, spec(Format::Wav16, 1000, MAX_WAV_DATA_BYTES, 0), no_clock).unwrap();
+        assert_eq!(rel(&t.files()[0]), "T_mix.wav");
+        t.finish().unwrap();
+
+        // 2000 frames per part at 1 kHz; midnight comes during part 1.
+        *lock(&TEST_NOW) = "2026-10-28_23-59-58";
+        let mut t = Take::create(&dir, "2026-10-28_23-59-58", &labels, spec(Format::Wav16, 1000, MAX_WAV_DATA_BYTES, 2), test_clock).unwrap();
+        t.emit(1000, |_, _| (0.25, 0.25)).unwrap();
+        *lock(&TEST_NOW) = "2026-10-29_00-00-00";
+        t.emit(4500, |_, _| (0.25, 0.25)).unwrap();
+        let files = t.files().to_vec();
+        t.finish().unwrap();
+        assert_eq!(
+            files.iter().map(rel).collect::<Vec<_>>(),
+            [
+                "2026-10-28/2026-10-28_23-59-58_mix.wav",
+                "2026-10-29/2026-10-28_23-59-58_mix_part2.wav",
+                "2026-10-29/2026-10-28_23-59-58_mix_part3.wav",
+            ]
+        );
+        assert_eq!(files.iter().map(|f| read_wav(f).4.len() / 2).collect::<Vec<_>>(), [2000, 2000, 1500]);
+
+        // The server changes its rate after midnight, while part 1 is still
+        // in the day before: the take goes on as `-2` in today's folder, a
+        // key that is new in both.
+        *lock(&TEST_NOW) = "2026-10-30_23-59-59";
+        let mut t = Take::create(&dir, "2026-10-30_23-59-59", &labels, spec(Format::Wav16, 1000, MAX_WAV_DATA_BYTES, 0), test_clock).unwrap();
+        t.emit(500, |_, _| (0.25, 0.25)).unwrap();
+        *lock(&TEST_NOW) = "2026-10-31_00-00-01";
+        t.change_rate(2000).unwrap();
+        t.emit(500, |_, _| (0.25, 0.25)).unwrap();
+        let files = t.files().to_vec();
+        t.finish().unwrap();
+        assert_eq!(
+            files.iter().map(rel).collect::<Vec<_>>(),
+            ["2026-10-30/2026-10-30_23-59-59_mix.wav", "2026-10-31/2026-10-30_23-59-59-2_mix.wav"]
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -2503,11 +2629,11 @@ mod tests {
     fn clipping_is_counted_only_for_integer_formats() {
         let dir = tmpdir("clip");
         let labels = vec!["mix".to_string()];
-        let mut t = Take::create(&dir, "C", &labels, spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
+        let mut t = Take::create(&dir, "C", &labels, spec(Format::Wav16, 48000, MAX_WAV_DATA_BYTES, 0), no_clock).unwrap();
         t.emit(10, |_, f| (if f < 4 { 1.5 } else { 0.5 }, -1.0)).unwrap(); // exactly 1.0 is not clipping
         assert_eq!(t.clipped(), 4);
         t.finish().unwrap();
-        let mut t = Take::create(&dir, "F", &labels, spec(Format::Wav32f, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
+        let mut t = Take::create(&dir, "F", &labels, spec(Format::Wav32f, 48000, MAX_WAV_DATA_BYTES, 0), no_clock).unwrap();
         t.emit(10, |_, _| (1.5, -3.0)).unwrap();
         assert_eq!(t.clipped(), 0, "float keeps values above full scale");
         let f = t.files()[0].clone();
@@ -2523,7 +2649,7 @@ mod tests {
     fn a_take_knows_how_long_it_has_been_silent() {
         let dir = tmpdir("quiet");
         let labels = vec!["1-Mic".to_string(), "B2-Stream".to_string()];
-        let mut t = Take::create(&dir, "Q", &labels, spec(Format::Wav16, 1000, MAX_WAV_DATA_BYTES, 0)).unwrap();
+        let mut t = Take::create(&dir, "Q", &labels, spec(Format::Wav16, 1000, MAX_WAV_DATA_BYTES, 0), no_clock).unwrap();
         t.emit(3000, |_, _| (0.0, 0.0)).unwrap();
         assert_eq!(t.quiet_secs(), 3.0, "silent from the start");
         t.emit(1000, |tr, f| if tr == 1 && f == 499 { (0.0, 0.01) } else { (5e-5, -5e-5) }).unwrap();
@@ -2564,7 +2690,7 @@ mod tests {
         let labels = vec!["1-Mic".to_string(), "A1-Out".to_string()];
         let n = 120_000; // 2.5 s at 48 kHz, parts of 1 s
         let tone = |t: usize, f: f64| (0.5 * (2.0 * std::f64::consts::PI * f * t as f64 / 48000.0).sin()) as f32;
-        let mut t = Take::create(&dir, "M", &labels, spec(Format::Mp3, 48000, MAX_WAV_DATA_BYTES, 1)).unwrap();
+        let mut t = Take::create(&dir, "M", &labels, spec(Format::Mp3, 48000, MAX_WAV_DATA_BYTES, 1), no_clock).unwrap();
         // uneven blocks, as the audio thread delivers them
         let mut done = 0;
         for k in 0.. {
@@ -2615,7 +2741,7 @@ mod tests {
         let dir = tmpdir("mp3-96k");
         let n = 240_000; // 2.5 s at 96 kHz
         let tone = |i: usize| (0.5 * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / 96000.0).sin()) as f32;
-        let mut t = Take::create(&dir, "K", &["mix".to_string()], spec(Format::Mp3, 96000, MAX_WAV_DATA_BYTES, 1)).unwrap();
+        let mut t = Take::create(&dir, "K", &["mix".to_string()], spec(Format::Mp3, 96000, MAX_WAV_DATA_BYTES, 1), no_clock).unwrap();
         assert_eq!(t.sample_rate(), 48000);
         assert!(t.rate_note.as_deref().is_some_and(|m| m.contains("96 kHz") && m.contains("48 kHz")), "{:?}", t.rate_note);
         for c in 0..n / 1000 {
@@ -2646,7 +2772,7 @@ mod tests {
     fn mp3_take_follows_the_servers_sample_rate() {
         let dir = tmpdir("mp3-rate");
         let labels = vec!["1-Mic".to_string()];
-        let mut t = Take::create(&dir, "R", &labels, spec(Format::Mp3, 48000, MAX_WAV_DATA_BYTES, 0)).unwrap();
+        let mut t = Take::create(&dir, "R", &labels, spec(Format::Mp3, 48000, MAX_WAV_DATA_BYTES, 0), no_clock).unwrap();
         // before anything is written the file just takes the new rate
         t.change_rate(44100).unwrap();
         t.emit(4410, |_, f| ((f as f32 / 4410.0) - 0.5, 0.25)).unwrap();

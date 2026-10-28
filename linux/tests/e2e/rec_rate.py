@@ -176,7 +176,10 @@ try:
         # `<stamp>_mix` first, then its continuation `<stamp>-2_mix`
         m = re.match(r"(\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d)(?:-(\d+))?_", os.path.basename(path))
         return (m.group(1), int(m.group(2) or 1)) if m else (os.path.basename(path), 0)
-    files = sorted((os.path.join(rec, f) for f in os.listdir(rec) if f.endswith(ext)), key=take_order)
+    # takes go into a folder per day, the day each file starts on
+    files = sorted((os.path.join(d, f) for d, _, fs in os.walk(rec) for f in fs if f.endswith(ext)), key=take_order)
+    check(all(re.fullmatch(r"\d{4}-\d\d-\d\d", os.path.basename(os.path.dirname(f))) and os.path.basename(f).startswith(os.path.basename(os.path.dirname(f)))
+              for f in files), f"each file is in its day's folder: {[os.path.relpath(f, rec) for f in files]}")
     check(len(files) == expect_files, f"{expect_files} file(s) recorded: {[os.path.basename(f) for f in files]}")
     total = 0.0
     rates = []
