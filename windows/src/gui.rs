@@ -341,6 +341,7 @@ impl Takes {
         c.notify_all();
     }
 
+    #[allow(dead_code)] // used by the Linux copy (main.rs)
     pub fn set_folder(&self, folder: PathBuf) {
         let mut g = lock(&self.inner);
         if g.folder != folder {
@@ -1491,6 +1492,7 @@ pub fn socket_owner(table: &str, peer: SocketAddr, us: SocketAddr) -> Option<u32
 }
 
 /// `a` as an IPv4-mapped IPv6 address (how a dual-stack socket sees it).
+#[allow(dead_code)] // used by the Linux copy and the tests
 fn mapped(a: SocketAddr) -> SocketAddr {
     match a {
         SocketAddr::V4(v) => SocketAddr::from((v.ip().to_ipv6_mapped(), v.port())),
@@ -1504,7 +1506,7 @@ fn peer_allowed(s: &TcpStream) -> bool {
     let (Ok(peer), Ok(us)) = (s.peer_addr(), s.local_addr()) else { return false };
     #[cfg(windows)]
     {
-        return crate::sys::same_user(peer, us);
+        crate::sys::same_user(peer, us)
     }
     #[cfg(unix)]
     {
@@ -1723,11 +1725,10 @@ pub fn note_port(client: &str, port: u16) {
 
 /// Remove the note again, if it is still this GUI's.
 pub fn forget_port(client: &str, port: u16) {
-    if let Some(f) = port_file(client) {
-        if noted(&f) == Some(port) {
+    if let Some(f) = port_file(client)
+        && noted(&f) == Some(port) {
             let _ = std::fs::remove_file(&f);
         }
-    }
 }
 
 fn noted(f: &std::path::Path) -> Option<u16> {
@@ -1930,6 +1931,7 @@ pub fn parse_win_line(line: &str) -> Option<WinMsg> {
 pub struct WindowProc {
     child: Child,
     stdin: Option<ChildStdin>,
+    #[allow(dead_code)] // read by the Linux copy (main.rs)
     pub mode: WinMode,
     /// It has a tray icon (`ready app tray`): closing the window hides it there.
     pub tray: bool,
@@ -1986,11 +1988,10 @@ impl WindowProc {
                     }
                     continue;
                 }
-                if let Some(m) = parse_win_line(&line) {
-                    if tx.send(m).is_err() {
+                if let Some(m) = parse_win_line(&line)
+                    && tx.send(m).is_err() {
                         break;
                     }
-                }
             }
             let _ = tx.send(WinMsg::Gone);
         });
@@ -2015,11 +2016,10 @@ impl WindowProc {
     }
 
     pub fn send(&mut self, line: &str) {
-        if let Some(s) = &mut self.stdin {
-            if s.write_all(line.as_bytes()).and_then(|_| s.write_all(b"\n")).and_then(|_| s.flush()).is_err() {
+        if let Some(s) = &mut self.stdin
+            && s.write_all(line.as_bytes()).and_then(|_| s.write_all(b"\n")).and_then(|_| s.flush()).is_err() {
                 self.stdin = None;
             }
-        }
     }
 
     pub fn poll(&mut self) -> Vec<WinMsg> {

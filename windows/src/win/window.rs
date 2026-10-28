@@ -111,7 +111,7 @@ fn started_by_mixer() -> bool {
 }
 
 fn icon(argb: &[u8], side: u32) -> Option<Icon> {
-    let rgba = argb.chunks_exact(4).flat_map(|p| [p[1], p[2], p[3], p[0]]).collect();
+    let rgba = argb.as_chunks::<4>().0.iter().flat_map(|p| [p[1], p[2], p[3], p[0]]).collect();
     Icon::from_rgba(rgba, side, side).ok()
 }
 

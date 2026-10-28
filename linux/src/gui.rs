@@ -1679,11 +1679,10 @@ pub fn note_port(client: &str, port: u16) {
 
 /// Remove the note again, if it is still this GUI's.
 pub fn forget_port(client: &str, port: u16) {
-    if let Some(f) = port_file(client) {
-        if noted(&f) == Some(port) {
+    if let Some(f) = port_file(client)
+        && noted(&f) == Some(port) {
             let _ = std::fs::remove_file(&f);
         }
-    }
 }
 
 fn noted(f: &std::path::Path) -> Option<u16> {
@@ -1912,11 +1911,10 @@ impl WindowProc {
                     }
                     continue;
                 }
-                if let Some(m) = parse_win_line(&line) {
-                    if tx.send(m).is_err() {
+                if let Some(m) = parse_win_line(&line)
+                    && tx.send(m).is_err() {
                         break;
                     }
-                }
             }
             let _ = tx.send(WinMsg::Gone);
         });
@@ -1941,11 +1939,10 @@ impl WindowProc {
     }
 
     pub fn send(&mut self, line: &str) {
-        if let Some(s) = &mut self.stdin {
-            if s.write_all(line.as_bytes()).and_then(|_| s.write_all(b"\n")).and_then(|_| s.flush()).is_err() {
+        if let Some(s) = &mut self.stdin
+            && s.write_all(line.as_bytes()).and_then(|_| s.write_all(b"\n")).and_then(|_| s.flush()).is_err() {
                 self.stdin = None;
             }
-        }
     }
 
     pub fn poll(&mut self) -> Vec<WinMsg> {

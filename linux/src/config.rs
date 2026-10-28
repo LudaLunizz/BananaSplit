@@ -920,11 +920,10 @@ impl Config {
 
     /// Atomic save (write temp file, then rename).
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        if let Some(dir) = path.parent() {
-            if !dir.as_os_str().is_empty() {
+        if let Some(dir) = path.parent()
+            && !dir.as_os_str().is_empty() {
                 std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             }
-        }
         write_replacing(path, &self.to_ini())
     }
 }

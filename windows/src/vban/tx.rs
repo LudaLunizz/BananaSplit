@@ -22,7 +22,7 @@ pub fn packet_frames(period: usize, max: usize) -> usize {
     if period <= max {
         return period;
     }
-    let d = (1..=max).rev().find(|d| period % d == 0).unwrap_or(1);
+    let d = (1..=max).rev().find(|d| period.is_multiple_of(*d)).unwrap_or(1);
     if d * 2 >= max { d } else { max }
 }
 

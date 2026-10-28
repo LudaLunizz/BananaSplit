@@ -16,9 +16,6 @@ pub mod ffi;
 pub mod route;
 pub mod wasapi;
 
-pub use console::{
-    QUIT, RawTerminal, install_signal_handlers, pause_on_error, spawn_input_thread, stdin_is_tty,
-};
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
@@ -31,10 +28,6 @@ use bananasplit::vban::VbanTap;
 use wasapi::{Enumerator, Graph, RATE, Stats};
 
 pub const SERVER_GONE: &str = "the Windows audio service stopped";
-pub const LATENCY_HINT: &str =
-    "round trip >= 60 ms: pick a different A1 device or close apps using exclusive mode";
-/// WASAPI shared mode typically measures 25-45 ms here; flag only real problems.
-pub const RTT_LIMIT_MS: f64 = 60.0;
 
 /// How often to look for added/removed devices and default-device changes.
 const RESCAN: Duration = Duration::from_secs(2);
@@ -160,10 +153,6 @@ impl Session {
             built_at: Instant::now(),
             _com: com,
         })
-    }
-
-    pub fn label(&self) -> String {
-        "WASAPI shared mode".into()
     }
 
     /// The audio threads stop by themselves on device errors and the graph

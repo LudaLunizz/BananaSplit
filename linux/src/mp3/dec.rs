@@ -141,7 +141,7 @@ impl Huffman {
     fn new(codes: &[(u32, u8)], xlen: usize) -> Huffman {
         let mut nodes = vec![[i32::MIN; 2]];
         for (k, &(code, len)) in codes.iter().enumerate() {
-            let v = if xlen == 0 { k } else { (k / xlen) << 4 | (k % xlen) };
+            let v = k.checked_div(xlen).map_or(k, |x| x << 4 | (k % xlen));
             let mut n = 0usize;
             for k in (0..len).rev() {
                 let b = ((code >> k) & 1) as usize;
@@ -509,7 +509,7 @@ impl Decoder {
                 }
                 self.stereo(&h, gi);
                 for ch in 0..nch {
-                    self.to_subbands(&gi[ch], ch, h.rate_index);
+                    self.make_subbands(&gi[ch], ch, h.rate_index);
                 }
                 self.synthesize(nch, &mut out[base + 1152 * g..base + 1152 * (g + 1)]);
             }
@@ -519,7 +519,7 @@ impl Decoder {
             for g in 0..ngr {
                 self.xr = [[0.0; 576]; 2];
                 for ch in 0..nch {
-                    self.to_subbands(&Granule::default(), ch, h.rate_index);
+                    self.make_subbands(&Granule::default(), ch, h.rate_index);
                 }
                 self.synthesize(nch, &mut out[base + 1152 * g..base + 1152 * (g + 1)]);
             }
@@ -772,7 +772,7 @@ impl Decoder {
 
     /// Reorder (short blocks), anti-alias and inverse-MDCT one channel; its
     /// `xr` then holds 18 subband samples per subband.
-    fn to_subbands(&mut self, g: &Granule, ch: usize, rate_index: usize) {
+    fn make_subbands(&mut self, g: &Granule, ch: usize, rate_index: usize) {
         let c = consts();
         let xr = &mut self.xr[ch];
         let long_sb = match (g.block_type, g.mixed) {

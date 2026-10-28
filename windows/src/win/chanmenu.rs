@@ -2,7 +2,7 @@
 //! own (Splitter: one cable per channel) and VB-Audio's.
 
 use crate::gui::DevOp;
-use bananasplit::config::{Config, DEFAULT_DEVICE, PHYSICAL};
+use bananasplit::config::{Config, DEFAULT_DEVICE};
 use bananasplit::engine::{NUM_BUSES, NUM_STRIPS};
 use std::collections::{HashSet, BTreeMap};
 
@@ -42,7 +42,7 @@ fn is_vb_pair_base(name: &str) -> Option<String> {
             // normalize base
             let base = match b {
                 "cable" => "CABLE".to_string(),
-                x => format!("CABLE-{}", &x[6..7].to_uppercase()),
+                x => format!("CABLE-{}", x[6..7].to_uppercase()),
             };
             return Some(base);
         }
@@ -109,11 +109,10 @@ fn families(caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Vec<Family> {
     // prefer order CABLE, CABLE-A, CABLE-B, CABLE-C, CABLE-D
     let order = ["CABLE", "CABLE-A", "CABLE-B", "CABLE-C", "CABLE-D"];
     for b in order {
-        if let Some(o) = by_base_out.get(b) {
-            if let Some(i) = by_base_in.get(b) {
+        if let Some(o) = by_base_out.get(b)
+            && let Some(i) = by_base_in.get(b) {
                 families.push(Family { base: b.to_string(), out_friendly: o.clone(), in_friendly: i.clone() });
             }
-        }
     }
     // also any others
     for (b,o) in &by_base_out {
@@ -249,39 +248,9 @@ fn short(s: &str) -> String {
     route::short_name(s).to_string()
 }
 
-fn effective_conn_strip(s: usize, cfg: &Config, plan: &Plan, all: &[String]) -> Vec<String> {
-    let mut v: Vec<String> = cfg.strips[s].connect.iter().cloned().collect();
-    if let Some(c) = &plan.strip_cable[s] {
-        // add friendly name if not present
-        let lc = c.to_lowercase();
-        if !v.iter().any(|x| x.to_lowercase()==lc || route::resolve(x, &route_devs(), None).map_or(false, |d| d.name.to_lowercase()==lc)) {
-            // better just push friendly
-            if !v.iter().any(|x| x.to_lowercase().contains(&lc.replace("(vb-audio virtual cable)","").replace("(vb-audio cable","").trim().to_lowercase()) || lc.contains(&x.to_lowercase())) {
-                // simple dedupe by substring of friendly
-            }
-        }
-        // push friendly name as connect equivalent? GUI expects connect patterns; but easier push friendly if not matching
-        let exists = v.iter().any(|x| {
-            let xl = x.to_lowercase();
-            xl == lc || route::resolve(x, &fake_devs(), None).map_or(false, |d| d.name.to_lowercase()==lc)
-        });
-        if !exists { v.push(c.clone()); }
-    }
-    // dedupe
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for x in v {
-        let k = x.to_lowercase();
-        if seen.contains(&k) { continue; }
-        seen.insert(k);
-        out.push(x);
-    }
-    out
-}
-
 fn fake_devs() -> Vec<crate::win::route::DevInfo> {
     let (caps,rens)=enumerate().unwrap_or_default();
-    caps.into_iter().chain(rens.into_iter()).map(|d| crate::win::route::DevInfo{name:d.info.name,id:d.info.id}).collect()
+    caps.into_iter().chain(rens).map(|d| crate::win::route::DevInfo{name:d.info.name,id:d.info.id}).collect()
 }
 
 fn route_devs() -> Vec<crate::win::route::DevInfo> {
@@ -359,12 +328,12 @@ fn apply_dev(cfg: &mut Config, op: DevOp) -> Result<String, String> {
                 let c2 = client.clone();
                 if on {
                     // add if not present
-                    let exists = list.iter().any(|x| x.to_lowercase()==c2.to_lowercase() || route::resolve(x, &route_devs(), None).map_or(false,|d| d.name.to_lowercase()==c2.to_lowercase()));
+                    let exists = list.iter().any(|x| x.to_lowercase()==c2.to_lowercase() || route::resolve(x, &route_devs(), None).is_some_and(|d| d.name.to_lowercase()==c2.to_lowercase()));
                     if !exists { list.push(c2); }
                 } else {
                     list.retain(|x| {
                         if x.to_lowercase()==c2.to_lowercase() { return false; }
-                        if let Some(d)=route::resolve(x,&route_devs(),None){ if d.name.to_lowercase()==c2.to_lowercase(){ return false; } }
+                        if let Some(d)=route::resolve(x,&route_devs(),None) && d.name.to_lowercase()==c2.to_lowercase(){ return false; }
                         true
                     });
                 }
@@ -379,7 +348,7 @@ fn apply_dev(cfg: &mut Config, op: DevOp) -> Result<String, String> {
                 } else {
                     list.retain(|x| {
                         if x.to_lowercase()==client.to_lowercase() { return false; }
-                        if let Some(d)=route::resolve(x,&route_devs(),None){ if d.name.to_lowercase()==client.to_lowercase(){ return false; } }
+                        if let Some(d)=route::resolve(x,&route_devs(),None) && d.name.to_lowercase()==client.to_lowercase(){ return false; }
                         true
                     });
                 }

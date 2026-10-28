@@ -88,7 +88,7 @@ impl Producer {
     /// Push interleaved stereo. Returns how many frames were dropped.
     pub fn push_interleaved(&mut self, x: &[f32]) -> usize {
         let mut dropped = 0;
-        for f in x.chunks_exact(2) {
+        for f in x.as_chunks::<2>().0 {
             if !self.push([f[0], f[1]]) {
                 dropped += 1;
             }

@@ -116,11 +116,10 @@ pub fn plan(
 pub fn parse(text: &str) -> BTreeMap<String, usize> {
     let mut m = BTreeMap::new();
     for l in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
-        if let Some((n, app)) = l.split_once(char::is_whitespace) {
-            if let Ok(n @ 1..=NUM_STRIPS) = n.parse::<usize>() {
+        if let Some((n, app)) = l.split_once(char::is_whitespace)
+            && let Ok(n @ 1..=NUM_STRIPS) = n.parse::<usize>() {
                 m.insert(app.trim().to_string(), n - 1);
             }
-        }
     }
     m
 }
@@ -217,11 +216,10 @@ impl AppHomes {
         self.done.extend(p.done);
         // forget streams that ended, so the set stays small
         self.done.retain(|id| info.playing.iter().any(|s| s.id == *id));
-        if self.homes != before {
-            if let Err(e) = self.save() {
+        if self.homes != before
+            && let Err(e) = self.save() {
                 notes.push(e);
             }
-        }
         notes
     }
 }
