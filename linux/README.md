@@ -13,6 +13,10 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.15
+
+* **macOS: other users on the Mac can't control your mixer.** BananaSplit now checks who is on the other end of a connection by asking the macOS kernel's list of TCP sockets, as it already did on Linux and Windows (#36). On macOS, a device switched to another sample format while it plays is now opened again, instead of making noise until a restart. Nothing changes on Linux and Windows.
+
 ## What's new in 2.8.14
 
 * **BananaSplit for macOS.** A new app for Apple silicon and Intel Macs (macOS 11 or newer): the same mixer on Core Audio, with BlackHole as virtual cables (#34). It's signed ad hoc, not with an Apple Developer ID: open it the first time with Open Anyway (see [the macOS manual](../macos/README.md#installing)). Nothing changes on Linux and Windows.
