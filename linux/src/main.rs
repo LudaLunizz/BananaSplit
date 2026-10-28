@@ -1300,7 +1300,20 @@ fn run_gui(
                 gui::Request::Dev(op, reply) => {
                     let list = op == gui::DevOp::List;
                     let info = pulse.snapshot().1;
-                    let r = chanmenu::handle(op, backend, cfg, &mut ctx.cables.borrow_mut(), &info);
+                    // an app put on a strip (or back on the computer's device)
+                    // in the menu: BananaSplit puts it there whenever it plays
+                    let home = match &op {
+                        gui::DevOp::Stream { rec: false, id, ch } => {
+                            info.playing.iter().find(|s| s.id == *id).map(|s| (apphome::key(s).to_string(), ch.filter(|c| *c < NUM_STRIPS)))
+                        }
+                        _ => None,
+                    };
+                    let mut r = chanmenu::handle(op, backend, cfg, &mut ctx.cables.borrow_mut(), &info);
+                    if let (Ok(m), Some((app, strip)), Some(h)) = (&mut r, home, seen.homes.as_mut()) {
+                        if let Err(e) = h.set(&app, strip) {
+                            m.push_str(&format!(" ({e})"));
+                        }
+                    }
                     if !list {
                         pulse.kick();
                         conns_at = Instant::now() - Duration::from_secs(10);

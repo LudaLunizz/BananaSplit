@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.9" date="2026-10-28">
+      <description>
+        <p>An app ticked in a strip's menu keeps that strip after a restart, also apps that don't choose their own device (such as Strawberry); the list of apps and strips can be edited by hand.</p>
+      </description>
+    </release>
     <release version="2.8.8" date="2026-10-28">
       <description>
         <p>Recordings go into a folder per day; a take that runs past midnight continues in the next day's folder, and the player still lists it as one take.</p>
