@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.15" date="2026-10-29">
+      <description>
+        <p>macOS: only the user BananaSplit runs as can control it, and a device whose sample format changes is opened again. Nothing changes on Linux and Windows.</p>
+      </description>
+    </release>
     <release version="2.8.14" date="2026-10-28">
       <description>
         <p>BananaSplit now also comes as an app for macOS (Apple silicon and Intel), on Core Audio with BlackHole as virtual cables. Nothing changes on Linux.</p>

@@ -19,6 +19,13 @@ unsafe extern "C" {
     fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
     fn flock(fd: c_int, operation: c_int) -> c_int;
     fn kill(pid: c_int, sig: c_int) -> c_int;
+    fn sysctlbyname(
+        name: *const c_char,
+        oldp: *mut c_void,
+        oldlenp: *mut usize,
+        newp: *const c_void,
+        newlen: usize,
+    ) -> c_int;
 }
 
 /// Set by SIGINT/SIGTERM/SIGHUP (and by the app's Quit). macOS sends
@@ -57,6 +64,45 @@ pub fn process_exists(pid: u32) -> bool {
     let Ok(pid) = c_int::try_from(pid) else { return false };
     // SAFETY: signal 0 is never delivered; pid > 0 names one process.
     pid > 0 && (unsafe { kill(pid, 0) } == 0 || std::io::Error::last_os_error().raw_os_error() == Some(EPERM))
+}
+
+/// The kernel's list of TCP sockets (`net.inet.tcp.pcblist_n`, see
+/// `mac::pcblist`), or None if it can't be read.
+fn tcp_list() -> Option<Vec<u8>> {
+    let name = c"net.inet.tcp.pcblist_n";
+    // sockets come and go between asking for the size and reading: retry
+    for _ in 0..4 {
+        let mut len = 0usize;
+        // SAFETY: a NUL-terminated name; with no buffer, only `len` is written.
+        if unsafe { sysctlbyname(name.as_ptr(), std::ptr::null_mut(), &mut len, std::ptr::null(), 0) } != 0 {
+            return None;
+        }
+        len += len / 4 + 4096;
+        let mut buf = vec![0u8; len];
+        // SAFETY: `buf` has room for `len` bytes; the kernel writes at most
+        // that and says how much it wrote.
+        let st = unsafe { sysctlbyname(name.as_ptr(), buf.as_mut_ptr().cast(), &mut len, std::ptr::null(), 0) };
+        if st == 0 {
+            buf.truncate(len);
+            return Some(buf);
+        }
+        const ENOMEM: i32 = 12;
+        if std::io::Error::last_os_error().raw_os_error() != Some(ENOMEM) {
+            return None;
+        }
+    }
+    None
+}
+
+/// Is the program at the other end of this loopback connection (`peer`,
+/// coming in at `us`) run by the user BananaSplit runs as? Yes when the
+/// kernel's socket list can't be read at all, as on Windows.
+pub fn same_user(peer: std::net::SocketAddr, us: std::net::SocketAddr) -> bool {
+    use std::net::SocketAddr::V4;
+    let Some(list) = tcp_list() else { return true };
+    let (V4(peer), V4(us)) = (peer, us) else { return false };
+    // its end of the connection: local = peer, remote = us
+    crate::mac::pcblist::owner(&list, peer, us) == Some(uid())
 }
 
 /// Mark every file descriptor above stderr close-on-exec, before starting
@@ -340,6 +386,25 @@ mod tests {
         assert_eq!(unsafe { fcntl(fd, 1) } & 1, 1);
         // SAFETY: closes the copy made above, which nothing else uses.
         unsafe { close(fd) };
+    }
+
+    #[test]
+    fn a_loopback_connection_is_this_users() {
+        use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+        let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (srv, _) = l.accept().unwrap();
+        let (peer, us) = (srv.peer_addr().unwrap(), srv.local_addr().unwrap());
+        let list = tcp_list().expect("the kernel's TCP list");
+        let (SocketAddr::V4(p4), SocketAddr::V4(u4)) = (peer, us) else { panic!("IPv4") };
+        // both ends are found, each with this user: the struct offsets are right
+        assert_eq!(crate::mac::pcblist::owner(&list, p4, u4), Some(uid()));
+        assert_eq!(crate::mac::pcblist::owner(&list, u4, p4), Some(uid()));
+        assert!(same_user(peer, us));
+        // a port nobody uses is no one's
+        let gone = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1);
+        assert_eq!(crate::mac::pcblist::owner(&list, gone, u4), None);
+        drop(c);
     }
 
     #[test]
