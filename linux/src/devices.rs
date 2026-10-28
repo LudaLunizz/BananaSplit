@@ -510,11 +510,10 @@ fn label_score(label: &str, client: &str) -> u8 {
     if client == label {
         return 3;
     }
-    if let Some(rest) = client.strip_prefix(label).and_then(|r| r.strip_prefix('-')) {
-        if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
+    if let Some(rest) = client.strip_prefix(label).and_then(|r| r.strip_prefix('-'))
+        && !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
             return 2;
         }
-    }
     if client.chars().count() >= 60 && label.starts_with(client) {
         return 1;
     }

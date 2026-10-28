@@ -216,11 +216,10 @@ fn pipewire_lib() -> Option<&'static Lib> {
 /// Load libjack once per process: the one in use after a fallback to
 /// PipeWire's, else the system's.
 pub fn lib() -> Result<&'static Lib, String> {
-    if USE_PW.load(SeqCst) {
-        if let Some(l) = pipewire_lib() {
+    if USE_PW.load(SeqCst)
+        && let Some(l) = pipewire_lib() {
             return Ok(l);
         }
-    }
     system_lib()
 }
 

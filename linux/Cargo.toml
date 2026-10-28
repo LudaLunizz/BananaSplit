@@ -18,6 +18,12 @@ path = "src/lib.rs"
 name = "bananasplit"
 path = "src/main.rs"
 
+[lints.clippy]
+# Every unsafe block says why it is sound (`// SAFETY: ...`).
+undocumented_unsafe_blocks = "warn"
+# Index loops mirror the [strip][channel] and DSP table layouts.
+needless_range_loop = "allow"
+
 [profile.release]
 opt-level = 3
 lto = true

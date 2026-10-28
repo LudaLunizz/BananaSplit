@@ -544,8 +544,8 @@ impl RxStream {
             self.ctl.relevel();
         }
         self.playing = playing;
-        if rotated > 0 && playing && self.fill.full() {
-            if let Some(low) = self.fill.min() {
+        if rotated > 0 && playing && self.fill.full()
+            && let Some(low) = self.fill.min() {
                 if low > target + (fs * 0.1).max(target) {
                     // Way too much buffered (a stall delivered a pile of
                     // packets at once): drop it rather than lag for a minute.
@@ -555,7 +555,6 @@ impl RxStream {
                 }
                 self.ctl.step(now, BUCKET.as_secs_f64() * rotated as f64, low, target, fs);
             }
-        }
         Ok(())
     }
 }
@@ -676,7 +675,7 @@ mod tests {
             p.extend_from_slice(&data);
             self.frame = self.frame.wrapping_add(1);
             self.sent += 1;
-            if self.drop_every > 0 && self.sent % self.drop_every == 0 {
+            if self.drop_every > 0 && self.sent.is_multiple_of(self.drop_every) {
                 return; // lost on the way
             }
             let Ok(proto::Packet::Audio(h, d)) = proto::parse(&p) else { panic!() };
@@ -703,11 +702,10 @@ mod tests {
                         if self.stall_every > 0.0 && (due / self.stall_every).fract() < burst_dt / self.stall_every {
                             t += self.stall_s;
                         }
-                        if let Some((a, b)) = self.stall {
-                            if due >= a && due < b {
+                        if let Some((a, b)) = self.stall
+                            && due >= a && due < b {
                                 t = t.max(b);
                             }
-                        }
                         let t = t.max(self.last_arrival);
                         self.next_arrival = Some(t);
                         t

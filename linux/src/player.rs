@@ -621,13 +621,11 @@ fn split_stamp(base: &str) -> Option<(&str, &str)> {
 
 /// `name_part3` -> (`name`, 3); anything else is part 1.
 fn split_part(stem: &str) -> (&str, u32) {
-    if let Some(p) = stem.rfind("_part") {
-        if let Ok(n) = stem[p + 5..].parse::<u32>() {
-            if n >= 2 && !stem[p + 5..].starts_with('+') {
+    if let Some(p) = stem.rfind("_part")
+        && let Ok(n) = stem[p + 5..].parse::<u32>()
+            && n >= 2 && !stem[p + 5..].starts_with('+') {
                 return (&stem[..p], n);
             }
-        }
-    }
     (stem, 1)
 }
 
