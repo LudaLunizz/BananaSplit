@@ -1187,7 +1187,19 @@ const NO_TOOL: &str = if cfg!(windows) {
 /// Run a child process to its end: `stop` ends it early, `limit` too;
 /// `tick` runs every 100 ms (progress). Returns (exit code, stdout, stderr).
 fn run(mut cmd: Command, limit: Duration, stop: &AtomicBool, tick: &mut dyn FnMut() -> Result<(), String>) -> Result<(Option<i32>, String, String), String> {
-    let mut child: Child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("cannot run {:?}: {e}", cmd.get_program()))?;
+    // A program file just written can be "busy" for a moment: a process
+    // forked meanwhile by another thread holds it open for writing until it
+    // calls exec (CI saw this in the tests). It frees up within milliseconds.
+    let mut busy = 0;
+    let mut child: Child = loop {
+        match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && busy < 20 => {
+                busy += 1;
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            r => break r.map_err(|e| format!("cannot run {:?}: {e}", cmd.get_program()))?,
+        }
+    };
     let pipe = |r: Option<Box<dyn Read + Send>>| {
         std::thread::spawn(move || {
             let mut s = Vec::new();
