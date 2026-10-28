@@ -386,9 +386,6 @@ impl Drop for Graph {
     }
 }
 
-struct SendPtr<T>(T);
-unsafe impl<T> Send for SendPtr<T> {}
-
 impl Graph {
     /// Open every configured device and start the audio threads.
     pub fn build(
@@ -528,9 +525,8 @@ impl Graph {
             let rd = DriftReader::new(cons, target);
             sink_prods.push((b, prod));
             let (stop, stats, shared) = (stop.clone(), stats.clone(), shared.clone());
-            let s = SendPtr(s);
             threads.push(spawn("vmix-sink", move || {
-                sink_thread(s.0, rd, &stop, &stats, &shared)
+                sink_thread(s, rd, &stop, &stats, &shared)
             }));
         }
 
@@ -546,9 +542,8 @@ impl Graph {
                         max_in_lat = max_in_lat.max(target as u32 + s.latency_frames);
                         readers[st].push(DriftReader::new(cons, target));
                         let (stop, stats) = (stop.clone(), stats.clone());
-                        let s = SendPtr(s);
                         threads.push(spawn("vmix-capture", move || {
-                            capture_thread(s.0, prod, &stop, &stats)
+                            capture_thread(s, prod, &stop, &stats)
                         }));
                     }
                     Err(e) => errs.push(format!("strip {}: {e}", st + 1)),
@@ -566,14 +561,14 @@ impl Graph {
         engine.attach_vban(vban_tap);
         if let Some(t) = play_tap { engine.attach_player(t); }
         let (master_bus, master_stream) = match master {
-            Some((b, s)) => (b, Some(SendPtr(s))),
+            Some((b, s)) => (b, Some(s)),
             None => (0, None),
         };
         {
             let (stop, stats, shared) = (stop.clone(), stats.clone(), shared.clone());
             threads.push(spawn("vmix-mixer", move || {
                 master_thread(
-                    master_stream.map(|s| s.0),
+                    master_stream,
                     engine,
                     readers,
                     master_bus,
@@ -606,6 +601,9 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> JoinHandle<()> {
 
 fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stats) {
     let _com = ComInit::mta();
+    // Rebound after COM is up, so the stream is released before COM ends
+    // (parameters are dropped after the function's locals).
+    let s = s;
     let _mm = Mmcss::pro_audio();
     let cap = s.capture.as_ref().expect("capture stream");
     if s.start().is_err() {
@@ -673,6 +671,9 @@ fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stat
 
 fn sink_thread(s: Stream, mut rd: DriftReader, stop: &AtomicBool, stats: &Stats, shared: &Shared) {
     let _com = ComInit::mta();
+    // Rebound after COM is up, so the stream is released before COM ends
+    // (parameters are dropped after the function's locals).
+    let s = s;
     let _mm = Mmcss::pro_audio();
     let n_max = s.buffer_frames.max(1) as usize;
     let (mut l, mut r) = (vec![0.0f32; n_max], vec![0.0f32; n_max]);
@@ -717,6 +718,9 @@ fn master_thread(
     shared: &Shared,
 ) {
     let _com = ComInit::mta();
+    // Rebound after COM is up, so the stream is released before COM ends
+    // (parameters are dropped after the function's locals).
+    let out = out;
     let _mm = Mmcss::pro_audio();
     // All buffers are allocated here, before the loop.
     let mut in_l = vec![0.0f32; MAX_BLOCK];
