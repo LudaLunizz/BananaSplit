@@ -93,12 +93,34 @@ pub fn default_uid(input: bool) -> Option<String> {
 /// Changes whenever a device appears, disappears or comes back as a new
 /// device object (replugged, its driver restarted: macOS gives it a new
 /// ID, and IOProcs on the old one are never called again), is renamed,
-/// changes its rate or its channels, or a default device changes. Cheap
-/// enough to poll every few seconds.
+/// changes its rate, its channels or its sample format (an IOProc reads
+/// 32-bit floats: a device switched to another format in Audio MIDI Setup
+/// is opened again, and refused if it can't be used), or a default device
+/// changes. Cheap enough to poll every few seconds.
 pub fn signature() -> String {
     let mut s = String::new();
     for d in devices().unwrap_or_default() {
-        let _ = writeln!(s, "{}#{}={} {}/{} {}", d.info.id, d.id, d.info.name, d.inputs, d.outputs, d.rate);
+        let float = |input: bool, n: u32| {
+            if n == 0 {
+                '-'
+            } else if ffi::float32(d.id, input) {
+                'f'
+            } else {
+                'x'
+            }
+        };
+        let _ = writeln!(
+            s,
+            "{}#{}={} {}/{} {} {}{}",
+            d.info.id,
+            d.id,
+            d.info.name,
+            d.inputs,
+            d.outputs,
+            d.rate,
+            float(true, d.inputs),
+            float(false, d.outputs)
+        );
     }
     let _ = writeln!(s, "in {}", default_uid(true).unwrap_or_default());
     let _ = writeln!(s, "out {}", default_uid(false).unwrap_or_default());

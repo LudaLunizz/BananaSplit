@@ -60,6 +60,16 @@ curl -fsS "$url/api/cables" | grep -q '^{"cables":\[' || fail "/api/cables"
 curl -fsS "$url/api/state" | grep -q '"welcome":' || fail "the welcome flag in /api/state"
 curl -fsS "$url/" | grep -q '<title>' || fail "the page"
 
+# Another user on this Mac is turned away (403), by the kernel's socket
+# list. Needs sudo without a password (CI has it); skipped otherwise.
+if sudo -n -u nobody true 2>/dev/null; then
+    code=$(sudo -n -u nobody curl -s -o /dev/null -w '%{http_code}' -H 'X-BananaSplit: 1' "$url/api/state" || true)
+    [ "$code" = 403 ] || fail "another user got $code from /api/state, not 403"
+    echo "another user: 403, as it should"
+else
+    echo "skipped the other-user check (no sudo here)"
+fi
+
 # A second start asks the running one to show its window, and ends.
 "$exe" --gui-port "$port" || fail "a second start"
 kill -0 "$pid" 2>/dev/null || fail "the first one ended at the second start"

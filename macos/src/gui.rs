@@ -1519,6 +1519,7 @@ frame-ancestors 'none'\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\
 /// as `::ffff:127.0.0.1`), its line has `peer` as local and `us` as remote
 /// address. The kernel prints each 32-bit word of an address in host order.
 #[cfg(unix)]
+#[cfg_attr(target_os = "macos", allow(dead_code))] // the Linux copy's check; macOS asks sys::same_user
 pub fn socket_owner(table: &str, peer: SocketAddr, us: SocketAddr) -> Option<u32> {
     let hex = |a: SocketAddr| {
         let words = |b: &[u8]| {
@@ -1549,15 +1550,15 @@ fn mapped(a: SocketAddr) -> SocketAddr {
 }
 
 /// Only processes of the user BananaSplit runs as may use it: other users
-/// on this computer can reach 127.0.0.1 too. Without /proc (macOS) there is
-/// no table of sockets and their owners to look in: yes, as in 2.5.
+/// on this computer can reach 127.0.0.1 too. macOS has no /proc: it asks
+/// the kernel's socket list (`sys::same_user`), as Windows asks its own.
 fn peer_allowed(s: &TcpStream) -> bool {
     let (Ok(peer), Ok(us)) = (s.peer_addr(), s.local_addr()) else { return false };
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     {
         crate::sys::same_user(peer, us)
     }
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let Ok(t4) = std::fs::read_to_string("/proc/net/tcp") else { return true };
         let owner = socket_owner(&t4, peer, us).or_else(|| {
@@ -2391,6 +2392,8 @@ mod tests {
             assert_eq!(socket_owner(&t, srv.peer_addr().unwrap(), srv.local_addr().unwrap()), Some(crate::sys::uid()));
             assert!(peer_allowed(&srv));
         }
+        #[cfg(target_os = "macos")]
+        assert!(peer_allowed(&srv), "the kernel's socket list says this connection is ours");
         drop(c);
     }
 
