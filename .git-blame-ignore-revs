@@ -2,4 +2,4 @@
 # itself; locally: git config blame.ignoreRevsFile .git-blame-ignore-revs).
 
 # Format the code with rustfmt (#31)
-cd34c3af032fa5f84939f8201fc0362046045db6
+846e6e523af769786b73803f350c0547702cdd7c
