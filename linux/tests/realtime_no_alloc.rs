@@ -3,10 +3,10 @@
 //! zero frees across thousands of process() cycles with parameters changing
 //! underneath (as the UI thread does).
 
+use bananasplit::engine::{Engine, NUM_BUSES, NUM_STRIPS, Shared};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-use bananasplit::engine::{Engine, NUM_BUSES, NUM_STRIPS, Shared};
 
 struct Counting;
 thread_local! {
@@ -86,7 +86,10 @@ fn process_never_allocates() {
         });
         eng.process(&mut outs);
         let _ = (sh.strips[s].peak[0].take(), sh.strips[s].input_peak[1].take());
-        assert!(outs.iter().flatten().all(|ch| ch.iter().all(|x| x.is_finite() && x.abs() < 1e6)), "bounded at cycle {cycle}");
+        assert!(
+            outs.iter().flatten().all(|ch| ch.iter().all(|x| x.is_finite() && x.abs() < 1e6)),
+            "bounded at cycle {cycle}"
+        );
     }
     ARMED.set(false);
     assert_eq!(EVENTS.load(SeqCst), 0, "heap was touched in the real-time path");

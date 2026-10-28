@@ -20,7 +20,12 @@ impl Ring {
     /// A ring of at least `samples` slots (rounded up to a power of two).
     pub fn new(samples: usize) -> Ring {
         let n = samples.max(2).next_power_of_two();
-        Ring { buf: (0..n).map(|_| AtomicU32::new(0)).collect(), mask: n - 1, head: AtomicUsize::new(0), tail: AtomicUsize::new(0) }
+        Ring {
+            buf: (0..n).map(|_| AtomicU32::new(0)).collect(),
+            mask: n - 1,
+            head: AtomicUsize::new(0),
+            tail: AtomicUsize::new(0),
+        }
     }
 
     pub fn capacity(&self) -> usize {

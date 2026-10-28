@@ -4,7 +4,9 @@ use crate::win::ffi::*;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
 
-pub use crate::win::console::{install_signal_handlers, pause_on_error, spawn_input_thread, stdin_is_tty, RawTerminal, QUIT};
+pub use crate::win::console::{
+    QUIT, RawTerminal, install_signal_handlers, pause_on_error, spawn_input_thread, stdin_is_tty,
+};
 
 /// Started by the user (a double-click, the Start menu), this process may
 /// bring a window to the front. Pass that on, so the running BananaSplit's
@@ -20,7 +22,6 @@ pub struct LocalIp {
     pub ip: Ipv4Addr,
     pub broadcast: Option<Ipv4Addr>,
 }
-
 
 const AF_INET: u32 = 2;
 const GAA_FLAG_SKIP_ANYCAST: u32 = 0x2;
@@ -58,7 +59,8 @@ pub fn local_ipv4() -> Vec<LocalIp> {
         let mut cur = addrs;
         while !cur.is_null() {
             let a = &*cur;
-            if a.oper_status == 1 { // Up
+            if a.oper_status == 1 {
+                // Up
                 let iface = if !a.friendly_name.is_null() { from_wide(a.friendly_name) } else { String::new() };
                 let mut u = a.first_unicast;
                 while !u.is_null() {
@@ -140,9 +142,21 @@ pub fn owner_pid(table: &[u8], v6: bool, peer: SocketAddr, us: SocketAddr) -> Op
     (0..n).find_map(|k| {
         let r = 4 + k * row;
         let (local, lport, remote, rport, pid) = if v6 {
-            (table.get(r..r + 16)?.to_vec(), port_at(r + 20)?, table.get(r + 24..r + 40)?.to_vec(), port_at(r + 44)?, u32_at(r + 52)?)
+            (
+                table.get(r..r + 16)?.to_vec(),
+                port_at(r + 20)?,
+                table.get(r + 24..r + 40)?.to_vec(),
+                port_at(r + 44)?,
+                u32_at(r + 52)?,
+            )
         } else {
-            (table.get(r + 4..r + 8)?.to_vec(), port_at(r + 8)?, table.get(r + 12..r + 16)?.to_vec(), port_at(r + 16)?, u32_at(r + 20)?)
+            (
+                table.get(r + 4..r + 8)?.to_vec(),
+                port_at(r + 8)?,
+                table.get(r + 12..r + 16)?.to_vec(),
+                port_at(r + 16)?,
+                u32_at(r + 20)?,
+            )
         };
         let addr = |a: SocketAddr| -> Vec<u8> {
             match (v6, a) {
@@ -204,7 +218,10 @@ pub fn same_user(peer: SocketAddr, us: SocketAddr) -> bool {
             return true;
         }
         let (mut theirs, mut ours) = (0u32, 0u32);
-        if ProcessIdToSessionId(pid, &mut theirs) != 0 && ProcessIdToSessionId(GetCurrentProcessId(), &mut ours) != 0 && theirs != ours {
+        if ProcessIdToSessionId(pid, &mut theirs) != 0
+            && ProcessIdToSessionId(GetCurrentProcessId(), &mut ours) != 0
+            && theirs != ours
+        {
             return false;
         }
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
@@ -219,12 +236,14 @@ pub fn same_user(peer: SocketAddr, us: SocketAddr) -> bool {
 }
 
 pub fn local_timestamp() -> String {
-    let mut t = SystemTime { year: 0, month: 0, day_of_week: 0, day: 0, hour: 0, minute: 0, second: 0, milliseconds: 0 };
+    let mut t =
+        SystemTime { year: 0, month: 0, day_of_week: 0, day: 0, hour: 0, minute: 0, second: 0, milliseconds: 0 };
     // SAFETY: `t` is a local SYSTEMTIME with the SDK layout.
-    unsafe { GetLocalTime(&mut t); }
+    unsafe {
+        GetLocalTime(&mut t);
+    }
     format!("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", t.year, t.month, t.day, t.hour, t.minute, t.second)
 }
-
 
 pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     let mut cur = path.to_path_buf();
@@ -238,13 +257,17 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
         if ok != 0 {
             return Some((total_free, free_avail));
         }
-        if !cur.pop() { break; }
+        if !cur.pop() {
+            break;
+        }
     }
     None
 }
 
 pub fn cloexec_all() {}
-pub fn uid() -> u32 { 0 }
+pub fn uid() -> u32 {
+    0
+}
 
 pub fn term_cols() -> Option<usize> {
     None

@@ -127,7 +127,9 @@ fn libmpg123_plays_our_files_at_their_length() {
         seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         (seed >> 9) as f32 / (1u32 << 23) as f32 - 0.5
     };
-    for (rate, kbps, n) in [(48000, 320, 100_001), (44100, 192, 88_200), (32000, 128, 31_999), (48000, 256, 0), (44100, 320, 1)] {
+    for (rate, kbps, n) in
+        [(48000, 320, 100_001), (44100, 192, 88_200), (32000, 128, 31_999), (48000, 256, 0), (44100, 320, 1)]
+    {
         let lr: Vec<f32> = (0..n)
             .flat_map(|i| {
                 let t = i as f32 / rate as f32;

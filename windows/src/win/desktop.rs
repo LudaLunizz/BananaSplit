@@ -69,7 +69,14 @@ pub fn open_folder(path: &Path) -> Result<(), String> {
     let open = wide("open");
     // SAFETY: `open` and `p` are NUL-terminated UTF-16 locals; COM is initialised (`ComInit::sta`).
     unsafe {
-        let r = ShellExecuteW(std::ptr::null_mut(), open.as_ptr(), p.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL);
+        let r = ShellExecuteW(
+            std::ptr::null_mut(),
+            open.as_ptr(),
+            p.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        );
         if (r as usize) <= 32 { Err(format!("ShellExecuteW failed for {}", path.display())) } else { Ok(()) }
     }
 }
@@ -81,18 +88,28 @@ fn reg_set_run(enable: bool) -> Result<(), String> {
     if enable {
         let cmd = wide(&format!("\"{}\" --gui --no-open", exe_path().display()));
         // SAFETY: NUL-terminated UTF-16 strings; `len` is the data's size in bytes, NUL included.
-        let r = unsafe { RegSetKeyValueW(hkcu(), sub.as_ptr(), name.as_ptr(), REG_SZ, cmd.as_ptr().cast(), (cmd.len() * 2) as u32) };
+        let r = unsafe {
+            RegSetKeyValueW(hkcu(), sub.as_ptr(), name.as_ptr(), REG_SZ, cmd.as_ptr().cast(), (cmd.len() * 2) as u32)
+        };
         if r == 0 { Ok(()) } else { Err(format!("failed to add BananaSplit to the Windows autostart (error {r})")) }
     } else {
         // SAFETY: NUL-terminated UTF-16 strings.
         let r = unsafe { RegDeleteKeyValueW(hkcu(), sub.as_ptr(), name.as_ptr()) };
-        if r == 0 || r == ERROR_FILE_NOT_FOUND { Ok(()) } else { Err(format!("failed to remove BananaSplit from the Windows autostart (error {r})")) }
+        if r == 0 || r == ERROR_FILE_NOT_FOUND {
+            Ok(())
+        } else {
+            Err(format!("failed to remove BananaSplit from the Windows autostart (error {r})"))
+        }
     }
 }
 
 pub fn set_autostart(enable: bool) -> Result<String, String> {
     reg_set_run(enable)?;
-    if enable { Ok("BananaSplit will start with Windows, in the tray.".into()) } else { Ok("BananaSplit will not start with Windows.".into()) }
+    if enable {
+        Ok("BananaSplit will start with Windows, in the tray.".into())
+    } else {
+        Ok("BananaSplit will not start with Windows.".into())
+    }
 }
 
 /// The `Run` entry's command line, if there is one.
@@ -102,12 +119,30 @@ fn run_value() -> Option<String> {
     // SAFETY: NUL-terminated UTF-16 strings; first only the size is asked
     // for, then the data is read into a buffer of that size.
     unsafe {
-        if RegGetValueW(hkcu(), sub.as_ptr(), name.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), std::ptr::null_mut(), &mut len) != 0 {
+        if RegGetValueW(
+            hkcu(),
+            sub.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut len,
+        ) != 0
+        {
             return None;
         }
         let mut buf = vec![0u16; (len as usize).div_ceil(2).max(1)];
         let mut size = (buf.len() * 2) as u32;
-        if RegGetValueW(hkcu(), sub.as_ptr(), name.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut size) != 0 {
+        if RegGetValueW(
+            hkcu(),
+            sub.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr().cast(),
+            &mut size,
+        ) != 0
+        {
             return None;
         }
         let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
@@ -141,12 +176,15 @@ pub fn autostart_enabled() -> bool {
 
 pub fn install() -> Result<String, String> {
     let exe = exe_path();
-    let start_menu = std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Microsoft\\Windows\\Start Menu\\Programs\\BananaSplit.lnk"));
+    let start_menu = std::env::var_os("APPDATA")
+        .map(|a| PathBuf::from(a).join("Microsoft\\Windows\\Start Menu\\Programs\\BananaSplit.lnk"));
     if let Some(lnk) = start_menu {
-        let ps = format!("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}');$s.TargetPath='{}';$s.Arguments='--gui';$s.IconLocation='{}';$s.Save()",
+        let ps = format!(
+            "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}');$s.TargetPath='{}';$s.Arguments='--gui';$s.IconLocation='{}';$s.Save()",
             lnk.to_string_lossy().replace('\'', "''"),
             exe.to_string_lossy().replace('\'', "''"),
-            exe.to_string_lossy().replace('\'', "''"));
+            exe.to_string_lossy().replace('\'', "''")
+        );
         let status = Command::new("powershell")
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps])
             .creation_flags(CREATE_NO_WINDOW)
@@ -173,7 +211,16 @@ pub fn open_url(url: &str) -> bool {
     let _com = crate::win::ffi::ComInit::sta();
     let (open, u) = (wide("open"), wide(url));
     // SAFETY: NUL-terminated UTF-16 strings.
-    let r = unsafe { ShellExecuteW(std::ptr::null_mut(), open.as_ptr(), u.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+    let r = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            open.as_ptr(),
+            u.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
     r as usize > 32
 }
 
@@ -202,7 +249,9 @@ pub fn no_window(why: &str, mixer_url: &str) {
     );
     let (cap, t) = (wide("BananaSplit"), wide(&text));
     // SAFETY: NUL-terminated UTF-16 strings.
-    let answer = unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND) };
+    let answer = unsafe {
+        MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND)
+    };
     if answer == IDYES {
         open_url(WEBVIEW2_PAGE);
     }
@@ -213,7 +262,9 @@ pub fn error_dialog(text: &str) {
     let cap = wide("BananaSplit");
     let t = to_wide(text);
     // SAFETY: `t` and `cap` are NUL-terminated UTF-16 strings held in locals.
-    unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR | MB_SETFOREGROUND); }
+    unsafe {
+        MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+    }
 }
 
 #[cfg(test)]
@@ -225,7 +276,10 @@ mod tests {
         let exe = Path::new(r"C:\Users\me\Apps\BananaSplit 2.7.1\bananasplit.exe");
         assert!(run_targets(r#""C:\Users\me\Apps\BananaSplit 2.7.1\bananasplit.exe" --gui --no-open"#, exe));
         assert!(run_targets(r#""c:\users\ME\apps\bananasplit 2.7.1\BANANASPLIT.EXE" --gui"#, exe), "case");
-        assert!(run_targets(r"C:/Users/me/Apps/BananaSplit 2.7.1/bananasplit.exe --gui --no-open", exe), "unquoted, slashes");
+        assert!(
+            run_targets(r"C:/Users/me/Apps/BananaSplit 2.7.1/bananasplit.exe --gui --no-open", exe),
+            "unquoted, slashes"
+        );
         // an older copy, or the same one before it was moved
         assert!(!run_targets(r#""C:\Users\me\Downloads\bananasplit-2.7.0\bananasplit.exe" --gui --no-open"#, exe));
         assert!(!run_targets(r#""C:\Users\me\Apps\BananaSplit 2.7.1\bananasplit.exe.bak""#, exe));

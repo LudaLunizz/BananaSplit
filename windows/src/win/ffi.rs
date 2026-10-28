@@ -6,13 +6,7 @@
 //! three IUnknown slots, and methods are listed in header order, because the
 //! slot position is the ABI.
 
-#![allow(
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::upper_case_acronyms,
-    dead_code
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::upper_case_acronyms, dead_code)]
 
 use std::ffi::c_void;
 
@@ -32,59 +26,26 @@ pub struct GUID {
 }
 
 const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> GUID {
-    GUID {
-        data1: d1,
-        data2: d2,
-        data3: d3,
-        data4: d4,
-    }
+    GUID { data1: d1, data2: d2, data3: d3, data4: d4 }
 }
 
-pub const CLSID_MMDeviceEnumerator: GUID = guid(
-    0xBCDE0395,
-    0xE52F,
-    0x467C,
-    [0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E],
-);
-pub const IID_IMMDeviceEnumerator: GUID = guid(
-    0xA95664D2,
-    0x9614,
-    0x4F35,
-    [0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6],
-);
-pub const IID_IAudioClient: GUID = guid(
-    0x1CB9AD4C,
-    0xDBFA,
-    0x4C32,
-    [0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2],
-);
-pub const IID_IAudioRenderClient: GUID = guid(
-    0xF294ACFC,
-    0x3146,
-    0x4483,
-    [0xA7, 0xBF, 0xAD, 0xDC, 0xA7, 0xC2, 0x60, 0xE2],
-);
-pub const IID_IAudioCaptureClient: GUID = guid(
-    0xC8ADBD64,
-    0xE71E,
-    0x48A0,
-    [0xA4, 0xDE, 0x18, 0x5C, 0x39, 0x5C, 0xD3, 0x17],
-);
+pub const CLSID_MMDeviceEnumerator: GUID =
+    guid(0xBCDE0395, 0xE52F, 0x467C, [0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E]);
+pub const IID_IMMDeviceEnumerator: GUID =
+    guid(0xA95664D2, 0x9614, 0x4F35, [0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6]);
+pub const IID_IAudioClient: GUID = guid(0x1CB9AD4C, 0xDBFA, 0x4C32, [0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2]);
+pub const IID_IAudioRenderClient: GUID =
+    guid(0xF294ACFC, 0x3146, 0x4483, [0xA7, 0xBF, 0xAD, 0xDC, 0xA7, 0xC2, 0x60, 0xE2]);
+pub const IID_IAudioCaptureClient: GUID =
+    guid(0xC8ADBD64, 0xE71E, 0x48A0, [0xA4, 0xDE, 0x18, 0x5C, 0x39, 0x5C, 0xD3, 0x17]);
 
 #[repr(C)]
 pub struct PROPERTYKEY {
     pub fmtid: GUID,
     pub pid: u32,
 }
-pub const PKEY_Device_FriendlyName: PROPERTYKEY = PROPERTYKEY {
-    fmtid: guid(
-        0xA45C254E,
-        0xDF1C,
-        0x4EFD,
-        [0x80, 0x20, 0x67, 0xD1, 0x46, 0xA8, 0x50, 0xE0],
-    ),
-    pid: 14,
-};
+pub const PKEY_Device_FriendlyName: PROPERTYKEY =
+    PROPERTYKEY { fmtid: guid(0xA45C254E, 0xDF1C, 0x4EFD, [0x80, 0x20, 0x67, 0xD1, 0x46, 0xA8, 0x50, 0xE0]), pid: 14 };
 
 /// PROPVARIANT: 8-byte header + a union as large as two pointers (DECIMAL
 /// overlays the whole struct), i.e. 24 bytes on 64-bit, 16 on 32-bit.
@@ -205,8 +166,7 @@ pub const SW_SHOWNORMAL: i32 = 1;
 
 #[repr(C)]
 pub struct IUnknownVtbl {
-    pub QueryInterface:
-        unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> HRESULT,
+    pub QueryInterface: unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> HRESULT,
     pub AddRef: unsafe extern "system" fn(*mut c_void) -> u32,
     pub Release: unsafe extern "system" fn(*mut c_void) -> u32,
 }
@@ -214,15 +174,11 @@ pub struct IUnknownVtbl {
 #[repr(C)]
 pub struct IMMDeviceEnumeratorVtbl {
     pub base: IUnknownVtbl,
-    pub EnumAudioEndpoints:
-        unsafe extern "system" fn(*mut c_void, u32, u32, *mut *mut c_void) -> HRESULT,
-    pub GetDefaultAudioEndpoint:
-        unsafe extern "system" fn(*mut c_void, u32, u32, *mut *mut c_void) -> HRESULT,
+    pub EnumAudioEndpoints: unsafe extern "system" fn(*mut c_void, u32, u32, *mut *mut c_void) -> HRESULT,
+    pub GetDefaultAudioEndpoint: unsafe extern "system" fn(*mut c_void, u32, u32, *mut *mut c_void) -> HRESULT,
     pub GetDevice: unsafe extern "system" fn(*mut c_void, *const u16, *mut *mut c_void) -> HRESULT,
-    pub RegisterEndpointNotificationCallback:
-        unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
-    pub UnregisterEndpointNotificationCallback:
-        unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
+    pub RegisterEndpointNotificationCallback: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
+    pub UnregisterEndpointNotificationCallback: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
 }
 
 #[repr(C)]
@@ -235,13 +191,8 @@ pub struct IMMDeviceCollectionVtbl {
 #[repr(C)]
 pub struct IMMDeviceVtbl {
     pub base: IUnknownVtbl,
-    pub Activate: unsafe extern "system" fn(
-        *mut c_void,
-        *const GUID,
-        u32,
-        *mut PROPVARIANT,
-        *mut *mut c_void,
-    ) -> HRESULT,
+    pub Activate:
+        unsafe extern "system" fn(*mut c_void, *const GUID, u32, *mut PROPVARIANT, *mut *mut c_void) -> HRESULT,
     pub OpenPropertyStore: unsafe extern "system" fn(*mut c_void, u32, *mut *mut c_void) -> HRESULT,
     pub GetId: unsafe extern "system" fn(*mut c_void, *mut *mut u16) -> HRESULT,
     pub GetState: unsafe extern "system" fn(*mut c_void, *mut u32) -> HRESULT,
@@ -252,10 +203,8 @@ pub struct IPropertyStoreVtbl {
     pub base: IUnknownVtbl,
     pub GetCount: unsafe extern "system" fn(*mut c_void, *mut u32) -> HRESULT,
     pub GetAt: unsafe extern "system" fn(*mut c_void, u32, *mut PROPERTYKEY) -> HRESULT,
-    pub GetValue:
-        unsafe extern "system" fn(*mut c_void, *const PROPERTYKEY, *mut PROPVARIANT) -> HRESULT,
-    pub SetValue:
-        unsafe extern "system" fn(*mut c_void, *const PROPERTYKEY, *const PROPVARIANT) -> HRESULT,
+    pub GetValue: unsafe extern "system" fn(*mut c_void, *const PROPERTYKEY, *mut PROPVARIANT) -> HRESULT,
+    pub SetValue: unsafe extern "system" fn(*mut c_void, *const PROPERTYKEY, *const PROPVARIANT) -> HRESULT,
     pub Commit: unsafe extern "system" fn(*mut c_void) -> HRESULT,
 }
 
@@ -274,21 +223,15 @@ pub struct IAudioClientVtbl {
     pub GetBufferSize: unsafe extern "system" fn(*mut c_void, *mut u32) -> HRESULT,
     pub GetStreamLatency: unsafe extern "system" fn(*mut c_void, *mut REFERENCE_TIME) -> HRESULT,
     pub GetCurrentPadding: unsafe extern "system" fn(*mut c_void, *mut u32) -> HRESULT,
-    pub IsFormatSupported: unsafe extern "system" fn(
-        *mut c_void,
-        u32,
-        *const WAVEFORMATEX,
-        *mut *mut WAVEFORMATEX,
-    ) -> HRESULT,
+    pub IsFormatSupported:
+        unsafe extern "system" fn(*mut c_void, u32, *const WAVEFORMATEX, *mut *mut WAVEFORMATEX) -> HRESULT,
     pub GetMixFormat: unsafe extern "system" fn(*mut c_void, *mut *mut WAVEFORMATEX) -> HRESULT,
-    pub GetDevicePeriod:
-        unsafe extern "system" fn(*mut c_void, *mut REFERENCE_TIME, *mut REFERENCE_TIME) -> HRESULT,
+    pub GetDevicePeriod: unsafe extern "system" fn(*mut c_void, *mut REFERENCE_TIME, *mut REFERENCE_TIME) -> HRESULT,
     pub Start: unsafe extern "system" fn(*mut c_void) -> HRESULT,
     pub Stop: unsafe extern "system" fn(*mut c_void) -> HRESULT,
     pub Reset: unsafe extern "system" fn(*mut c_void) -> HRESULT,
     pub SetEventHandle: unsafe extern "system" fn(*mut c_void, HANDLE) -> HRESULT,
-    pub GetService:
-        unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> HRESULT,
+    pub GetService: unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> HRESULT,
 }
 
 #[repr(C)]
@@ -301,14 +244,8 @@ pub struct IAudioRenderClientVtbl {
 #[repr(C)]
 pub struct IAudioCaptureClientVtbl {
     pub base: IUnknownVtbl,
-    pub GetBuffer: unsafe extern "system" fn(
-        *mut c_void,
-        *mut *mut u8,
-        *mut u32,
-        *mut u32,
-        *mut u64,
-        *mut u64,
-    ) -> HRESULT,
+    pub GetBuffer:
+        unsafe extern "system" fn(*mut c_void, *mut *mut u8, *mut u32, *mut u32, *mut u64, *mut u64) -> HRESULT,
     pub ReleaseBuffer: unsafe extern "system" fn(*mut c_void, u32) -> HRESULT,
     pub GetNextPacketSize: unsafe extern "system" fn(*mut c_void, *mut u32) -> HRESULT,
 }
@@ -476,12 +413,7 @@ unsafe extern "system" {
 
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
-    pub fn CreateEventW(
-        attrs: *mut c_void,
-        manual_reset: BOOL,
-        initial: BOOL,
-        name: *const u16,
-    ) -> HANDLE;
+    pub fn CreateEventW(attrs: *mut c_void, manual_reset: BOOL, initial: BOOL, name: *const u16) -> HANDLE;
     pub fn WaitForSingleObject(h: HANDLE, ms: u32) -> u32;
     pub fn CloseHandle(h: HANDLE) -> BOOL;
     pub fn GetStdHandle(which: u32) -> HANDLE;
@@ -490,10 +422,7 @@ unsafe extern "system" {
     pub fn GetConsoleOutputCP() -> u32;
     pub fn SetConsoleOutputCP(cp: u32) -> BOOL;
     pub fn SetConsoleTitleW(title: *const u16) -> BOOL;
-    pub fn SetConsoleCtrlHandler(
-        handler: Option<unsafe extern "system" fn(u32) -> BOOL>,
-        add: BOOL,
-    ) -> BOOL;
+    pub fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> BOOL>, add: BOOL) -> BOOL;
     pub fn ReadConsoleInputW(h: HANDLE, buf: *mut INPUT_RECORD, len: u32, read: *mut u32) -> BOOL;
     pub fn GetConsoleProcessList(list: *mut u32, count: u32) -> u32;
     pub fn FreeConsole() -> BOOL;
@@ -557,10 +486,19 @@ unsafe extern "system" {
     pub fn CreatePopupMenu() -> HANDLE;
     pub fn AppendMenuW(menu: HANDLE, flags: u32, id: usize, text: *const u16) -> BOOL;
     pub fn SetMenuDefaultItem(menu: HANDLE, item: u32, by_position: u32) -> BOOL;
-    pub fn TrackPopupMenu(menu: HANDLE, flags: u32, x: i32, y: i32, reserved: i32, hwnd: HWND, rect: *const c_void) -> BOOL;
+    pub fn TrackPopupMenu(
+        menu: HANDLE,
+        flags: u32,
+        x: i32,
+        y: i32,
+        reserved: i32,
+        hwnd: HWND,
+        rect: *const c_void,
+    ) -> BOOL;
     pub fn DestroyMenu(menu: HANDLE) -> BOOL;
     pub fn GetCursorPos(p: *mut Point) -> BOOL;
-    pub fn CreateIcon(instance: HANDLE, w: i32, h: i32, planes: u8, bits: u8, and: *const u8, xor: *const u8) -> HANDLE;
+    pub fn CreateIcon(instance: HANDLE, w: i32, h: i32, planes: u8, bits: u8, and: *const u8, xor: *const u8)
+    -> HANDLE;
     pub fn DestroyIcon(icon: HANDLE) -> BOOL;
     pub fn GetSystemMetrics(index: i32) -> i32;
     pub fn SetTimer(hwnd: HWND, id: usize, ms: u32, func: *const c_void) -> usize;
@@ -589,13 +527,35 @@ unsafe extern "system" {
         adapter_addresses: *mut IpAdapterAddresses,
         size: *mut u32,
     ) -> u32;
-    pub fn GetExtendedTcpTable(table: *mut c_void, size: *mut u32, order: BOOL, af: u32, class: u32, reserved: u32) -> u32;
+    pub fn GetExtendedTcpTable(
+        table: *mut c_void,
+        size: *mut u32,
+        order: BOOL,
+        af: u32,
+        class: u32,
+        reserved: u32,
+    ) -> u32;
 }
 
 #[cfg_attr(windows, link(name = "advapi32"))]
 unsafe extern "system" {
-    pub fn RegGetValueW(key: HANDLE, sub: *const u16, value: *const u16, flags: u32, ty: *mut u32, data: *mut c_void, len: *mut u32) -> i32;
-    pub fn RegSetKeyValueW(key: HANDLE, sub: *const u16, value: *const u16, ty: u32, data: *const c_void, len: u32) -> i32;
+    pub fn RegGetValueW(
+        key: HANDLE,
+        sub: *const u16,
+        value: *const u16,
+        flags: u32,
+        ty: *mut u32,
+        data: *mut c_void,
+        len: *mut u32,
+    ) -> i32;
+    pub fn RegSetKeyValueW(
+        key: HANDLE,
+        sub: *const u16,
+        value: *const u16,
+        ty: u32,
+        data: *const c_void,
+        len: u32,
+    ) -> i32;
     pub fn RegDeleteKeyValueW(key: HANDLE, sub: *const u16, value: *const u16) -> i32;
     pub fn OpenProcessToken(process: HANDLE, access: u32, token: *mut HANDLE) -> BOOL;
     pub fn GetTokenInformation(token: HANDLE, class: u32, info: *mut c_void, len: u32, ret: *mut u32) -> BOOL;
@@ -669,14 +629,7 @@ impl<V> Com<V> {
     /// created on a thread in the multithreaded apartment (`ComInit::mta()` succeeded),
     /// because `Com` may be sent to other threads.
     pub unsafe fn from_raw(ptr: *mut c_void) -> Option<Self> {
-        if ptr.is_null() {
-            None
-        } else {
-            Some(Com {
-                ptr,
-                _v: std::marker::PhantomData,
-            })
-        }
+        if ptr.is_null() { None } else { Some(Com { ptr, _v: std::marker::PhantomData }) }
     }
     pub fn as_ptr(&self) -> *mut c_void {
         self.ptr
@@ -709,11 +662,7 @@ impl Event {
         // auto-reset, initially non-signalled
         // SAFETY: plain call: no security attributes and no name.
         let h = unsafe { CreateEventW(std::ptr::null_mut(), 0, 0, std::ptr::null()) };
-        if h.is_null() {
-            Err("CreateEventW failed".into())
-        } else {
-            Ok(Event(h))
-        }
+        if h.is_null() { Err("CreateEventW failed".into()) } else { Ok(Event(h)) }
     }
     /// The handle, for waiting on it or handing it to WASAPI; still owned here.
     pub fn raw(&self) -> HANDLE {
@@ -777,18 +726,9 @@ mod tests {
         assert_eq!(std::mem::size_of::<PROPERTYKEY>(), 20);
         #[cfg(target_pointer_width = "64")]
         assert_eq!(std::mem::size_of::<PROPVARIANT>(), 24);
-        assert_eq!(
-            std::mem::size_of::<IAudioClientVtbl>(),
-            15 * std::mem::size_of::<usize>()
-        );
-        assert_eq!(
-            std::mem::size_of::<IMMDeviceEnumeratorVtbl>(),
-            8 * std::mem::size_of::<usize>()
-        );
-        assert_eq!(
-            std::mem::size_of::<IAudioCaptureClientVtbl>(),
-            6 * std::mem::size_of::<usize>()
-        );
+        assert_eq!(std::mem::size_of::<IAudioClientVtbl>(), 15 * std::mem::size_of::<usize>());
+        assert_eq!(std::mem::size_of::<IMMDeviceEnumeratorVtbl>(), 8 * std::mem::size_of::<usize>());
+        assert_eq!(std::mem::size_of::<IAudioCaptureClientVtbl>(), 6 * std::mem::size_of::<usize>());
     }
 
     #[test]
@@ -802,4 +742,3 @@ mod tests {
         );
     }
 }
-

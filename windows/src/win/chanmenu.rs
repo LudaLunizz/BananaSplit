@@ -1,17 +1,17 @@
-﻿//! Windows channel menus: WASAPI devices and virtual cables: BananaSplit's
+//! Windows channel menus: WASAPI devices and virtual cables: BananaSplit's
 //! own (Splitter: one cable per channel) and VB-Audio's.
 
 use crate::gui::DevOp;
 use bananasplit::config::{Config, DEFAULT_DEVICE};
 use bananasplit::engine::{NUM_BUSES, NUM_STRIPS};
-use std::collections::{HashSet, BTreeMap};
+use std::collections::{BTreeMap, HashSet};
 
 use crate::win::{ffi, route, wasapi};
 
 #[derive(Clone)]
 struct Plan {
     strip_cable: [Option<String>; NUM_STRIPS], // friendly name of capture side added
-    bus_cable: [Option<String>; NUM_BUSES],     // friendly name of render side added
+    bus_cable: [Option<String>; NUM_BUSES],    // friendly name of render side added
     strip_cable_label: [Option<String>; NUM_STRIPS],
     bus_cable_label: [Option<String>; NUM_BUSES],
     families: Vec<Family>,
@@ -32,10 +32,14 @@ struct Family {
 
 fn is_vb_pair_base(name: &str) -> Option<String> {
     let n = name.to_ascii_lowercase();
-    if !n.contains("vb-audio") { return None; }
+    if !n.contains("vb-audio") {
+        return None;
+    }
     // Hi-Fi Cable is a pair of its own ("Hi-Fi Cable Input (VB-Audio Hi-Fi
     // Cable)"), not one half of CABLE
-    if n.contains("hi-fi cable") { return Some("Hi-Fi Cable".to_string()); }
+    if n.contains("hi-fi cable") {
+        return Some("Hi-Fi Cable".to_string());
+    }
     // detect CABLE, CABLE-A, CABLE-B, CABLE-C, CABLE-D
     for b in ["cable-d", "cable-c", "cable-b", "cable-a", "cable"] {
         if n.starts_with(b) || n.contains(&format!("({b})")) || n.contains(&format!(" {b}")) {
@@ -110,14 +114,17 @@ fn families(caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Vec<Family> {
     let order = ["CABLE", "CABLE-A", "CABLE-B", "CABLE-C", "CABLE-D"];
     for b in order {
         if let Some(o) = by_base_out.get(b)
-            && let Some(i) = by_base_in.get(b) {
-                families.push(Family { base: b.to_string(), out_friendly: o.clone(), in_friendly: i.clone() });
-            }
+            && let Some(i) = by_base_in.get(b)
+        {
+            families.push(Family { base: b.to_string(), out_friendly: o.clone(), in_friendly: i.clone() });
+        }
     }
     // also any others
-    for (b,o) in &by_base_out {
-        if families.iter().any(|f| f.base==*b) { continue; }
-        if let Some(i)=by_base_in.get(b) {
+    for (b, o) in &by_base_out {
+        if families.iter().any(|f| f.base == *b) {
+            continue;
+        }
+        if let Some(i) = by_base_in.get(b) {
             families.push(Family { base: b.clone(), out_friendly: o.clone(), in_friendly: i.clone() });
         }
     }
@@ -152,7 +159,9 @@ fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo
     // Input" (apps record "Splitter B1"). A cable counts only with both
     // halves there (one may be switched off in the Windows sound settings).
     for s in 0..NUM_STRIPS {
-        if !cfg.strips[s].cable { continue; }
+        if !cfg.strips[s].cable {
+            continue;
+        }
         if let (Some(out), Some(inp)) = (
             route::splitter_endpoint(caps, s, route::SplitterEnd::Output),
             route::splitter_endpoint(rens, s, route::SplitterEnd::Input),
@@ -162,7 +171,9 @@ fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo
         }
     }
     for b in 0..NUM_BUSES {
-        if !cfg.buses[b].cable { continue; }
+        if !cfg.buses[b].cable {
+            continue;
+        }
         if let (Some(inp), Some(out)) = (
             route::splitter_endpoint(rens, NUM_STRIPS + b, route::SplitterEnd::Input),
             route::splitter_endpoint(caps, NUM_STRIPS + b, route::SplitterEnd::Output),
@@ -174,17 +185,25 @@ fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo
     // VB-Audio pairs for the channels Splitter doesn't cover: strips first,
     // in order, then buses.
     for s in 0..NUM_STRIPS {
-        if !cfg.strips[s].cable || strip_cable[s].is_some() { continue; }
+        if !cfg.strips[s].cable || strip_cable[s].is_some() {
+            continue;
+        }
         // find free family not conflicting with explicit connects
-        for (idx,f) in families.iter().enumerate() {
-            if used.contains(&idx) { continue; }
+        for (idx, f) in families.iter().enumerate() {
+            if used.contains(&idx) {
+                continue;
+            }
             // check if explicit connects use either end
             let mut conflict = false;
             for p in &cfg.strips[s].connect {
                 let pl = p.to_lowercase();
-                if pl.contains(&f.in_friendly.to_lowercase()) || pl.contains(&f.out_friendly.to_lowercase()) { conflict = true; }
+                if pl.contains(&f.in_friendly.to_lowercase()) || pl.contains(&f.out_friendly.to_lowercase()) {
+                    conflict = true;
+                }
             }
-            if conflict { continue; }
+            if conflict {
+                continue;
+            }
             used.insert(idx);
             // strip captures from CABLE Output (f.in_friendly)
             strip_cable[s] = Some(f.in_friendly.clone());
@@ -194,15 +213,23 @@ fn build_plan_info(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo
         }
     }
     for b in 0..NUM_BUSES {
-        if !cfg.buses[b].cable || bus_cable[b].is_some() { continue; }
-        for (idx,f) in families.iter().enumerate() {
-            if used.contains(&idx) { continue; }
+        if !cfg.buses[b].cable || bus_cable[b].is_some() {
+            continue;
+        }
+        for (idx, f) in families.iter().enumerate() {
+            if used.contains(&idx) {
+                continue;
+            }
             let mut conflict = false;
             for p in &cfg.buses[b].connect {
                 let pl = p.to_lowercase();
-                if pl.contains(&f.in_friendly.to_lowercase()) || pl.contains(&f.out_friendly.to_lowercase()) { conflict = true; }
+                if pl.contains(&f.in_friendly.to_lowercase()) || pl.contains(&f.out_friendly.to_lowercase()) {
+                    conflict = true;
+                }
             }
-            if conflict { continue; }
+            if conflict {
+                continue;
+            }
             used.insert(idx);
             // bus plays to CABLE Input
             bus_cable[b] = Some(f.out_friendly.clone());
@@ -230,7 +257,7 @@ fn no_free_cable(p: &Plan, ch: usize) -> String {
 }
 
 fn json_escape(s: &str) -> String {
-    let mut o = String::with_capacity(s.len()*2);
+    let mut o = String::with_capacity(s.len() * 2);
     for c in s.chars() {
         match c {
             '"' => o.push_str("\\\""),
@@ -249,8 +276,8 @@ fn short(s: &str) -> String {
 }
 
 fn fake_devs() -> Vec<crate::win::route::DevInfo> {
-    let (caps,rens)=enumerate().unwrap_or_default();
-    caps.into_iter().chain(rens).map(|d| crate::win::route::DevInfo{name:d.info.name,id:d.info.id}).collect()
+    let (caps, rens) = enumerate().unwrap_or_default();
+    caps.into_iter().chain(rens).map(|d| crate::win::route::DevInfo { name: d.info.name, id: d.info.id }).collect()
 }
 
 fn route_devs() -> Vec<crate::win::route::DevInfo> {
@@ -261,7 +288,7 @@ pub fn list(cfg: &Config) -> String {
     // Without COM the lists below are just empty (no audio objects are made).
     let com = ffi::ComInit::mta().ok();
     let plan = build_plan(cfg);
-    let (caps, rens) = enumerate().unwrap_or((vec![],vec![]));
+    let (caps, rens) = enumerate().unwrap_or((vec![], vec![]));
     // build candidates
     let mut strip_cand: Vec<String> = Vec::new();
     let mut bus_cand: Vec<String> = Vec::new();
@@ -274,48 +301,97 @@ pub fn list(cfg: &Config) -> String {
         let client = d.info.name.clone();
         let label = short(&d.info.name);
         let def = def_cap.as_ref() == Some(&d.info.id);
-        strip_cand.push(format!("{{\"client\":\"{}\",\"label\":\"{}\",\"kind\":\"device\",\"default\":{}}}", json_escape(&client), json_escape(&label), if def {"true"} else {"false"}));
+        strip_cand.push(format!(
+            "{{\"client\":\"{}\",\"label\":\"{}\",\"kind\":\"device\",\"default\":{}}}",
+            json_escape(&client),
+            json_escape(&label),
+            if def { "true" } else { "false" }
+        ));
     }
     for d in &rens {
         let client = d.info.name.clone();
         let label = short(&d.info.name);
         let def = def_ren.as_ref() == Some(&d.info.id);
-        bus_cand.push(format!("{{\"client\":\"{}\",\"label\":\"{}\",\"kind\":\"device\",\"default\":{}}}", json_escape(&client), json_escape(&label), if def {"true"} else {"false"}));
+        bus_cand.push(format!(
+            "{{\"client\":\"{}\",\"label\":\"{}\",\"kind\":\"device\",\"default\":{}}}",
+            json_escape(&client),
+            json_escape(&label),
+            if def { "true" } else { "false" }
+        ));
     }
     // channels
     let mut ch_out = String::new();
     for i in 0..NUM_STRIPS {
         // effective conn friendly names
         let mut conn_list: Vec<String> = cfg.strips[i].connect.clone();
-        if let Some(c)=&plan.strip_cable[i] {
+        if let Some(c) = &plan.strip_cable[i] {
             // ensure cable present as a friendly name reference
             let lc = c.to_lowercase();
-            if !conn_list.iter().any(|x| x.to_lowercase()==lc) { conn_list.push(c.clone()); }
+            if !conn_list.iter().any(|x| x.to_lowercase() == lc) {
+                conn_list.push(c.clone());
+            }
         }
-        let conn_json = conn_list.iter().map(|x| format!("\"{}\"", json_escape(&short(x)))).collect::<Vec<_>>().join(",");
+        let conn_json =
+            conn_list.iter().map(|x| format!("\"{}\"", json_escape(&short(x)))).collect::<Vec<_>>().join(",");
         // also full connect patterns
-        let connp_json = cfg.strips[i].connect.iter().map(|x| format!("\"{}\"", json_escape(x))).collect::<Vec<_>>().join(",");
+        let connp_json =
+            cfg.strips[i].connect.iter().map(|x| format!("\"{}\"", json_escape(x))).collect::<Vec<_>>().join(",");
         // cable
         let cable_on = plan.strip_cable[i].is_some();
         let cable_name = plan.strip_cable_label[i].clone().unwrap_or_else(|| "Virtual cable".to_string());
-        if i>0 { ch_out.push(','); }
-        ch_out.push_str(&format!("{{\"id\":\"{}\",\"cable\":{{\"on\":{},\"name\":\"{}\"}},\"conn\":[{}],\"connect\":[{}]}}", i+1, if cable_on {"true"} else {"false"}, json_escape(&short(&cable_name)), conn_json, connp_json));
+        if i > 0 {
+            ch_out.push(',');
+        }
+        ch_out.push_str(&format!(
+            "{{\"id\":\"{}\",\"cable\":{{\"on\":{},\"name\":\"{}\"}},\"conn\":[{}],\"connect\":[{}]}}",
+            i + 1,
+            if cable_on { "true" } else { "false" },
+            json_escape(&short(&cable_name)),
+            conn_json,
+            connp_json
+        ));
     }
     for i in 0..NUM_BUSES {
         let mut conn_list: Vec<String> = cfg.buses[i].connect.clone();
-        if let Some(c)=&plan.bus_cable[i] {
+        if let Some(c) = &plan.bus_cable[i] {
             let lc = c.to_lowercase();
-            if !conn_list.iter().any(|x| x.to_lowercase()==lc) { conn_list.push(c.clone()); }
+            if !conn_list.iter().any(|x| x.to_lowercase() == lc) {
+                conn_list.push(c.clone());
+            }
         }
-        let conn_json = conn_list.iter().map(|x| format!("\"{}\"", json_escape(&short(x)))).collect::<Vec<_>>().join(",");
-        let connp_json = cfg.buses[i].connect.iter().map(|x| format!("\"{}\"", json_escape(x))).collect::<Vec<_>>().join(",");
+        let conn_json =
+            conn_list.iter().map(|x| format!("\"{}\"", json_escape(&short(x)))).collect::<Vec<_>>().join(",");
+        let connp_json =
+            cfg.buses[i].connect.iter().map(|x| format!("\"{}\"", json_escape(x))).collect::<Vec<_>>().join(",");
         let cable_on = plan.bus_cable[i].is_some();
         let cable_name = plan.bus_cable_label[i].clone().unwrap_or_else(|| "Virtual cable".to_string());
         ch_out.push(',');
-        let id = match i { 0=>"A1",1=>"A2",2=>"A3",3=>"B1",4=>"B2", _=>"A1" };
-        ch_out.push_str(&format!("{{\"id\":\"{}\",\"cable\":{{\"on\":{},\"name\":\"{}\"}},\"conn\":[{}],\"connect\":[{}]}}", id, if cable_on {"true"} else {"false"}, json_escape(&short(&cable_name)), conn_json, connp_json));
+        let id = match i {
+            0 => "A1",
+            1 => "A2",
+            2 => "A3",
+            3 => "B1",
+            4 => "B2",
+            _ => "A1",
+        };
+        ch_out.push_str(&format!(
+            "{{\"id\":\"{}\",\"cable\":{{\"on\":{},\"name\":\"{}\"}},\"conn\":[{}],\"connect\":[{}]}}",
+            id,
+            if cable_on { "true" } else { "false" },
+            json_escape(&short(&cable_name)),
+            conn_json,
+            connp_json
+        ));
     }
-    format!("{{\"cables\":{{\"ok\":{},\"none\":{},\"why\":\"{}\"}},\"pulse\":false,\"strip\":[{}],\"bus\":[{}],\"play\":[],\"rec\":[],\"ch\":[{}]}}", plan.ok, plan.none, json_escape(&plan.why), strip_cand.join(","), bus_cand.join(","), ch_out)
+    format!(
+        "{{\"cables\":{{\"ok\":{},\"none\":{},\"why\":\"{}\"}},\"pulse\":false,\"strip\":[{}],\"bus\":[{}],\"play\":[],\"rec\":[],\"ch\":[{}]}}",
+        plan.ok,
+        plan.none,
+        json_escape(&plan.why),
+        strip_cand.join(","),
+        bus_cand.join(","),
+        ch_out
+    )
 }
 
 fn apply_dev(cfg: &mut Config, op: DevOp) -> Result<String, String> {
@@ -465,7 +541,8 @@ mod tests {
         let (mut caps, mut rens) = (Vec::new(), Vec::new());
         for ch in 0..NUM_STRIPS + NUM_BUSES {
             let n = route::splitter_name(ch);
-            let (input, output) = if ch < NUM_STRIPS { (n.clone(), format!("{n} Output")) } else { (format!("{n} Input"), n) };
+            let (input, output) =
+                if ch < NUM_STRIPS { (n.clone(), format!("{n} Output")) } else { (format!("{n} Input"), n) };
             if !without.contains(&input.as_str()) {
                 rens.push(format!("{input} (Splitter Cables)"));
             }
@@ -491,8 +568,14 @@ mod tests {
         let p = build_plan_info(&cfg, &caps, &rens);
         assert!(p.ok && p.splitter && p.why.is_empty());
         for s in 0..NUM_STRIPS {
-            assert_eq!(p.strip_cable[s].as_deref(), Some(format!("Splitter {} Output (Splitter Cables)", s + 1).as_str()));
-            assert_eq!(p.strip_cable_label[s].as_deref(), Some(format!("Splitter {} (Splitter Cables)", s + 1).as_str()));
+            assert_eq!(
+                p.strip_cable[s].as_deref(),
+                Some(format!("Splitter {} Output (Splitter Cables)", s + 1).as_str())
+            );
+            assert_eq!(
+                p.strip_cable_label[s].as_deref(),
+                Some(format!("Splitter {} (Splitter Cables)", s + 1).as_str())
+            );
         }
         for (b, id) in ["A1", "A2", "A3", "B1", "B2"].iter().enumerate() {
             assert_eq!(p.bus_cable[b].as_deref(), Some(format!("Splitter {id} Input (Splitter Cables)").as_str()));
@@ -528,8 +611,14 @@ mod tests {
         let cfg = Config::default();
         // strip 2's "Splitter 2" and bus B1's "Splitter B1" switched off in Windows
         let (mut caps, mut rens) = splitter(&["Splitter 2", "Splitter B1"]);
-        caps.extend(devs(&VB_CAPS).into_iter().map(|mut d| { d.id.push_str("vb"); d }));
-        rens.extend(devs(&VB_RENS).into_iter().map(|mut d| { d.id.push_str("vb"); d }));
+        caps.extend(devs(&VB_CAPS).into_iter().map(|mut d| {
+            d.id.push_str("vb");
+            d
+        }));
+        rens.extend(devs(&VB_RENS).into_iter().map(|mut d| {
+            d.id.push_str("vb");
+            d
+        }));
         let p = build_plan_info(&cfg, &caps, &rens);
         // strips first: strip 2 gets CABLE, then bus B1 gets CABLE-A
         assert_eq!(p.strip_cable[1].as_deref(), Some(VB_CAPS[0]));
@@ -549,8 +638,14 @@ mod tests {
             b.cable = true;
         }
         let (mut caps, mut rens) = splitter(&[]);
-        caps.extend(devs(&VB_CAPS).into_iter().map(|mut d| { d.id.push_str("vb"); d }));
-        rens.extend(devs(&VB_RENS).into_iter().map(|mut d| { d.id.push_str("vb"); d }));
+        caps.extend(devs(&VB_CAPS).into_iter().map(|mut d| {
+            d.id.push_str("vb");
+            d
+        }));
+        rens.extend(devs(&VB_RENS).into_iter().map(|mut d| {
+            d.id.push_str("vb");
+            d
+        }));
         let p = build_plan_info(&cfg, &caps, &rens);
         let all: Vec<&str> = p.strip_cable.iter().chain(&p.bus_cable).map(|c| c.as_deref().unwrap()).collect();
         assert_eq!(all.len(), NUM_STRIPS + NUM_BUSES);
@@ -565,7 +660,10 @@ mod tests {
         assert_eq!(p.strip_cable[0].as_deref(), Some(VB_CAPS[0]));
         assert_eq!(p.strip_cable[1].as_deref(), Some(VB_CAPS[1]));
         assert!(p.strip_cable[2].is_none() && p.bus_cable[3].is_none());
-        assert!(no_free_cable(&p, 2).starts_with("All 2 installed VB-Audio cable pair(s) are already used. Install Splitter"));
+        assert!(
+            no_free_cable(&p, 2)
+                .starts_with("All 2 installed VB-Audio cable pair(s) are already used. Install Splitter")
+        );
     }
 
     #[test]
@@ -584,7 +682,11 @@ mod tests {
 
     #[test]
     fn no_cables_at_all() {
-        let p = build_plan_info(&Config::default(), &devs(&["Microphone (USB Mic)"]), &devs(&["Speakers (Realtek(R) Audio)"]));
+        let p = build_plan_info(
+            &Config::default(),
+            &devs(&["Microphone (USB Mic)"]),
+            &devs(&["Speakers (Realtek(R) Audio)"]),
+        );
         assert!(!p.ok && p.none && !p.splitter);
         assert_eq!(p.why, crate::win::cables::MISSING);
         assert!(p.strip_cable.iter().chain(&p.bus_cable).all(|c| c.is_none()));

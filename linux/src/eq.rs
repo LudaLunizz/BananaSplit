@@ -698,8 +698,20 @@ mod tests {
         let b = Band { on: false, kind: Kind::LowCut, freq: 80.0, gain_db: -3.5, q: 0.71 };
         assert_eq!(b.to_config(), "lowcut 80 -3.5 0.71 off");
         assert_eq!(Band::parse("lowcut 80 -3.5 0.71 off").unwrap(), b);
-        assert_eq!(Band::parse("bell 1000.4 +3.04 1.414 ON").unwrap(), Band { on: true, kind: Kind::Bell, freq: 1000.0, gain_db: 3.0, q: 1.41 });
-        for bad in ["bell 1000 3", "bell 10 0 1", "bell 1000 30 1", "bell 1000 0 0", "bell 1000 0 1 maybe", "bell x 0 1", "bell 1000 NaN 1", "x 1 2 3 4 5"] {
+        assert_eq!(
+            Band::parse("bell 1000.4 +3.04 1.414 ON").unwrap(),
+            Band { on: true, kind: Kind::Bell, freq: 1000.0, gain_db: 3.0, q: 1.41 }
+        );
+        for bad in [
+            "bell 1000 3",
+            "bell 10 0 1",
+            "bell 1000 30 1",
+            "bell 1000 0 0",
+            "bell 1000 0 1 maybe",
+            "bell x 0 1",
+            "bell 1000 NaN 1",
+            "x 1 2 3 4 5",
+        ] {
             assert!(Band::parse(bad).is_err(), "{bad}");
         }
         let wild = Band { on: true, kind: Kind::Bell, freq: f32::NAN, gain_db: 99.0, q: 0.0 };
@@ -760,7 +772,11 @@ mod tests {
     #[test]
     fn off_and_flat_are_bit_exact() {
         let input: Vec<f32> = (0..1000).map(|i| ((i * 7919) % 2001) as f32 / 1000.0 - 1.0).collect();
-        for (on, bands) in [(false, DEFAULT_BANDS), (true, DEFAULT_BANDS), (false, only(Band { on: true, kind: Kind::LowCut, freq: 200.0, gain_db: 0.0, q: 0.71 }))] {
+        for (on, bands) in [
+            (false, DEFAULT_BANDS),
+            (true, DEFAULT_BANDS),
+            (false, only(Band { on: true, kind: Kind::LowCut, freq: 200.0, gain_db: 0.0, q: 0.71 })),
+        ] {
             let p = params(on, &bands);
             let mut eq = EqRt::new(48_000);
             for _ in 0..20 {
@@ -787,7 +803,9 @@ mod tests {
     }
 
     fn run_sine(eq: &mut EqRt, p: &EqParams, start: usize, n: usize, out: &mut Vec<f32>) {
-        let mut l: Vec<f32> = (start..start + n).map(|i| 0.5 * (2.0 * std::f32::consts::PI * 100.0 * i as f32 / 48_000.0).sin()).collect();
+        let mut l: Vec<f32> = (start..start + n)
+            .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 100.0 * i as f32 / 48_000.0).sin())
+            .collect();
         let mut r = l.clone();
         eq.process(p, &mut l, &mut r);
         out.extend_from_slice(&l);

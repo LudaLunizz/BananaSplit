@@ -14,6 +14,12 @@
 #[path = "gui.rs"]
 mod gui;
 // The same file as linux/src/tui.rs; the Windows console uses part of it.
+#[cfg(windows)]
+#[path = "win/window.rs"]
+mod app_window;
+#[cfg(windows)]
+#[path = "win/tray.rs"]
+mod tray;
 #[allow(dead_code)]
 #[path = "tui.rs"]
 mod tui;
@@ -21,12 +27,6 @@ mod tui;
 mod update;
 #[path = "win/mod.rs"]
 mod win;
-#[cfg(windows)]
-#[path = "win/window.rs"]
-mod app_window;
-#[cfg(windows)]
-#[path = "win/tray.rs"]
-mod tray;
 
 #[path = "win/desktop.rs"]
 pub mod desktop;
@@ -45,7 +45,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::time::{Duration, Instant};
-use win::{Session, SERVER_GONE};
+use win::{SERVER_GONE, Session};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -130,11 +130,7 @@ fn parse_args() -> Result<Args, String> {
 }
 
 fn channel_names(cfg: &Config) -> Vec<String> {
-    cfg.strips
-        .iter()
-        .map(|s| s.name.clone())
-        .chain(cfg.buses.iter().map(|b| b.name.clone()))
-        .collect()
+    cfg.strips.iter().map(|s| s.name.clone()).chain(cfg.buses.iter().map(|b| b.name.clone())).collect()
 }
 
 fn rec_folder(rec: &Recorder) -> PathBuf {
@@ -303,14 +299,8 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     if !cfg.gui.scene.is_empty() && !scenes.exists(&cfg.gui.scene) {
         cfg.gui.scene.clear();
     }
-    let hub = gui::Hub::new(
-        ctx.shared.clone(),
-        rec.clone(),
-        ctx.vban.clone(),
-        ctx.player.clone(),
-        takes.clone(),
-        scenes,
-    );
+    let hub =
+        gui::Hub::new(ctx.shared.clone(), rec.clone(), ctx.vban.clone(), ctx.player.clone(), takes.clone(), scenes);
     hub.set_names(channel_names(cfg));
     hub.set_look(cfg.gui.theme, cfg.gui.zoom);
     hub.autostart.store(desktop::autostart_enabled(), SeqCst);
@@ -368,11 +358,8 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                 Request::Quit => quit = true,
                 Request::Reconnect => {
                     let (_, errs) = ctx.session.connect(cfg, true);
-                    status = if errs.is_empty() {
-                        "all configured connections made".to_string()
-                    } else {
-                        errs.join(" | ")
-                    };
+                    status =
+                        if errs.is_empty() { "all configured connections made".to_string() } else { errs.join(" | ") };
                     dev_rev += 1;
                 }
                 Request::Save => {
@@ -413,7 +400,9 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                     capture_all(cfg, &ctx.shared, &rec, &ctx.vban);
                     cfg.recorder.play_to = ctx.player.routes();
                     status = match cfg.save(&ctx.path) {
-                        Ok(()) if on => "updates are installed automatically (BananaSplit checks once a day)".to_string(),
+                        Ok(()) if on => {
+                            "updates are installed automatically (BananaSplit checks once a day)".to_string()
+                        }
                         Ok(()) => "automatic updates are off: BananaSplit checks only when you ask".to_string(),
                         Err(e) => format!("save failed: {e}"),
                     };
@@ -629,7 +618,9 @@ fn main() -> ExitCode {
     }
     if args.update {
         // A running app would start its window from the new file.
-        let client = Config::load_or_default(&args.path).map(|c| c.client_name).unwrap_or_else(|_| Config::default().client_name);
+        let client = Config::load_or_default(&args.path)
+            .map(|c| c.client_name)
+            .unwrap_or_else(|_| Config::default().client_name);
         let running = gui::find_running(&client, args.explicit_port.then_some(args.port)).is_some();
         return match update::cli(running) {
             Ok(()) => ExitCode::SUCCESS,
@@ -659,14 +650,16 @@ fn main() -> ExitCode {
         let defq = Config::default();
         if let Some(p) = gui::find_running(&defq.client_name, args.explicit_port.then_some(args.port))
             && let Some((code, _)) = gui::request_quit(p)
-                && code == 200 {
-                    return ExitCode::SUCCESS;
-                }
+            && code == 200
+        {
+            return ExitCode::SUCCESS;
+        }
         if let Ok(c) = Config::load_or_default(&args.path)
-            && let Some(p) = gui::find_running(&c.client_name, args.explicit_port.then_some(args.port)) {
-                let _ = gui::request_quit(p);
-                return ExitCode::SUCCESS;
-            }
+            && let Some(p) = gui::find_running(&c.client_name, args.explicit_port.then_some(args.port))
+        {
+            let _ = gui::request_quit(p);
+            return ExitCode::SUCCESS;
+        }
         eprintln!("no running BananaSplit found");
         return ExitCode::SUCCESS;
     }
@@ -687,19 +680,23 @@ fn main() -> ExitCode {
     // BananaSplit) brings up the running mixer's page instead of starting a
     // second audio engine.
     if !args.headless
-        && let Some(port) = gui::find_running(&cfg.client_name, args.explicit_port.then_some(args.port)) {
-            let url = gui::url(port);
-            if args.no_open {
-                eprintln!("bananasplit: already running at {url}");
-                return ExitCode::SUCCESS;
-            }
-            // Its window comes to the front: this start may pass that on.
-            sys::allow_foreground();
-            if !gui::request_show(port, "") && !gui::open_window(&url) {
-                return fail(&format!("BananaSplit is already running at {url}, but its window could not be opened"), false);
-            }
+        && let Some(port) = gui::find_running(&cfg.client_name, args.explicit_port.then_some(args.port))
+    {
+        let url = gui::url(port);
+        if args.no_open {
+            eprintln!("bananasplit: already running at {url}");
             return ExitCode::SUCCESS;
         }
+        // Its window comes to the front: this start may pass that on.
+        sys::allow_foreground();
+        if !gui::request_show(port, "") && !gui::open_window(&url) {
+            return fail(
+                &format!("BananaSplit is already running at {url}, but its window could not be opened"),
+                false,
+            );
+        }
+        return ExitCode::SUCCESS;
+    }
 
     // What an update left next to the program (the old one, now unused).
     update::clean_leftovers();
@@ -711,25 +708,20 @@ fn main() -> ExitCode {
     let rec_tap = RecTap::new();
     let vban_tap = VbanTap::new();
     let play_tap = PlayTap::new();
-    let recorder = Arc::new(Recorder::new(rec_tap.clone(), rate, cfg.recorder.settings()).with_clock(sys::local_timestamp));
+    let recorder =
+        Arc::new(Recorder::new(rec_tap.clone(), rate, cfg.recorder.settings()).with_clock(sys::local_timestamp));
     let vban = Arc::new(Vban::start(vban_tap.clone(), rate, cfg.vban.clone()));
     let player = Arc::new(Player::new(play_tap.clone(), rate));
     player.set_routes(cfg.recorder.play_to);
 
     let no_cables = win::first_run(&mut cfg, &args.path, args.headless, &mut notes);
-    let session = match Session::open(&cfg, shared.clone(), rec_tap.clone(), vban_tap.clone(), play_tap.clone(), &mut notes) {
-        Ok(s) => s,
-        Err(e) => return fail(&e, args.headless),
-    };
+    let session =
+        match Session::open(&cfg, shared.clone(), rec_tap.clone(), vban_tap.clone(), play_tap.clone(), &mut notes) {
+            Ok(s) => s,
+            Err(e) => return fail(&e, args.headless),
+        };
 
-    let mut ctx = Ctx {
-        path: args.path.clone(),
-        shared: shared.clone(),
-        rec: recorder,
-        vban,
-        player,
-        session,
-    };
+    let mut ctx = Ctx { path: args.path.clone(), shared: shared.clone(), rec: recorder, vban, player, session };
     // The graph Session::open built (opening every device again would only
     // take time); its connection errors.
     let (_, errs) = ctx.session.connect(&cfg, false);
@@ -758,7 +750,12 @@ fn main() -> ExitCode {
             drop(ctx);
             match update::spawn_restarted(&[]) {
                 Ok(()) => ExitCode::SUCCESS,
-                Err(e) => fail(&format!("BananaSplit was updated, but could not start again: {e}\n\nStart it from the Start Menu."), false),
+                Err(e) => fail(
+                    &format!(
+                        "BananaSplit was updated, but could not start again: {e}\n\nStart it from the Start Menu."
+                    ),
+                    false,
+                ),
             }
         }
         Ok(()) => ExitCode::SUCCESS,

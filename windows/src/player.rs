@@ -447,7 +447,8 @@ impl TrackReader {
         self.src = Some(match info {
             FileInfo::Wav(w) => {
                 let mut f = File::open(path).map_err(|e| err(e.to_string()))?;
-                f.seek(SeekFrom::Start(w.data_offset + frame * w.block_align() as u64)).map_err(|e| err(e.to_string()))?;
+                f.seek(SeekFrom::Start(w.data_offset + frame * w.block_align() as u64))
+                    .map_err(|e| err(e.to_string()))?;
                 Source::Wav(f)
             }
             FileInfo::Mp3(m) => {
@@ -623,9 +624,11 @@ fn split_stamp(base: &str) -> Option<(&str, &str)> {
 fn split_part(stem: &str) -> (&str, u32) {
     if let Some(p) = stem.rfind("_part")
         && let Ok(n) = stem[p + 5..].parse::<u32>()
-            && n >= 2 && !stem[p + 5..].starts_with('+') {
-                return (&stem[..p], n);
-            }
+        && n >= 2
+        && !stem[p + 5..].starts_with('+')
+    {
+        return (&stem[..p], n);
+    }
     (stem, 1)
 }
 
@@ -722,7 +725,11 @@ pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
     cache.headers.retain(|p, _| seen.contains(p));
     // A key that has files of both kinds: the MP3 take is `<key>.mp3`, and
     // other files are labelled with their extension.
-    let both: Vec<String> = groups.keys().filter(|(k, e)| *e == "mp3" && groups.contains_key(&(k.clone(), "wav"))).map(|(k, _)| k.clone()).collect();
+    let both: Vec<String> = groups
+        .keys()
+        .filter(|(k, e)| *e == "mp3" && groups.contains_key(&(k.clone(), "wav")))
+        .map(|(k, _)| k.clone())
+        .collect();
     let groups: Vec<(String, Group)> = groups
         .into_iter()
         .map(|((key, ext), mut g)| {
@@ -748,7 +755,16 @@ pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
             tracks.sort_by_key(|t| label_rank(&t.label));
             let first = tracks.first()?.parts.first()?.1.clone();
             let frames = tracks.iter().map(|t| t.parts.iter().map(|(_, i)| i.frames()).sum::<u64>()).max().unwrap_or(0);
-            Some(TakeInfo { key, when, tracks, sample_rate: first.sample_rate(), fmt: first.label(), frames, bytes, mtime })
+            Some(TakeInfo {
+                key,
+                when,
+                tracks,
+                sample_rate: first.sample_rate(),
+                fmt: first.label(),
+                frames,
+                bytes,
+                mtime,
+            })
         })
         .collect();
     order_takes(&mut takes);
@@ -814,9 +830,7 @@ fn order_takes(takes: &mut Vec<TakeInfo>) {
         let mut seen: Vec<i64> = session.iter().map(offset).collect();
         seen.sort_unstable();
         seen.dedup();
-        let clock_change = seen.len() == 2
-            && seen[1] - seen[0] <= 3600
-            && seen.iter().all(|o| o.abs() <= 15 * 3600);
+        let clock_change = seen.len() == 2 && seen[1] - seen[0] <= 3600 && seen.iter().all(|o| o.abs() <= 15 * 3600);
         if clock_change {
             session.sort_by_cached_key(|t| (naive(t) - offset(t), stamp_suffix(&t.key), t.key.clone()));
         }
@@ -957,7 +971,13 @@ impl Player {
         let (t2, s2) = (tap.clone(), shared.clone());
         let thread =
             std::thread::Builder::new().name("bs-player".into()).spawn(move || player_thread(&t2, rate, &s2, &rx)).ok();
-        Player { tap, rate: rate.max(1), shared, tx: Mutex::new(thread.as_ref().map(|_| tx)), thread: Mutex::new(thread) }
+        Player {
+            tap,
+            rate: rate.max(1),
+            shared,
+            tx: Mutex::new(thread.as_ref().map(|_| tx)),
+            thread: Mutex::new(thread),
+        }
     }
 
     pub fn tap(&self) -> &Arc<PlayTap> {
@@ -1552,7 +1572,13 @@ mod tests {
         let keys: Vec<&str> = t.iter().map(|t| t.key.as_str()).collect();
         assert_eq!(keys, ["2026-10-20_12-00-00", "2026-10-28_23-30-00", "2026-10-29_08-00-00"], "{t:?}");
         let parts: Vec<&Path> = t[1].tracks[0].parts.iter().map(|(p, _)| p.strip_prefix(&d).unwrap()).collect();
-        assert_eq!(parts, [Path::new("2026-10-28/2026-10-28_23-30-00_mix.wav"), Path::new("2026-10-29/2026-10-28_23-30-00_mix_part2.wav")]);
+        assert_eq!(
+            parts,
+            [
+                Path::new("2026-10-28/2026-10-28_23-30-00_mix.wav"),
+                Path::new("2026-10-29/2026-10-28_23-30-00_mix_part2.wav")
+            ]
+        );
         assert_eq!(t[1].frames, 150);
         let _ = std::fs::remove_dir_all(d);
     }
@@ -1591,7 +1617,10 @@ mod tests {
         take("2026-10-25_02-50-00", Some("2026-10-25_00-50-01"));
         take("2026-10-25_02-10-00", Some("2026-10-25_01-10-01"));
         take("2026-10-25_04-00-00", Some("2026-10-25_03-00-01"));
-        assert_eq!(keys(), ["2026-10-25_01-30-00", "2026-10-25_02-50-00", "2026-10-25_02-10-00", "2026-10-25_04-00-00"]);
+        assert_eq!(
+            keys(),
+            ["2026-10-25_01-30-00", "2026-10-25_02-50-00", "2026-10-25_02-10-00", "2026-10-25_04-00-00"]
+        );
         // copied without their times (all "now"): the stamps decide
         empty();
         for s in ["2026-10-25_01-30-00", "2026-10-25_02-50-00", "2026-10-25_02-10-00"] {
@@ -1654,11 +1683,12 @@ mod tests {
     /// An MP3 file as the recorder writes it, from `f(frame) -> (l, r)`.
     fn write_mp3(path: &Path, rate: u32, frames: usize, f: impl Fn(usize) -> (f32, f32)) {
         let mut e = crate::mp3::enc::Encoder::new(rate, 320).unwrap();
-        let lr: Vec<f32> = (0..frames).flat_map(|i| {
-            let (l, r) = f(i);
-            [l, r]
-        })
-        .collect();
+        let lr: Vec<f32> = (0..frames)
+            .flat_map(|i| {
+                let (l, r) = f(i);
+                [l, r]
+            })
+            .collect();
         let mut body = Vec::new();
         e.encode(&lr, &mut body);
         e.finish(&mut body);
@@ -1683,7 +1713,10 @@ mod tests {
         let mut parts = Vec::new();
         let mut start = 0usize;
         for (k, &n) in lens.iter().enumerate() {
-            let p = d.join(format!("2026-01-01_00-00-00_mix{}.mp3", if k == 0 { String::new() } else { format!("_part{}", k + 1) }));
+            let p = d.join(format!(
+                "2026-01-01_00-00-00_mix{}.mp3",
+                if k == 0 { String::new() } else { format!("_part{}", k + 1) }
+            ));
             let mut e = Encoder::new(48000, 320).unwrap();
             let mut body = Vec::new();
             if start > 0 {

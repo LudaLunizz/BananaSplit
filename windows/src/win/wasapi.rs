@@ -22,17 +22,17 @@
 
 use super::ffi::*;
 use super::route::{self, DevInfo};
+use bananasplit::config::Config;
+use bananasplit::engine::{AtomicF32, BUS_IDS, Engine, NUM_BUSES, NUM_STRIPS, Shared};
+use bananasplit::player::PlayTap;
+use bananasplit::recorder::RecTap;
+use bananasplit::ring::{DriftReader, Producer, ring};
+use bananasplit::vban::VbanTap;
 use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use bananasplit::config::Config;
-use bananasplit::engine::{AtomicF32, BUS_IDS, Engine, NUM_BUSES, NUM_STRIPS, Shared};
-use bananasplit::recorder::RecTap;
-use bananasplit::vban::VbanTap;
-use bananasplit::player::PlayTap;
-use bananasplit::ring::{DriftReader, Producer, ring};
 
 pub const RATE: u32 = 48_000;
 /// Largest block the master processes at once (WASAPI hands out ~10 ms).
@@ -65,15 +65,10 @@ impl Enumerator {
             )
         };
         if hr < 0 {
-            return Err(format!(
-                "cannot create the Windows audio device enumerator: {}",
-                hr_text(hr)
-            ));
+            return Err(format!("cannot create the Windows audio device enumerator: {}", hr_text(hr)));
         }
         // SAFETY: `p` is the owned IMMDeviceEnumerator CoCreateInstance returned for its IID, on an MTA thread.
-        unsafe { Com::from_raw(p) }
-            .map(Enumerator)
-            .ok_or_else(|| "device enumerator is NULL".into())
+        unsafe { Com::from_raw(p) }.map(Enumerator).ok_or_else(|| "device enumerator is NULL".into())
     }
 
     /// All active endpoints of one direction.
@@ -103,10 +98,7 @@ impl Enumerator {
             }
             // SAFETY: `pd` is the owned IMMDevice that Item returned, on this MTA thread.
             if let Some(dev) = unsafe { Com::<IMMDeviceVtbl>::from_raw(pd) } {
-                let info = DevInfo {
-                    name: device_name(&dev),
-                    id: device_id(&dev),
-                };
+                let info = DevInfo { name: device_name(&dev), id: device_id(&dev) };
                 out.push(Device { info, dev });
             }
         }
@@ -169,13 +161,7 @@ fn device_name(dev: &Com<IMMDeviceVtbl>) -> String {
     let Some(store) = (unsafe { Com::<IPropertyStoreVtbl>::from_raw(ps) }) else {
         return "(unnamed device)".into();
     };
-    let mut pv = PROPVARIANT {
-        vt: 0,
-        r1: 0,
-        r2: 0,
-        r3: 0,
-        data: [0; 2],
-    };
+    let mut pv = PROPVARIANT { vt: 0, r1: 0, r2: 0, r3: 0, data: [0; 2] };
     let mut name = String::from("(unnamed device)");
     // SAFETY: `store` owns a live IPropertyStore; the key is a static, `pv` a local PROPVARIANT.
     if unsafe { (store.vt().GetValue)(store.as_ptr(), &PKEY_Device_FriendlyName, &mut pv) } >= 0 {
@@ -212,20 +198,13 @@ fn open_stream(dev: &Device, capture: bool) -> Result<Stream, String> {
     let mut pc: *mut c_void = std::ptr::null_mut();
     // SAFETY: `dev.dev` owns a live IMMDevice; the IID is a static and `pc` a local out-pointer.
     let hr = unsafe {
-        (dev.dev.vt().Activate)(
-            dev.dev.as_ptr(),
-            &IID_IAudioClient,
-            CLSCTX_ALL,
-            std::ptr::null_mut(),
-            &mut pc,
-        )
+        (dev.dev.vt().Activate)(dev.dev.as_ptr(), &IID_IAudioClient, CLSCTX_ALL, std::ptr::null_mut(), &mut pc)
     };
     if hr < 0 {
         return Err(fail("Activate", hr));
     }
     // SAFETY: `pc` is the owned IAudioClient Activate returned; callers hold `ComInit::mta`.
-    let client = unsafe { Com::<IAudioClientVtbl>::from_raw(pc) }
-        .ok_or_else(|| format!("{name}: no audio client"))?;
+    let client = unsafe { Com::<IAudioClientVtbl>::from_raw(pc) }.ok_or_else(|| format!("{name}: no audio client"))?;
     let c = client.vt();
 
     let (mut def_period, mut min_period) = (0i64, 0i64);
@@ -247,17 +226,7 @@ fn open_stream(dev: &Device, capture: bool) -> Result<Stream, String> {
     // Buffer duration 0 = the smallest buffer the engine allows (about one
     // device period in event-driven shared mode).
     // SAFETY: `client` owns a live IAudioClient; `fmt` is a local WAVEFORMATEX (cbSize 0) that outlives the call; no session GUID.
-    let hr = unsafe {
-        (c.Initialize)(
-            client.as_ptr(),
-            AUDCLNT_SHAREMODE_SHARED,
-            flags,
-            0,
-            0,
-            &fmt,
-            std::ptr::null(),
-        )
-    };
+    let hr = unsafe { (c.Initialize)(client.as_ptr(), AUDCLNT_SHAREMODE_SHARED, flags, 0, 0, &fmt, std::ptr::null()) };
     if hr < 0 {
         return Err(fail("Initialize", hr));
     }
@@ -274,11 +243,7 @@ fn open_stream(dev: &Device, capture: bool) -> Result<Stream, String> {
     // SAFETY: `client` owns an initialised IAudioClient; `lat` is a local out-pointer.
     unsafe { (c.GetStreamLatency)(client.as_ptr(), &mut lat) };
 
-    let iid = if capture {
-        &IID_IAudioCaptureClient
-    } else {
-        &IID_IAudioRenderClient
-    };
+    let iid = if capture { &IID_IAudioCaptureClient } else { &IID_IAudioRenderClient };
     let mut ps: *mut c_void = std::ptr::null_mut();
     // SAFETY: `client` owns an initialised IAudioClient; `iid` is a static IID and `ps` a local out-pointer.
     let hr = unsafe { (c.GetService)(client.as_ptr(), iid, &mut ps) };
@@ -287,9 +252,7 @@ fn open_stream(dev: &Device, capture: bool) -> Result<Stream, String> {
     }
     let (render, capture_svc) = if capture {
         // SAFETY: `ps` is the owned IAudioCaptureClient GetService returned for IID_IAudioCaptureClient.
-        (None, unsafe {
-            Com::<IAudioCaptureClientVtbl>::from_raw(ps)
-        })
+        (None, unsafe { Com::<IAudioCaptureClientVtbl>::from_raw(ps) })
     } else {
         // SAFETY: `ps` is the owned IAudioRenderClient GetService returned for IID_IAudioRenderClient.
         (unsafe { Com::<IAudioRenderClientVtbl>::from_raw(ps) }, None)
@@ -313,13 +276,7 @@ impl Stream {
             // SAFETY: `r` owns a live IAudioRenderClient; before Start the whole buffer is free; `p` is a local out-pointer.
             if unsafe { (r.vt().GetBuffer)(r.as_ptr(), self.buffer_frames, &mut p) } >= 0 {
                 // SAFETY: pairs the successful GetBuffer above, with the same frame count; no data is read.
-                unsafe {
-                    (r.vt().ReleaseBuffer)(
-                        r.as_ptr(),
-                        self.buffer_frames,
-                        AUDCLNT_BUFFERFLAGS_SILENT,
-                    )
-                };
+                unsafe { (r.vt().ReleaseBuffer)(r.as_ptr(), self.buffer_frames, AUDCLNT_BUFFERFLAGS_SILENT) };
             }
         }
         // SAFETY: `self.client` owns an initialised IAudioClient.
@@ -348,11 +305,7 @@ impl Stream {
         let mut pad = 0u32;
         // SAFETY: `self.client` owns an initialised IAudioClient; `pad` is a local out-pointer.
         let hr = unsafe { (self.client.vt().GetCurrentPadding)(self.client.as_ptr(), &mut pad) };
-        if hr < 0 {
-            Err(hr)
-        } else {
-            Ok(self.buffer_frames.saturating_sub(pad))
-        }
+        if hr < 0 { Err(hr) } else { Ok(self.buffer_frames.saturating_sub(pad)) }
     }
 
     /// Hand `n` frames of interleaved stereo to the device; `fill` writes them.
@@ -453,21 +406,18 @@ impl Graph {
         stats.invalidated.store(false, Relaxed);
 
         // Resolve `connect` entries to device indices (deduplicated per row).
-        let mut pick = |row: &str,
-                        patterns: &[String],
-                        infos: &[DevInfo],
-                        def: Option<&str>|
-         -> (Vec<usize>, String) {
+        let mut pick = |row: &str, patterns: &[String], infos: &[DevInfo], def: Option<&str>| -> (Vec<usize>, String) {
             let mut idx: Vec<usize> = Vec::new();
             let mut shown: Vec<String> = Vec::new();
             for pat in patterns {
                 if pat == bananasplit::config::DEFAULT_DEVICE
-                    && let Some(c) = route::default_cable(infos, def) {
-                        errs.push(format!(
+                    && let Some(c) = route::default_cable(infos, def)
+                {
+                    errs.push(format!(
                             "{row}: the Windows default is {}, a virtual cable BananaSplit uses, so it would feed back; using the real device instead",
                             route::short_name(&c.name)
                         ));
-                    }
+                }
                 match route::resolve(pat, infos, def) {
                     Some(d) => {
                         let i = infos.iter().position(|x| x.id == d.id).expect("from list");
@@ -475,11 +425,7 @@ impl Graph {
                             idx.push(i);
                             shown.push(route::short_name(&d.name).to_string());
                             if route::is_cable(&d.name) {
-                                cables.insert(
-                                    route::short_name(&d.name)
-                                        .replace(" Input", "")
-                                        .replace(" Output", ""),
-                                );
+                                cables.insert(route::short_name(&d.name).replace(" Input", "").replace(" Output", ""));
                             }
                         }
                     }
@@ -487,11 +433,8 @@ impl Graph {
                     None => errs.push(format!("{row}: no device matches {pat:?}")),
                 }
             }
-            let text = if idx.is_empty() && shown.is_empty() {
-                "(nothing connected)".to_string()
-            } else {
-                shown.join(" + ")
-            };
+            let text =
+                if idx.is_empty() && shown.is_empty() { "(nothing connected)".to_string() } else { shown.join(" + ") };
             (idx, text)
         };
 
@@ -499,15 +442,11 @@ impl Graph {
         for s in 0..NUM_STRIPS {
             let mut patterns = cfg.strips[s].connect.clone();
             if let Some(c) = &strip_cable[s]
-                && !patterns.iter().any(|p| p.eq_ignore_ascii_case(c)) {
-                    patterns.push(c.clone());
-                }
-            let (idx, text) = pick(
-                &format!("strip {}", s + 1),
-                &patterns,
-                &cap_info,
-                def_cap.as_deref(),
-            );
+                && !patterns.iter().any(|p| p.eq_ignore_ascii_case(c))
+            {
+                patterns.push(c.clone());
+            }
+            let (idx, text) = pick(&format!("strip {}", s + 1), &patterns, &cap_info, def_cap.as_deref());
             strip_devs.push(idx);
             desc.push(text);
         }
@@ -515,15 +454,11 @@ impl Graph {
         for b in 0..NUM_BUSES {
             let mut patterns = cfg.buses[b].connect.clone();
             if let Some(c) = &bus_cable[b]
-                && !patterns.iter().any(|p| p.eq_ignore_ascii_case(c)) {
-                    patterns.push(c.clone());
-                }
-            let (idx, text) = pick(
-                &format!("bus {}", BUS_IDS[b]),
-                &patterns,
-                &ren_info,
-                def_ren.as_deref(),
-            );
+                && !patterns.iter().any(|p| p.eq_ignore_ascii_case(c))
+            {
+                patterns.push(c.clone());
+            }
+            let (idx, text) = pick(&format!("bus {}", BUS_IDS[b]), &patterns, &ren_info, def_ren.as_deref());
             bus_devs.push(idx);
             desc.push(text);
         }
@@ -542,9 +477,7 @@ impl Graph {
                 }
             }
         }
-        let master_period = master
-            .as_ref()
-            .map_or(480, |(_, s)| s.period_frames as usize);
+        let master_period = master.as_ref().map_or(480, |(_, s)| s.period_frames as usize);
 
         let mut threads = Vec::new();
         // The loops below shadow `stop` with clones for their closures.
@@ -552,9 +485,7 @@ impl Graph {
 
         // ---- other sinks: master -> ring -> device ------------------------
         let mut sink_prods: Vec<(usize, Producer)> = Vec::new();
-        let mut max_out_lat = master
-            .as_ref()
-            .map_or(0, |(_, s)| s.buffer_frames + s.latency_frames);
+        let mut max_out_lat = master.as_ref().map_or(0, |(_, s)| s.buffer_frames + s.latency_frames);
         for (b, s) in sink_streams {
             let (prod, cons) = ring(RING_FRAMES);
             let target = master_period + s.period_frames as usize + RING_MARGIN;
@@ -562,9 +493,7 @@ impl Graph {
             let rd = DriftReader::new(cons, target);
             sink_prods.push((b, prod));
             let (stop, stats, shared) = (stop.clone(), stats.clone(), shared.clone());
-            start(&mut threads, &halt, "vmix-sink", move || {
-                sink_thread(s, rd, &stop, &stats, &shared)
-            })?;
+            start(&mut threads, &halt, "vmix-sink", move || sink_thread(s, rd, &stop, &stats, &shared))?;
         }
 
         // ---- capture: device -> ring -> master -----------------------------
@@ -579,9 +508,7 @@ impl Graph {
                         max_in_lat = max_in_lat.max(target as u32 + s.latency_frames);
                         readers[st].push(DriftReader::new(cons, target));
                         let (stop, stats) = (stop.clone(), stats.clone());
-                        start(&mut threads, &halt, "vmix-capture", move || {
-                            capture_thread(s, prod, &stop, &stats)
-                        })?;
+                        start(&mut threads, &halt, "vmix-capture", move || capture_thread(s, prod, &stop, &stats))?;
                     }
                     Err(e) => errs.push(format!("strip {}: {e}", st + 1)),
                 }
@@ -596,7 +523,9 @@ impl Graph {
         engine.set_sample_rate(RATE);
         engine.attach_recorder(rec_tap);
         engine.attach_vban(vban_tap);
-        if let Some(t) = play_tap { engine.attach_player(t); }
+        if let Some(t) = play_tap {
+            engine.attach_player(t);
+        }
         let (master_bus, master_stream) = match master {
             Some((b, s)) => (b, Some(s)),
             None => (0, None),
@@ -604,32 +533,22 @@ impl Graph {
         {
             let (stop, stats, shared) = (stop.clone(), stats.clone(), shared.clone());
             start(&mut threads, &halt, "vmix-mixer", move || {
-                master_thread(
-                    master_stream,
-                    engine,
-                    readers,
-                    master_bus,
-                    sink_prods,
-                    &stop,
-                    &stats,
-                    &shared,
-                )
+                master_thread(master_stream, engine, readers, master_bus, sink_prods, &stop, &stats, &shared)
             })?;
         }
 
-        Ok(Graph {
-            stop,
-            threads,
-            desc,
-            errs,
-            cables: cables.len(),
-        })
+        Ok(Graph { stop, threads, desc, errs, cables: cables.len() })
     }
 }
 
 /// Start an audio thread. If it can't start, the threads already started
 /// are stopped and joined, so their devices are closed.
-fn start(threads: &mut Vec<JoinHandle<()>>, stop: &AtomicBool, name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), String> {
+fn start(
+    threads: &mut Vec<JoinHandle<()>>,
+    stop: &AtomicBool,
+    name: &str,
+    f: impl FnOnce() + Send + 'static,
+) -> Result<(), String> {
     match std::thread::Builder::new().name(name.into()).spawn(f) {
         Ok(t) => {
             threads.push(t);
@@ -679,7 +598,7 @@ fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stat
             // SAFETY: `cap` owns a live IAudioCaptureClient (this thread is MTA); `next` is a local out-pointer.
             let hr = unsafe { (cap.vt().GetNextPacketSize)(cap.as_ptr(), &mut next) };
             if hr < 0 {
-                    stats.invalidated.store(true, Relaxed);
+                stats.invalidated.store(true, Relaxed);
                 break 'run;
             }
             if next == 0 {
@@ -698,7 +617,7 @@ fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stat
                 )
             };
             if hr < 0 {
-                    stats.invalidated.store(true, Relaxed);
+                stats.invalidated.store(true, Relaxed);
                 break 'run;
             }
             if frames == 0 {
@@ -709,9 +628,7 @@ fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stat
             } else {
                 // SAFETY: GetBuffer succeeded with a non-NULL `p`: `frames` frames of the stream's
                 // format, stereo f32 (Initialize with AUTOCONVERTPCM), until ReleaseBuffer below.
-                prod.push_interleaved(unsafe {
-                    std::slice::from_raw_parts(p.cast::<f32>(), frames as usize * 2)
-                });
+                prod.push_interleaved(unsafe { std::slice::from_raw_parts(p.cast::<f32>(), frames as usize * 2) });
             }
             // SAFETY: releases the packet the successful GetBuffer above handed out, with its frame count.
             unsafe { (cap.vt().ReleaseBuffer)(cap.as_ptr(), frames) };
@@ -753,7 +670,7 @@ fn sink_thread(s: Stream, mut rd: DriftReader, stop: &AtomicBool, stats: &Stats,
             })
         });
         if res.is_err() {
-                stats.invalidated.store(true, Relaxed);
+            stats.invalidated.store(true, Relaxed);
             break;
         }
         if rd.glitches != glitches {
@@ -786,15 +703,15 @@ fn master_thread(
     // All buffers are allocated here, before the loop.
     let mut in_l = vec![0.0f32; MAX_BLOCK];
     let mut in_r = vec![0.0f32; MAX_BLOCK];
-    let mut bus: [[Vec<f32>; 2]; NUM_BUSES] =
-        std::array::from_fn(|_| [vec![0.0; MAX_BLOCK], vec![0.0; MAX_BLOCK]]);
+    let mut bus: [[Vec<f32>; 2]; NUM_BUSES] = std::array::from_fn(|_| [vec![0.0; MAX_BLOCK], vec![0.0; MAX_BLOCK]]);
     let mut glitch_seen: Vec<Vec<u32>> = strips.iter().map(|v| vec![0; v.len()]).collect();
 
     if let Some(s) = &out
-        && s.start().is_err() {
-            stats.invalidated.store(true, Relaxed);
-            return;
-        }
+        && s.start().is_err()
+    {
+        stats.invalidated.store(true, Relaxed);
+        return;
+    }
     // Without any output device, run on a 10 ms timer so meters and the
     // virtual-cable buses still work.
     let tick = Duration::from_millis(10);
@@ -810,7 +727,7 @@ fn master_thread(
                 match s.writable() {
                     Ok(n) => n as usize,
                     Err(_) => {
-                            stats.invalidated.store(true, Relaxed);
+                        stats.invalidated.store(true, Relaxed);
                         break;
                     }
                 }
@@ -842,9 +759,7 @@ fn master_thread(
             for (k, rd) in readers.iter_mut().enumerate() {
                 rd.read(&mut in_l[..n], &mut in_r[..n], true);
                 if rd.glitches != glitch_seen[s][k] {
-                    shared
-                        .xruns
-                        .fetch_add(rd.glitches - glitch_seen[s][k], Relaxed);
+                    shared.xruns.fetch_add(rd.glitches - glitch_seen[s][k], Relaxed);
                     glitch_seen[s][k] = rd.glitches;
                 }
             }
@@ -871,7 +786,7 @@ fn master_thread(
                 }
             });
             if res.is_err() {
-                    stats.invalidated.store(true, Relaxed);
+                stats.invalidated.store(true, Relaxed);
                 break;
             }
         }
@@ -892,9 +807,3 @@ fn master_thread(
         s.stop();
     }
 }
-
-
-
-
-
-

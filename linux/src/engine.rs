@@ -325,9 +325,8 @@ fn bus_graph(requested: &[u8; NUM_BUSES], active: &[u8; NUM_BUSES]) -> ([u8; NUM
     let mut done = 0u8;
     for slot in order.iter_mut() {
         // A bus whose feeders are all done (always one: `g` has no loop).
-        let ready = (0..NUM_BUSES).find(|&c| {
-            done & (1 << c) == 0 && (0..NUM_BUSES).all(|s| done & (1 << s) != 0 || g[s] & (1 << c) == 0)
-        });
+        let ready = (0..NUM_BUSES)
+            .find(|&c| done & (1 << c) == 0 && (0..NUM_BUSES).all(|s| done & (1 << s) != 0 || g[s] & (1 << c) == 0));
         let next = ready.or_else(|| (0..NUM_BUSES).find(|&c| done & (1 << c) == 0)).unwrap_or(0);
         *slot = next;
         done |= 1 << next;
@@ -355,7 +354,11 @@ fn input_peaks(l: &[f32], r: &[f32], mono: bool) -> (f32, f32) {
 
 /// Bus `a` to read and bus `b` to add to (`a != b`).
 #[inline]
-fn two_buses<'a, 'b>(out: &'a mut [[&'b mut [f32]; 2]; NUM_BUSES], a: usize, b: usize) -> (&'a [&'b mut [f32]; 2], &'a mut [&'b mut [f32]; 2]) {
+fn two_buses<'a, 'b>(
+    out: &'a mut [[&'b mut [f32]; 2]; NUM_BUSES],
+    a: usize,
+    b: usize,
+) -> (&'a [&'b mut [f32]; 2], &'a mut [&'b mut [f32]; 2]) {
     if a < b {
         let (x, y) = out.split_at_mut(b);
         (&x[a], &mut y[0])
@@ -542,8 +545,7 @@ impl Engine {
             let target = side_gains(silenced, p.gain_db.load(), trim_db, p.pan.load());
             let trim = db_to_gain(clamp_trim(trim_db));
             let routes = p.routes.load(Relaxed);
-            let route_target: [f32; NUM_BUSES] =
-                array::from_fn(|b| if routes & (1 << b) != 0 { 1.0 } else { 0.0 });
+            let route_target: [f32; NUM_BUSES] = array::from_fn(|b| if routes & (1 << b) != 0 { 1.0 } else { 0.0 });
             let g0 = self.strip_gain[s];
             self.strip_gain[s] = target;
             let mono = p.mono.load(Relaxed);
@@ -627,9 +629,8 @@ impl Engine {
         // Every bus is finished before the buses it feeds, so a send adds no
         // latency; sends are ramped over one cycle like strip routes.
         let requested = shared.bus_routes();
-        let active: [u8; NUM_BUSES] = array::from_fn(|b| {
-            (0..NUM_BUSES).filter(|&d| self.send_gain[b][d] != 0.0).fold(0u8, |m, d| m | 1 << d)
-        });
+        let active: [u8; NUM_BUSES] =
+            array::from_fn(|b| (0..NUM_BUSES).filter(|&d| self.send_gain[b][d] != 0.0).fold(0u8, |m, d| m | 1 << d));
         let (sends, order) = bus_graph(&requested, &active);
         for &b in &order {
             let p = &shared.buses[b];
@@ -856,7 +857,15 @@ mod tests {
         sh.strips[0].routes.store(0b01000, Relaxed); // B1 only
         sh.strips[1].routes.store(0b00001, Relaxed); // A1 only
         rig.run(N, |_, _, _| 0.0);
-        rig.run(N, |s, _, _| if s == 0 { 0.25 } else if s == 1 { 0.5 } else { 0.0 });
+        rig.run(N, |s, _, _| {
+            if s == 0 {
+                0.25
+            } else if s == 1 {
+                0.5
+            } else {
+                0.0
+            }
+        });
         assert!(rig.bus(0, 0).iter().all(|&x| approx(x, 0.5)));
         assert!(rig.bus(3, 1).iter().all(|&x| approx(x, 0.25)));
         for b in [1, 2, 4] {
@@ -864,7 +873,15 @@ mod tests {
         }
         // toggling a route ramps rather than stepping
         sh.toggle_route(0, 0);
-        rig.run(N, |s, _, _| if s == 0 { 0.25 } else if s == 1 { 0.5 } else { 0.0 });
+        rig.run(N, |s, _, _| {
+            if s == 0 {
+                0.25
+            } else if s == 1 {
+                0.5
+            } else {
+                0.0
+            }
+        });
         let a1 = rig.bus(0, 0);
         assert!(a1[0] > 0.5 && a1[0] < 0.51);
         assert!(approx(a1[N - 1], 0.75));
@@ -1007,7 +1024,9 @@ mod tests {
         rig.run(N, |_, _, _| 0.0);
         rig.run(N, |s, _, _| if s == 0 { 0.001 } else { 0.0 });
         let g = db_to_gain(MAX_TRIM_DB) * db_to_gain(-6.0);
-        assert!(rig.bus(0, 0).iter().all(|&x| approx(x, 0.001 * g)) && rig.bus(0, 1).iter().all(|&x| approx(x, 0.001 * g)));
+        assert!(
+            rig.bus(0, 0).iter().all(|&x| approx(x, 0.001 * g)) && rig.bus(0, 1).iter().all(|&x| approx(x, 0.001 * g))
+        );
     }
 
     #[test]
@@ -1108,7 +1127,19 @@ mod tests {
         sh.buses[3].routes.store(0b00001, Relaxed); // B1 -> A1
         rig.run(N, |_, _, _| 0.0);
         rig.run(N, |_, _, _| 0.0);
-        rig.run(N, |s, _, i| if i == 37 { if s == 0 { 0.5 } else if s == 1 { 0.25 } else { 0.0 } } else { 0.0 });
+        rig.run(N, |s, _, i| {
+            if i == 37 {
+                if s == 0 {
+                    0.5
+                } else if s == 1 {
+                    0.25
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            }
+        });
         let g = db_to_gain(-6.0);
         for c in 0..2 {
             for (i, &x) in rig.bus(0, c).iter().enumerate() {
@@ -1208,7 +1239,10 @@ mod tests {
         assert_eq!((rec.rate.load(Relaxed), play.rate.load(Relaxed), vban.rate.load(Relaxed)), (0, 0, 0));
         sh.sample_rate.store(96_000, Relaxed);
         rig.run(N, |_, _, _| 0.0);
-        assert_eq!((rec.rate.load(Relaxed), play.rate.load(Relaxed), vban.rate.load(Relaxed)), (96_000, 96_000, 96_000));
+        assert_eq!(
+            (rec.rate.load(Relaxed), play.rate.load(Relaxed), vban.rate.load(Relaxed)),
+            (96_000, 96_000, 96_000)
+        );
         assert_eq!(rig.eng.rate, 96_000);
         rig.run(0, |_, _, _| 0.0); // empty and oversize cycles count too
         assert_eq!(sh.cycles.load(Relaxed), 3);
