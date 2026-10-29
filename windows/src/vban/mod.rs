@@ -1043,8 +1043,9 @@ mod tests {
         strips[..256].fill(0.5);
         let mut store = vec![vec![0.0f32; 128]; NUM_BUSES * 2];
         let mut sc = vec![0.0f32; NUM_STRIPS * 2 * MAX_FRAMES];
-        let t0 = Instant::now();
-        while t0.elapsed() < Duration::from_millis(1000) {
+        // one packet per push: keep sending until enough came back, so a slow
+        // machine (CI runners) only takes longer instead of falling short
+        let mut step = || {
             let mut it = store.iter_mut();
             let buses: [[&mut [f32]; 2]; NUM_BUSES] =
                 std::array::from_fn(|_| [it.next().unwrap().as_mut_slice(), it.next().unwrap().as_mut_slice()]);
@@ -1053,8 +1054,16 @@ mod tests {
             rt.pull(&tap, 128, &mut sc, Instant::now());
             assert!(sc.iter().all(|&x| x == 0.0), "our own stream was played");
             std::thread::sleep(Duration::from_micros(2667));
+        };
+        let t0 = Instant::now();
+        while t0.elapsed() < Duration::from_millis(1000) {
+            step();
         }
-        wait_for("status", || v.status().outs[0].packets > 100 && v.status().ignored > 100);
+        wait_for("status", || {
+            step();
+            let st = v.status();
+            st.outs[0].packets > 100 && st.ignored > 100
+        });
         let st = v.status();
         assert_eq!(st.ins[0].state, InState::Waiting);
         assert_eq!(st.ins[0].packets, 0);
