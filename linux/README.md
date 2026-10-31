@@ -1,17 +1,21 @@
 # BananaSplit: a 6-strip virtual audio mixer for Linux
 
-A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **5 buses** (A1–A3 play on your speakers and headphones, B1–B2 are virtual microphones for other apps; any bus can be either or both, and buses can feed each other). Every channel has a **menu to pick its devices and apps**, a **virtual cable** (from the start on the strips and B1–B2), input gain, pan and a **6-band EQ**, **VBAN network audio** that works with Voicemeeter, a **multitrack recorder and player**, and **scenes**. It runs as a single real-time JACK client, natively on JACK2 or on PipeWire's JACK layer. It is a desktop app: its own window, an icon in the app menu and in the system tray, and it can start with the system (`bananasplit --gui`). It also runs in a terminal or as a background service.
+A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **5 buses** (A1–A3 play on your speakers and headphones, B1–B2 are virtual microphones for other apps; any bus can be either or both, and buses can feed each other). Every channel has a **menu to pick its devices and apps**, a **virtual cable** (from the start on the strips and B1–B2), input gain, pan and a **6-band EQ** (and on every strip a **gate and compressor**), **VBAN network audio** that works with Voicemeeter, a **multitrack recorder and player**, and **scenes**. It runs as a single real-time JACK client, natively on JACK2 or on PipeWire's JACK layer. It is a desktop app: its own window, an icon in the app menu and in the system tray, and it can start with the system (`bananasplit --gui`). It also runs in a terminal or as a background service.
 
 ```
  BananaSplit  6 strips · 5 buses · JACK client "BananaSplit" · 8 cables
  48000 Hz · 128 fr · 2.67 ms/period · RTT 6.10 ms [OK <10ms] · DSP 1% · xruns 0
  VBAN 192.168.1.23:6980 · in: 1 of 1 receiving · out: 1 of 1 sending
-  #  NAME              GAIN  L          R          PEAK M S O E  A1 A2 A3 B1 B2
-> 1  Mic               +0.0  ██████···· ██████····  -24 · · O E  A1 A2 A3 B1 B2
-  2  Discord           -7.4  █████····· █████·····  -31 · · · ·  A1 A2 A3 B1 B2
+  #  NAME              GAIN  L         R         PEAK M S O E D  A1 A2 A3 B1 B2
+> 1  Mic               +0.0  █████···· █████····  -24 · · O E D  A1 A2 A3 B1 B2
+  2  Discord           -7.4  ████····· ████·····  -31 · · · · ·  A1 A2 A3 B1 B2
   ...
- A2  Blue Headphones   +0.0  ████······ ████······  -30 ·   · E  A1 ── A3 B1 B2
+ A2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    A1 ── A3 B1 B2
 ```
+
+## What's new in 2.8.16
+
+* **A gate and a compressor on every input strip** (#40). The gate mutes a strip while it is quieter than its threshold (the hiss and room noise of a microphone between words); the compressor brings loud and quiet parts closer together, with make-up gain. Both sit before the EQ, read the level after the GAIN knob, and are off by default: off, the strip is unchanged bit for bit. Open them with the new **DYN** button next to EQ on a strip (or **D**); the terminal UI switches them with `g` and `C`. They are saved in the config and in scenes. See [Gate and compressor](#gate-and-compressor).
 
 ## What's new in 2.8.15
 
@@ -283,9 +287,9 @@ bananasplit --low-latency               # optional but recommended for < 10 ms (
 4. In Discord or OBS, select **`BananaSplit-Out-B1`** as the microphone to receive the B1 mix (or tick the app in B1's menu).
 5. The mixer state is saved automatically on quit; "Save settings" in the app's menu (`w` in the terminal UI) saves it at once.
 
-Terminal UI keys: `↑↓` select · `←→` gain ±1 dB · `,` `.` ±0.1 dB · `0` 0 dB · `m` mute · `s` solo · `o` mono · `e` EQ on/off · `E` EQ page · `1-5` route · `c` link to recorder · `R` record/stop · `v` VBAN on/off · `r` reconnect · `w` save · `q` quit
+Terminal UI keys: `↑↓` select · `←→` gain ±1 dB · `,` `.` ±0.1 dB · `0` 0 dB · `m` mute · `s` solo · `o` mono · `e` EQ on/off · `E` EQ page · `g` gate on/off · `C` compressor on/off (strips) · `1-5` route · `c` link to recorder · `R` record/stop · `v` VBAN on/off · `r` reconnect · `w` save · `q` quit
 
-A `●` after a row's number means that channel is linked to the recorder, and an `E` in the flags means its EQ is on. The line under the mixer shows the recorder: elapsed time and file while recording, otherwise the mode, format, links and folder. When VBAN is on, the line above the mixer shows how many streams are receiving and sending, and the line under the mixer lists the streams of the selected channel.
+A `●` after a row's number means that channel is linked to the recorder, an `E` in the flags means its EQ is on, and a `D` that its gate or compressor is on. The line under the mixer shows the recorder: elapsed time and file while recording, otherwise the mode, format, links and folder. When VBAN is on, the line above the mixer shows how many streams are receiving and sending, and the line under the mixer lists the streams of the selected channel.
 
 `E` opens the **EQ page** of the selected channel: its six bands, with the response drawn underneath (+18 to −15 dB, 20 Hz to 20 kHz). Keys there: `↑↓` band · `←→` field (type, frequency, gain, Q) · `,` `.` change it (a semitone, 0.5 dB, or a small Q step) · `<` `>` change it faster (a third of an octave, 3 dB) · `space` band on/off · `0` flatten the band · `e` EQ on/off · `[` `]` previous/next channel · `E` or `Enter` back to the mixer.
 
@@ -296,21 +300,22 @@ Start **BananaSplit** from the app menu, or run `bananasplit --gui`. The window 
 **A strip, top to bottom:**
 
 * the **name** (double-click it, or press F2, to rename) and a lamp that lights green with signal and red when it clipped; underneath, the channel's **menu button**, which says what it takes in (IN and a microphone, or Discord) or where it plays (OUT and your speakers, or OBS); click it to choose (see [Channel menus](#channel-menus)). Hover for the full list;
-* **GAIN**: the input gain, −24 to +24 dB (on a bus: before its fader). Drag the knob up or down, scroll over it, or use the arrow keys (Shift for fine steps); double-click for 0 dB. The **EQ** switch next to it opens the channel's EQ editor and lights while the EQ is on;
+* **GAIN**: the input gain, −24 to +24 dB (on a bus: before its fader). Drag the knob up or down, scroll over it, or use the arrow keys (Shift for fine steps); double-click for 0 dB. The **EQ** switch next to it opens the channel's EQ editor and lights while the EQ is on; on a strip, **DYN** opens its gate and compressor and lights while either is on;
 * **LEVEL**: the meter (left and right, after the fader; while the channel is muted or soloed out, the level coming in, in grey) and the **fader**, −60 to +12 dB: drag it, scroll over it, use the arrow keys or Page Up/Down, double-click for 0 dB, or type a value into the box under it. **PK** is the highest level of the last 3 seconds (red after clipping);
 * **PAN** (on buses **BALANCE**): the side it turns away from fades out, the other side stays at full level; double-click for centre. **MONO** sums left and right;
 * **MUTE** and **SOLO** (strips only; while any strip is soloed, only soloed strips are heard), with their lamps;
 * **TO**: where the strip goes, A1 A2 A3 B1 B2. On a bus, the other buses it feeds after its fader (its own chip is left out; one that would make a loop is greyed out).
 
-Click a strip to select it (green outline); then **M** mutes it, **S** solos it, **O** switches mono, **E** opens its EQ, **1**–**5** route it (on a bus: its sends), **[** and **]** select the previous or next strip. **Space** plays or pauses. **Ctrl +**, **Ctrl −** and **Ctrl 0** zoom.
+Click a strip to select it (green outline); then **M** mutes it, **S** solos it, **O** switches mono, **E** opens its EQ, **D** its gate and compressor (strips), **1**–**5** route it (on a bus: its sends), **[** and **]** select the previous or next strip. **Space** plays or pauses. **Ctrl +**, **Ctrl −** and **Ctrl 0** zoom.
 
 **The recorder:** the **state** (ready, recording, playing, with the free disk space), the **waveform** of the selected recording (‹ › go through your takes; click into it to play from there; while recording it shows the armed channels' level), the **time code**, and **PLAY** (PAUSE while playing), **REC** and **STOP** (stops playback and recording). **PLAY BACK ON** chooses the buses recordings play on (A1 by default; it does not change what is recorded): playback joins those buses before their EQ and fader, so it is heard, recorded and sent like anything else on them. **ARMED TRACKS · RECORDED** are the channels that are recorded: MIX puts them into one stereo file, MULTI writes one file per channel. **FORMAT** is MP3 (the default), or 16-bit, 24-bit or 32-bit float WAV. **OPEN** opens the recordings folder; the bar at the bottom is the disk.
 
-**Scenes:** the **SCENE** menu saves the whole mix under a name ("Save the mix as a new scene…") and loads it back with one click; "Update" saves over the current scene, "Delete" (click twice) removes it. A scene holds every fader, gain, pan, mute, solo, mono, routing and EQ, and the armed tracks; it never changes names, devices, VBAN or recorder settings, and everything changes with the usual click-free ramps. Scenes are small files in `~/.config/bananasplit/scenes/`.
+**Scenes:** the **SCENE** menu saves the whole mix under a name ("Save the mix as a new scene…") and loads it back with one click; "Update" saves over the current scene, "Delete" (click twice) removes it. A scene holds every fader, gain, pan, mute, solo, mono, routing, EQ, gate and compressor, and the armed tracks; it never changes names, devices, VBAN or recorder settings, and everything changes with the usual click-free ramps. Scenes are small files in `~/.config/bananasplit/scenes/`.
 
 **MENU:** Save settings, Reconnect devices, Open the recordings folder, **Theme** (Dark, Light, or Auto to follow the desktop's light or dark style, GNOME's included), **Zoom**, **Start with the system**, **Closing the window keeps it running**, Add BananaSplit to the app menu (when it is not there yet), and **Quit BananaSplit** (click twice; it removes the virtual cables). The **VBAN** button opens the network audio window (its dot is green while streams flow).
 
 * **EQ editor:** drag a numbered point on the curve to change that band's frequency and gain, scroll over it to change its Q, double-click it to flatten it, or select it and use the arrow keys (Page Up/Down for Q, Space for on/off). Below the curve, each band has its on switch, type, frequency (`1.5k` works), gain and Q. The switch at the top turns the channel's EQ on and off.
+* **Gate and compressor:** an On switch, the settings (type a value, Enter) and a bar that shows how far each one turns the strip down right now. **Reset settings** puts every value back to its default and leaves the On switches as they are.
 * **VBAN window:** this computer's IP addresses (with Copy, and each network's broadcast address), the on switch, the UDP port, the incoming and outgoing streams with their status, and a list of streams that arrive but are not set up yet; **Receive** next to one of those adds it as an incoming stream. The VBAN button shows the main IP address while VBAN is on.
 
 ### Channel menus
@@ -393,6 +398,37 @@ Every strip and every bus has a 6-band parametric EQ. On a strip it comes after 
 * The filters are the standard "Audio EQ Cookbook" responses (the GUI and terminal curves are computed from the same formulas), built as state-variable filters so that any change, even dragging a band across the whole range, glides smoothly without clicks or zipper noise.
 * An EQ that is off, or whose bells and shelves are all at 0 dB with no cut or notch switched on, does nothing at all: the filters are skipped and the audio is unchanged bit for bit.
 * Boosts can push a channel above 0 dBFS. Watch the meter and lower the fader if it clips.
+
+## Gate and compressor
+
+Every input strip has a noise gate and a compressor, in that order, after mono and before the EQ. Both read the strip's level after its input gain (the GAIN knob), the louder of left and right, and turn both sides down by the same amount. They add no delay.
+
+**Gate** (`gate = on`): mutes the strip while it is quieter than the threshold, for example the background noise of a microphone between words.
+
+| Setting | Key | Range | Default | What it does |
+|---|---|---|---|---|
+| Threshold | `gate_threshold` | −80 to 0 dB | −50 | opens above this level |
+| Range | `gate_range` | −80 to 0 dB | −80 | how far down it goes when closed (−80 = silent, −10 = only quieter) |
+| Attack | `gate_attack` | 0.1 to 50 ms | 1 | how fast it opens |
+| Hold | `gate_hold` | 0 to 2000 ms | 100 | how long it stays open after the level drops |
+| Release | `gate_release` | 5 to 4000 ms | 200 | how fast it closes |
+
+It closes again 4 dB below the threshold, so a level right at the threshold does not make it flutter. Set the threshold between the level of the background (watch the strip's meter while you are quiet) and the level of your voice.
+
+**Compressor** (`comp = on`): above the threshold the level rises only 1/ratio as fast (4:1: 8 dB louder in, 2 dB louder out), which brings loud and quiet parts closer together.
+
+| Setting | Key | Range | Default | What it does |
+|---|---|---|---|---|
+| Threshold | `comp_threshold` | −60 to 0 dB | −18 | where it starts |
+| Ratio | `comp_ratio` | 1 to 20 | 3 | how hard it pushes down (1 = not at all, 20 = a limiter) |
+| Knee | `comp_knee` | 0 to 24 dB | 6 | how gently it starts around the threshold |
+| Attack | `comp_attack` | 0.1 to 200 ms | 10 | how fast it reacts to a louder sound |
+| Release | `comp_release` | 10 to 4000 ms | 150 | how fast it lets go |
+| Make-up | `comp_makeup` | 0 to 24 dB | 0 | gain after it, to bring the strip back up |
+
+* Both are off by default. Off, and settled, they do nothing at all: the audio is unchanged bit for bit.
+* Switching either one on or off, and moving the make-up gain, glides over 10 ms; every other change acts through the attack and release, so nothing clicks.
+* The window's editor shows how far each one turns the strip down right now. The strip's meter shows the level after them (and after the EQ and fader); while the strip is muted, the grey meter shows what comes in.
 
 ## VBAN (network audio, Voicemeeter compatible)
 
@@ -484,6 +520,13 @@ eq = on
 eq1 = lowcut 80 +0 0.71
 # bands left out keep their defaults
 eq4 = bell 3000 -4.5 2
+# gate and compressor (strips only): on | off (default off)
+gate = on
+# settings left out keep their defaults (see Gate and compressor)
+gate_threshold = -40
+comp = on
+comp_ratio = 4
+comp_makeup = 3
 
 [recorder]
 folder = ~/Music/BananaSplit
@@ -533,7 +576,7 @@ format = int16
 channels = 2
 ```
 
-EQ types are `bell`, `lowshelf`, `highshelf`, `lowcut`, `highcut` and `notch`; the frequency is 20–20000 Hz, the gain −24 to +24 dB (ignored by the cuts and the notch) and Q 0.1–30. BananaSplit writes only the bands and streams that differ from the defaults.
+EQ types are `bell`, `lowshelf`, `highshelf`, `lowcut`, `highcut` and `notch`; the frequency is 20–20000 Hz, the gain −24 to +24 dB (ignored by the cuts and the notch) and Q 0.1–30. BananaSplit writes only the bands and streams that differ from the defaults. Gate and compressor keys (strips only) are written only for a strip whose gate or compressor is on or not at its defaults, so 2.8.15 can still read a file that does not use them.
 
 A config file from an earlier BananaSplit (without `[gui]`, `trim_db`, `pan`, `play_to`, `[recorder]`, EQ, `[vban]`, `cable` or bus `routes`) still loads; what is missing starts with its default: 0 dB input gain, centre, the dark theme, closing to the tray, the recorder linked to A1 only and playing to A1, every EQ off, VBAN off, a virtual cable for every strip and for B1 and B2, and no bus sends. `cable` and bus `routes` are written only when they differ from the default, so 2.6 can read a file that does not use them.
 
@@ -627,9 +670,9 @@ A fourth phase covers the 2.3 fixes on a mock of the reviewed setup: a webcam li
 
 The GUI phase also sets an EQ and VBAN streams over HTTP, checks that bad values are refused, and that everything is saved. A fifth phase tests VBAN and the EQ with a VBAN peer written separately, from VB-Audio's specification only (`tests/e2e/vban_peer.py`, Python standard library). The peer plays Voicemeeter: it sends a 1 kHz sine at 44.1 kHz, 24-bit, in bursts of 512 samples, mixed with packets BananaSplit must ignore (VBAN-TEXT, an unknown stream name, a wrong size, a truncated header). BananaSplit adds it to strip 4, whose EQ boosts 1 kHz by 6 dB, and sends strip 4 back at 48 kHz, 16-bit, while the mock JACK server runs in real time. The peer checks every header field, the frame counter, the source port, and that the audio is a clean 1 kHz sine at the expected level in every 100 ms (no dropout or glitch), with left and right in the right order.
 
-Unit tests also cover the VBAN header against the specification (every sample rate and format, every rejection rule, random garbage), the resampler (44.1 ↔ 48 kHz, 8 to 192 kHz, aliasing below −85 dB), the drift tracking (simulated senders whose clocks run up to 2000 ppm off, with jitter, lost packets, stalls and pauses), two VBAN instances talking over real sockets, the EQ against the Audio EQ Cookbook formulas at three sample rates, and the EQ's click-free changes.
+Unit tests also cover the VBAN header against the specification (every sample rate and format, every rejection rule, random garbage), the resampler (44.1 ↔ 48 kHz, 8 to 192 kHz, aliasing below −85 dB), the drift tracking (simulated senders whose clocks run up to 2000 ppm off, with jitter, lost packets, stalls and pauses), two VBAN instances talking over real sockets, the EQ against the Audio EQ Cookbook formulas at three sample rates, the EQ's click-free changes, and the gate and compressor (the compressor's static curve and soft knee, the gate's hold and hysteresis, click-free switching back to a bit-exact strip, bad input). An end-to-end phase loads a config with a gate on strip 1 into the real binary and checks that the strip comes out 80 dB down while strip 2 is untouched.
 
-The no-allocation tests run thousands of cycles with parameters changing underneath: one with the recorder recording (both modes, live link changes, a full buffer), one with every EQ changing and VBAN streams flowing both ways (underruns, a full outgoing buffer, flushes), and one with the player playing, pausing, seeking and changing buses while input gain and pan move. A counting allocator proves the audio path never touches the heap.
+The no-allocation tests run thousands of cycles with parameters changing underneath: one with the recorder recording (both modes, live link changes, a full buffer), one with every EQ changing and VBAN streams flowing both ways (underruns, a full outgoing buffer, flushes), and one with the player playing, pausing, seeking and changing buses while input gain and pan move; the mixer's own test switches and moves every gate and compressor while it runs. A counting allocator proves the audio path never touches the heap.
 
 New in 2.8.0: the updater. An eleventh end-to-end phase (`tests/e2e/update.py`) runs BananaSplit from a folder of its own against a stand-in for GitHub on this computer (`BANANASPLIT_UPDATE_SOURCE`, which only accepts `http://127.0.0.1:PORT` or `http://localhost:PORT`, and from which a .deb is never installed): with automatic updates off it asks nothing; Check now finds the newest published release (not a draft, a pre-release or an older one) and its notes; a download with one byte changed is refused and nothing is touched; Install replaces the program (only after the new one ran and said its version) and empties the downloads folder; Restart now quits cleanly and starts the new version with the same options, which waits for the old one; automatic updates install by themselves without restarting, and the switch is saved at once; GitHub's rate limit is a message; a folder it cannot write to offers no install; and `bananasplit --update` installs, finds nothing newer, and refuses a tampered file. Unit tests cover the JSON reader, SHA-256 (the standard test vectors), version order, picking the release from GitHub's real answer, links outside the repository, checksum files, downloads through curl (errors, size limits, HTTPS only), unpacking, replacing the program, and what is cleaned up after an update. `tests/gui/ui_check.js` opens the Updates window, checks a new version and switches automatic updates on and off; the Windows launch test installs a new version over the running `bananasplit.exe`, reopens the window from the moved program, and restarts.
 

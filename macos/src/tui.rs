@@ -27,7 +27,7 @@ use std::sync::atomic::Ordering::Relaxed;
 pub const ROWS: usize = NUM_STRIPS + NUM_BUSES;
 /// The screen is laid out for at least this many columns.
 pub const MIN_COLS: usize = 80;
-const METER_W: usize = 10;
+const METER_W: usize = 9; // (10 before the D column)
 const NAME_W: usize = 15;
 const MAX_NAME_W: usize = 32;
 const FLOOR_DB: f32 = -60.0;
@@ -395,6 +395,9 @@ impl View {
                 sh.eq(self.sel).on.fetch_xor(true, Relaxed);
             }
             Key::Char(b'E') => self.page = Page::Eq,
+            // gate and compressor (strips only; the window sets them up)
+            Key::Char(b'g') if is_strip => toggle(&sh.strips[self.sel].dynamics.gate_on),
+            Key::Char(b'C') if is_strip => toggle(&sh.strips[self.sel].dynamics.comp_on),
             Key::Char(b'v') => return Action::ToggleVban,
             Key::Char(b'R') => return Action::Record,
             Key::Char(b'r') => return Action::Reconnect,
@@ -444,7 +447,7 @@ impl View {
         let cols = self.cols.max(MIN_COLS);
         let nw = self.name_w();
         // sel+id+link, name, gain, two meters, peak, flags, routes
-        let row_w = 4 + 1 + nw + 1 + 6 + 2 + METER_W + 1 + METER_W + 6 + 7 + 2 + 14; // 79 at 80 cols
+        let row_w = 4 + 1 + nw + 1 + 6 + 2 + METER_W + 1 + METER_W + 6 + 9 + 2 + 14; // 79 at 80 cols
 
         let period_ms =
             if info.sample_rate > 0 { info.buffer_size as f64 * 1000.0 / info.sample_rate as f64 } else { 0.0 };
@@ -501,7 +504,7 @@ impl View {
                 );
                 let _ = write!(
                     o,
-                    "\x1b[2m 1-5 route to A1-B2  c rec link  R record  v VBAN  r reconnect  w save  q quit{line_end}"
+                    "\x1b[2m 1-5 route  g gate  C comp  c arm  R rec  v VBAN  r reconnect  w save  q quit{line_end}"
                 );
             }
             Page::Eq => {
@@ -538,7 +541,7 @@ impl View {
         let line_end = "\x1b[0m\x1b[K\n";
         let _ = write!(
             o,
-            "\x1b[2m  #  {:<nw$} {:>6}  {:<mw$} {:<mw$} PEAK M S O E  A1 A2 A3 B1 B2{line_end}",
+            "\x1b[2m  #  {:<nw$} {:>6}  {:<mw$} {:<mw$} PEAK M S O E D  A1 A2 A3 B1 B2{line_end}",
             "NAME",
             "GAIN",
             "L",
@@ -554,6 +557,8 @@ impl View {
             }
             let selected = r == self.sel;
             let eq_on = sh.eq(r).on.load(Relaxed);
+            let dyn_on =
+                sh.strips.get(r).is_some_and(|p| p.dynamics.gate_on.load(Relaxed) || p.dynamics.comp_on.load(Relaxed));
             let (id, name, gain, mute, solo, mono, routes) = if r < NUM_STRIPS {
                 let p = &sh.strips[r];
                 (
@@ -616,6 +621,12 @@ impl View {
             flag(o, mono, 'O', "46;30");
             o.push(' ');
             flag(o, eq_on, 'E', "45;97");
+            o.push(' ');
+            if r < NUM_STRIPS {
+                flag(o, dyn_on, 'D', "43;30");
+            } else {
+                o.push(' ');
+            }
             o.push_str("  ");
             for (b, idb) in BUS_IDS.iter().enumerate() {
                 let sep = if b > 0 { " " } else { "" };
@@ -934,6 +945,39 @@ mod tests {
     }
 
     #[test]
+    fn gate_and_compressor_keys() {
+        let sh = Shared::default();
+        let cfg = Config::default();
+        let mut v = View { sel: 1, ..View::default() };
+        v.handle(&sh, Key::Char(b'g'));
+        assert!(sh.strips[1].dynamics.gate_on.load(Relaxed));
+        v.handle(&sh, Key::Char(b'C'));
+        v.handle(&sh, Key::Char(b'g'));
+        assert!(sh.strips[1].dynamics.comp_on.load(Relaxed) && !sh.strips[1].dynamics.gate_on.load(Relaxed));
+        let info = Info {
+            client: "BananaSplit",
+            sample_rate: 48000,
+            buffer_size: 128,
+            cpu: 1.0,
+            xruns: 0,
+            oversize: 0,
+            lat_in: 128,
+            lat_out: 256,
+            cables: 8,
+            vban: "",
+        };
+        let lines = fits(&v.render(&sh, &cfg, &info, &[]), 80);
+        let hdr = lines.iter().find(|l| l.contains("NAME")).unwrap();
+        let row = lines.iter().find(|l| l.starts_with("> 2")).unwrap();
+        let at = |s: &str, needle: &str| s.find(needle).map(|b| s[..b].chars().count()).unwrap();
+        assert_eq!(at(hdr, "D  A1"), at(row, "D  A1"), "\n{hdr}\n{row}");
+        // buses have neither
+        v.sel = NUM_STRIPS;
+        v.handle(&sh, Key::Char(b'g'));
+        assert!(sh.strips.iter().filter(|s| s.dynamics.gate_on.load(Relaxed)).count() == 0);
+    }
+
+    #[test]
     fn eq_keys_and_page() {
         let sh = Shared::default();
         let mut cfg = Config::default();
@@ -1019,7 +1063,7 @@ mod tests {
         // back on the mixer: both EQ flags show
         let lines = fits(&v.render(&sh, &cfg, &info, &[]), 80);
         let row = |p: &str| lines.iter().find(|l| l.starts_with(p)).unwrap().clone();
-        assert!(row("> 1").contains("   -∞ · · · E  A1"), "{}", row("> 1"));
+        assert!(row("> 1").contains("   -∞ · · · E ·  A1"), "{}", row("> 1"));
         assert!(row(" A2").contains("·   · E"), "{}", row(" A2"));
         assert!(row("  2").contains("· · · ·"));
     }
