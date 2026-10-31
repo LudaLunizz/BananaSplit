@@ -31,6 +31,7 @@
 
 use crate::tui::{Info, ROWS};
 use bananasplit::config::{Config, Theme, parse_pan, parse_trim, parse_zoom};
+use bananasplit::dynamics::{COMP, GATE};
 use bananasplit::engine::{
     BUS_IDS, MAX_GAIN_DB, MAX_TRIM_DB, MIN_GAIN_DB, MIN_TRIM_DB, NUM_BUSES, NUM_STRIPS, Shared, clamp_db,
 };
@@ -717,7 +718,30 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
             jnum(&mut o, b.q as f64, 2);
             o.push(']');
         }
-        o.push_str("]}}");
+        o.push_str("]}");
+        if strip {
+            // gate and compressor: on/off, settings in GATE / COMP order, and
+            // their gain reduction in the last cycle (dB)
+            let d = &sh.strips[r].dynamics;
+            let list = |o: &mut String, v: &[bananasplit::engine::AtomicF32]| {
+                for (i, a) in v.iter().enumerate() {
+                    if i > 0 {
+                        o.push(',');
+                    }
+                    jnum(o, a.load() as f64, 1);
+                }
+            };
+            let _ = write!(o, ",\"dyn\":{{\"gate\":{},\"g\":[", d.gate_on.load(Relaxed));
+            list(&mut o, &d.gate);
+            let _ = write!(o, "],\"comp\":{},\"c\":[", d.comp_on.load(Relaxed));
+            list(&mut o, &d.comp);
+            o.push_str("],\"ggr\":");
+            jnum(&mut o, d.gate_gr.load() as f64, 1);
+            o.push_str(",\"cgr\":");
+            jnum(&mut o, d.comp_gr.load() as f64, 1);
+            o.push('}');
+        }
+        o.push('}');
     }
     let st = f.rec;
     let s = f.rec_settings;
@@ -869,6 +893,11 @@ impl Form {
     }
     fn ch(&self) -> Result<usize, String> {
         self.req("ch")?.parse::<usize>().ok().filter(|&c| c < NUM_SOURCES).ok_or_else(|| "bad channel".into())
+    }
+    /// `ch`, which must be an input strip (gate and compressor are on strips only).
+    fn strip(&self) -> Result<usize, String> {
+        let c = self.ch()?;
+        if c < NUM_STRIPS { Ok(c) } else { Err("gate and compressor are on the input strips only".into()) }
     }
     fn index(&self, k: &str, n: usize) -> Result<usize, String> {
         self.req(k)?.parse::<usize>().ok().filter(|&i| i < n).ok_or_else(|| format!("bad {k}"))
@@ -1119,6 +1148,33 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
             let c = f.ch()?;
             sh.eq(c).store_bands(&DEFAULT_BANDS);
             Ok("EQ bands reset (flat)".into())
+        }
+        "gate" | "comp" => {
+            let (c, on) = (f.strip()?, f.flag()?);
+            let d = &sh.strips[c].dynamics;
+            let (flag, what) = if op == "gate" { (&d.gate_on, "Gate") } else { (&d.comp_on, "Compressor") };
+            flag.store(on, SeqCst);
+            Ok(format!("{what} {}", if on { "on" } else { "off" }))
+        }
+        "dynset" => {
+            let c = f.strip()?;
+            let d = &sh.strips[c].dynamics;
+            let key = f.req("key")?;
+            let (spec, slot) = if let Some(i) = GATE.iter().position(|s| s.key == key) {
+                (&GATE[i], &d.gate[i])
+            } else if let Some(i) = COMP.iter().position(|s| s.key == key) {
+                (&COMP[i], &d.comp[i])
+            } else {
+                return Err(format!("unknown setting {key:?}"));
+            };
+            let v = f.num_of("v", spec.key, spec.min, spec.max)?.ok_or("missing \"v\"")?;
+            slot.store(spec.clamp(v));
+            Ok("ok".into())
+        }
+        "dynreset" => {
+            let c = f.strip()?;
+            sh.strips[c].dynamics.reset_settings();
+            Ok("Gate and compressor settings reset".into())
         }
         "vban" => {
             let on = f.flag()?;
@@ -2185,6 +2241,27 @@ mod tests {
         }
         command(&h, "op=eqreset&ch=0").unwrap();
         assert_eq!(sh.strips[0].eq.bands(), DEFAULT_BANDS);
+        // gate and compressor
+        command(&h, "op=gate&ch=0&v=1").unwrap();
+        command(&h, "op=comp&ch=5&v=1").unwrap();
+        assert!(sh.strips[0].dynamics.gate_on.load(Relaxed) && sh.strips[5].dynamics.comp_on.load(Relaxed));
+        command(&h, "op=dynset&ch=0&key=gate_threshold&v=-36.04").unwrap();
+        command(&h, "op=dynset&ch=0&key=comp_ratio&v=4.5").unwrap();
+        let d = sh.strips[0].dynamics.settings();
+        assert_eq!((d.gate[0], d.comp[1]), (-36.0, 4.5));
+        for bad in [
+            "op=gate&ch=6&v=1",
+            "op=dynset&ch=0&key=gate_threshold&v=5",
+            "op=dynset&ch=0&key=comp_ratio&v=NaN",
+            "op=dynset&ch=0&key=eq1&v=1",
+            "op=dynset&ch=0&key=comp_ratio",
+            "op=dynset&ch=7&key=comp_ratio&v=2",
+        ] {
+            assert!(command(&h, bad).is_err(), "{bad}");
+        }
+        command(&h, "op=dynreset&ch=0").unwrap();
+        assert_eq!(sh.strips[0].dynamics.settings().comp[1], COMP[1].def);
+        assert!(sh.strips[0].dynamics.gate_on.load(Relaxed), "a reset keeps the switches");
         // VBAN
         command(&h, "op=vban&v=1").unwrap();
         command(&h, "op=vbanport&v=6990").unwrap();
@@ -2339,7 +2416,8 @@ mod tests {
         assert!(json.contains(&format!(r#""link":true,"solo":false,"routes":8,"m":[-60.0,-12.5],"mi":[-30.0,-31.5],"conn":"Firefox","dev":"Yeti {lt}USB{gt}","cable":true,"eq":{{"on":false,"b":[[1,"lowshelf",100,0.0,0.71],[1,"bell",250,0.0,1.00],"#)), "{json}");
         assert!(json.contains(r#""id":"B1","name":"Virtual B1","strip":false,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"routes":1,"m":"#), "{json}");
         assert!(json.contains(r#""cables":8,"devRev":42,"#));
-        assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]}},{"id":"2""#));
+        assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]},"dyn":{"gate":false,"g":[-50.0,-80.0,1.0,100.0,200.0],"comp":false,"c":[-18.0,3.0,6.0,10.0,150.0,0.0],"ggr":0.0,"cgr":0.0}},{"id":"2""#), "{json}");
+        assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]}},{"id":"A2""#), "a bus has no dyn: {json}");
         assert!(json.contains(r#""id":"3","name":"Desktop","strip":true,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"solo":false,"routes":0,"m":[-60.0,-12.5],"mi":[-30.0,-31.5],"conn":"","dev":"Not connected","cable":false,"eq":{"on":true"#), "{json}");
         assert!(json.contains(r#""id":"2","name":"Discord","strip":true,"gain":0.0,"trim":6.0,"pan":0.00,"#), "{json}");
         assert!(
@@ -2599,6 +2677,11 @@ mod tests {
         assert!(PAGE.contains("/api/events") && PAGE.contains("/api/takes") && PAGE.contains("/api/wave?"));
         // dark (the default), light, and auto (follow the desktop)
         assert!(PAGE.contains(r#":root[data-theme="light"]"#) && PAGE.contains(r#":root:not([data-theme])"#));
+        // the gate and compressor editor knows the same settings and ranges as dynamics.rs
+        for sp in GATE.iter().chain(&COMP) {
+            let js = format!(r#"["{}", "{}", "{}", {}, {}, {}]"#, sp.key, sp.label, sp.unit, sp.min, sp.max, sp.def);
+            assert!(PAGE.contains(&js), "gui.html lacks {js}");
+        }
         // every command the page sends exists
         for op in [
             "gain",
@@ -2615,6 +2698,10 @@ mod tests {
             "eq",
             "band",
             "eqreset",
+            "gate",
+            "comp",
+            "dynset",
+            "dynreset",
             "vban",
             "vbanport",
             "vbanin",

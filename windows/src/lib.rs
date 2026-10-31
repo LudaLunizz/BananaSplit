@@ -1,7 +1,8 @@
 //! BananaSplit — a 6-strip / 5-bus virtual audio mixer for Windows.
 //!
 //! The crate is split so that everything that touches audio samples
-//! (`engine`, the 6-band `eq` on every strip and bus, the `recorder` that
+//! (`engine`, the 6-band `eq` on every strip and bus, the gate and
+//! compressor (`dynamics`) on every strip, the `recorder` that
 //! captures them to MP3 or WAV, its own `mp3` encoder and decoder, the
 //! `player` that plays recordings back, and
 //! `vban`, network audio compatible with Voicemeeter) and everything that
@@ -11,6 +12,7 @@
 //! the GUI (`--gui`).
 
 pub mod config;
+pub mod dynamics;
 pub mod engine;
 pub mod eq;
 pub mod mp3;

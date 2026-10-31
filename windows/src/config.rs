@@ -89,6 +89,7 @@
 //! `[recorder]` or `[vban]` section or EQ keys (written by an older BananaSplit)
 //! loads with their defaults.
 
+use crate::dynamics::{COMP, DynSettings, GATE};
 use crate::engine::{BUS_IDS, NUM_BUSES, NUM_STRIPS, Shared, clamp_db, clamp_pan, clamp_trim};
 use crate::eq::{BANDS, Band, DEFAULT_BANDS, EqSettings};
 use crate::recorder::{self, ALL_LINKS, Format, Mode, Settings};
@@ -174,6 +175,8 @@ pub struct StripConfig {
     /// Its virtual cable (an output device apps can play into).
     pub cable: bool,
     pub eq: EqSettings,
+    /// Gate and compressor.
+    pub dynamics: DynSettings,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -317,6 +320,7 @@ impl Default for Config {
             connect: connect.iter().map(|s| s.to_string()).collect(),
             cable: true,
             eq: EqSettings::default(),
+            dynamics: DynSettings::default(),
         };
         let bus = |name: &str, connect: &[&str], cable: bool| BusConfig {
             name: name.into(),
@@ -395,6 +399,43 @@ fn eq_key(eq: &mut EqSettings, k: &str, v: &str) -> Option<Result<(), String>> {
         return Some(Err(format!("unknown key {k:?} (EQ bands are eq1..eq{BANDS})")));
     }
     Some(Band::parse(v).map(|b| eq.bands[n - 1] = b))
+}
+
+/// `gate`, `comp` and their settings on a strip.
+fn dynamics_key(d: &mut DynSettings, k: &str, v: &str) -> Option<Result<(), String>> {
+    match k {
+        "gate" => return Some(parse_bool(v).map(|b| d.gate_on = b)),
+        "comp" => return Some(parse_bool(v).map(|b| d.comp_on = b)),
+        _ => {}
+    }
+    if let Some(i) = GATE.iter().position(|s| s.key == k) {
+        return Some(GATE[i].parse(v).map(|x| d.gate[i] = x));
+    }
+    let i = COMP.iter().position(|s| s.key == k)?;
+    Some(COMP[i].parse(v).map(|x| d.comp[i] = x))
+}
+
+/// Only what differs from the defaults, so that a config or scene without
+/// a gate or compressor still loads in BananaSplit 2.8.15 and older.
+pub(crate) fn write_dynamics(o: &mut String, d: &DynSettings) {
+    let def = DynSettings::default();
+    let onoff = |b: bool| if b { "on" } else { "off" };
+    if d.gate_on || d.gate != def.gate {
+        let _ = writeln!(o, "gate = {}", onoff(d.gate_on));
+        for (i, s) in GATE.iter().enumerate() {
+            if d.gate[i] != s.def {
+                let _ = writeln!(o, "{} = {}", s.key, d.gate[i]);
+            }
+        }
+    }
+    if d.comp_on || d.comp != def.comp {
+        let _ = writeln!(o, "comp = {}", onoff(d.comp_on));
+        for (i, s) in COMP.iter().enumerate() {
+            if d.comp[i] != s.def {
+                let _ = writeln!(o, "{} = {}", s.key, d.comp[i]);
+            }
+        }
+    }
 }
 
 pub(crate) fn write_eq(o: &mut String, eq: &EqSettings) {
@@ -588,7 +629,7 @@ impl Config {
                             }
                             if v.is_empty() { s.connect.clear() } else { s.connect.push(v.into()) }
                         }
-                        _ => match eq_key(&mut s.eq, k, v) {
+                        _ => match eq_key(&mut s.eq, k, v).or_else(|| dynamics_key(&mut s.dynamics, k, v)) {
                             Some(r) => r.map_err(err)?,
                             None => return Err(err(format!("unknown key {k:?} in [strip{}]", i + 1))),
                         },
@@ -715,6 +756,11 @@ impl Config {
         let _ = writeln!(o, "# cable = on | off: the channel's virtual cable (written when it differs from the");
         let _ = writeln!(o, "#           default: on for the strips and B1, B2, off for A1-A3)");
         let _ = writeln!(o, "# routes on a bus = the other buses it feeds after its fader (never in a loop)");
+        let _ = writeln!(o, "# gate = on | off;  gate_threshold (dB, -50), gate_range (dB, -80), gate_attack (ms, 1),");
+        let _ = writeln!(o, "#           gate_hold (ms, 100), gate_release (ms, 200)");
+        let _ = writeln!(o, "# comp = on | off;  comp_threshold (dB, -18), comp_ratio (3), comp_knee (dB, 6),");
+        let _ = writeln!(o, "#           comp_attack (ms, 10), comp_release (ms, 150), comp_makeup (dB, 0)");
+        let _ = writeln!(o, "#           (strips only; a setting not written here has the default in brackets)");
         let _ = writeln!(o, "\n[global]");
         let _ = writeln!(o, "client_name = {}", self.client_name);
         let _ = writeln!(o, "buffer_size = {}", self.buffer_size);
@@ -750,6 +796,7 @@ impl Config {
                 let _ = writeln!(o, "cable = off");
             }
             write_eq(&mut o, &s.eq);
+            write_dynamics(&mut o, &s.dynamics);
         }
         for (i, b) in self.buses.iter().enumerate() {
             let _ = writeln!(o, "\n[bus.{}]", BUS_IDS[i]);
@@ -838,6 +885,7 @@ impl Config {
             p.mono.store(s.mono, Relaxed);
             p.routes.store(s.routes & 0b11111, Relaxed);
             p.eq.apply(&s.eq);
+            p.dynamics.apply(&s.dynamics);
         }
         for (i, (b, p)) in self.buses.iter().zip(&sh.buses).enumerate() {
             p.gain_db.store(clamp_db(b.gain_db));
@@ -862,6 +910,7 @@ impl Config {
             s.mono = p.mono.load(Relaxed);
             s.routes = p.routes.load(Relaxed);
             s.eq = p.eq.settings();
+            s.dynamics = p.dynamics.settings();
         }
         let sends = sh.bus_routes();
         for (i, (b, p)) in self.buses.iter_mut().zip(&sh.buses).enumerate() {
@@ -1169,6 +1218,40 @@ mod tests {
         let mut d = Config::default();
         d.capture(&sh);
         assert_eq!(c, d);
+    }
+
+    #[test]
+    fn gate_and_compressor_round_trip() {
+        use crate::dynamics::{C_MAKEUP, C_RATIO, G_HOLD, G_THRESHOLD};
+        let mut c = Config::default();
+        assert_eq!(c.to_ini().matches("\ngate = ").count(), 0);
+        c.strips[0].dynamics.gate_on = true;
+        c.strips[0].dynamics.gate[G_THRESHOLD] = -35.5;
+        c.strips[0].dynamics.gate[G_HOLD] = 250.0;
+        c.strips[3].dynamics.comp_on = true;
+        c.strips[3].dynamics.comp[C_RATIO] = 8.0;
+        c.strips[3].dynamics.comp[C_MAKEUP] = 4.5;
+        let text = c.to_ini();
+        assert_eq!(Config::parse(&text).unwrap(), c);
+        assert!(text.contains("\ngate = on\ngate_threshold = -35.5\ngate_hold = 250\n"), "{text}");
+        assert!(text.contains("\ncomp = on\ncomp_ratio = 8\ncomp_makeup = 4.5\n"), "{text}");
+        assert_eq!(
+            text.matches("\ngate = ").count() + text.matches("\ncomp = ").count(),
+            2,
+            "defaults are not written"
+        );
+        // pushed into the mixer and read back
+        let sh = crate::engine::Shared::new();
+        c.apply(&sh);
+        assert!(sh.strips[0].dynamics.gate_on.load(Relaxed));
+        let mut back = Config::default();
+        back.capture(&sh);
+        assert_eq!(back.strips[3].dynamics, c.strips[3].dynamics);
+        // errors name the key and the line
+        let e = Config::parse("[strip1]\ncomp_ratio = 50\n").unwrap_err();
+        assert!(e.line == 2 && e.msg.contains("comp_ratio") && e.msg.contains("out of range"), "{e}");
+        assert!(Config::parse("[strip1]\ngate = maybe\n").is_err());
+        assert!(Config::parse("[bus.A1]\ngate = on\n").unwrap_err().msg.contains("gate"), "strips only");
     }
 
     #[test]

@@ -21,7 +21,7 @@
 
 - **6 input strips, 5 buses.** A1–A3 play on speakers and headphones, B1–B2 act as virtual microphones. Any bus can be an output, a virtual mic, or both, and buses can feed each other.
 - **Per-channel menus** to pick devices, apps and a virtual cable for every channel.
-- **Input gain, pan and a 6-band EQ** on every channel, with mute, solo and mono.
+- **Input gain, pan and a 6-band EQ** on every channel, with mute, solo and mono, and a **gate and compressor** on every input strip.
 - **VBAN network audio**, compatible with Voicemeeter.
 - **Multitrack recorder (MP3 or WAV) and player**, plus saved **scenes**.
 - **Desktop app** with its own window and tray icon. Also runs in a terminal or headless as a service.

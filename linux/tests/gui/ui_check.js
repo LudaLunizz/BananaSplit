@@ -234,6 +234,34 @@ async function until(pred, what, ms = 4000) {
   check(await strip(2).locator(".pill", { hasText: "EQ" }).getAttribute("aria-pressed") === "true", "EQ pill lit");
   await page.locator("#eqclose").click();
 
+  // ---- gate & compressor ----
+  check(await strip(6).locator(".pill", { hasText: "DYN" }).count() === 0, "buses have no DYN pill");
+  await strip(1).locator(".pill", { hasText: "DYN" }).click();
+  check(await page.locator("#dyndlg").evaluate((d) => d.open), "DYN pill opens the gate and compressor editor");
+  await page.locator("#gateon").click();
+  await until((s) => s.ch[1].dyn.gate, "gate on in the editor");
+  await page.locator("#compon").click();
+  await until((s) => s.ch[1].dyn.comp, "compressor on in the editor");
+  const thr = page.locator("#gatefields input").first();
+  await thr.fill("-36.5");
+  await thr.press("Enter");
+  await until((s) => s.ch[1].dyn.g[0] === -36.5, "typing a gate threshold sets it");
+  const ratio = page.locator("#compfields input").nth(1);
+  await ratio.fill("50");
+  await ratio.press("Enter");
+  await until((s) => s.ch[1].dyn.c[1] === 20, "a ratio out of range is clamped to 20:1");
+  check(await strip(1).locator(".pill", { hasText: "DYN" }).getAttribute("aria-pressed") === "true", "DYN pill lit");
+  await page.locator("#dynreset").click();
+  await until((s) => s.ch[1].dyn.g[0] === -50 && s.ch[1].dyn.c[1] === 3 && s.ch[1].dyn.gate, "Reset settings restores the defaults, keeps the switches");
+  await page.locator("#gateon").click();
+  await page.locator("#compon").click();
+  await until((s) => !s.ch[1].dyn.gate && !s.ch[1].dyn.comp, "gate and compressor off again");
+  await page.locator("#dynclose").click();
+  await strip(3).locator(".sh").click();
+  await page.keyboard.press("d");
+  check(await page.locator("#dyndlg").evaluate((d) => d.open) && (await page.locator("#dyn-h").textContent()).includes("· 4"), "key D opens the selected strip's editor");
+  await page.locator("#dynclose").click();
+
   // ---- VBAN ----
   await page.locator("#vbanbtn").click();
   await page.locator("#vbanon").click();
