@@ -957,7 +957,10 @@ mod tests {
         let t0 = Instant::now();
         let mut got = false;
         let mut k = 0u32;
-        while t0.elapsed() < Duration::from_secs(5) && !got {
+        // what arrived, for the message if nothing matches
+        let (mut empty, mut last) = (0u32, (0.0f32, 0.0f32));
+        // (a slow runner can stretch this loop a lot: give it time)
+        while t0.elapsed() < Duration::from_secs(15) && !got {
             {
                 let mut it = store.iter_mut();
                 let buses: [[&mut [f32]; 2]; NUM_BUSES] =
@@ -966,16 +969,28 @@ mod tests {
             }
             sc.fill(0.0);
             rtb.pull(&tb, 128, &mut sc, Instant::now());
-            // once playing steadily, strip 3 carries exactly what B1 sent (24-bit)
-            let l = &sc[4 * MAX_FRAMES..][..128];
-            if k > 50 && l.iter().all(|&v| (v - 0.5).abs() < 1e-6) {
-                assert!(sc[5 * MAX_FRAMES..][..128].iter().all(|&v| (v + 0.25).abs() < 1e-6));
+            // once playing steadily, strip 3 carries what B1 sent: within
+            // -80 dB, since a receiver that follows uneven timing resamples
+            // and a constant then ripples a little; left and right apart
+            let (l, r) = (&sc[4 * MAX_FRAMES..][..128], &sc[5 * MAX_FRAMES..][..128]);
+            let near = |v: f32, want: f32| (v - want).abs() < 1e-4;
+            if k > 50 && l.iter().all(|&v| near(v, 0.5)) && r.iter().all(|&v| near(v, -0.25)) {
                 got = true;
             }
+            if l.iter().all(|&v| v == 0.0) {
+                empty += 1;
+            }
+            last = l.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
             k += 1;
             std::thread::sleep(Duration::from_micros(2667));
         }
-        assert!(got, "strip 3 never received B1");
+        assert!(
+            got,
+            "strip 3 never received B1: {k} blocks in {:.1} s, {empty} empty, the last one's left from {} to {}",
+            t0.elapsed().as_secs_f32(),
+            last.0,
+            last.1
+        );
         wait_for("status", || {
             vb.status().ins[4].state == InState::Receiving && va.status().outs[1].state == OutState::Sending
         });
