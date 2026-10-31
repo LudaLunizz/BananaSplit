@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.16" date="2026-10-31">
+      <description>
+        <p>A noise gate and a compressor on every input strip, before the EQ: open them with the new DYN button. Off by default; saved in the config and in scenes.</p>
+      </description>
+    </release>
     <release version="2.8.15" date="2026-10-29">
       <description>
         <p>macOS: only the user BananaSplit runs as can control it, and a device whose sample format changes is opened again. Nothing changes on Linux and Windows.</p>

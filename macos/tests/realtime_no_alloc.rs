@@ -73,6 +73,14 @@ fn process_never_allocates() {
             sh.strips[s].eq.on.store(true, SeqCst);
             sh.buses[cycle % NUM_BUSES].eq.on.store(true, SeqCst);
         }
+        // gate and compressor switching and moving (opening, closing, gliding)
+        let d = &sh.strips[s].dynamics;
+        d.gate_on.store(cycle % 4 != 0, SeqCst);
+        d.comp_on.store(cycle % 6 != 1, SeqCst);
+        d.gate[0].store(-((cycle % 70) as f32));
+        d.comp[1].store(1.0 + (cycle % 19) as f32);
+        d.comp[5].store((cycle % 12) as f32);
+        let _ = (d.gate_gr.load(), d.comp_gr.load());
         for st in 0..NUM_STRIPS {
             eng.load_input(st, 0, &input[..n]);
             eng.clear_input(st, 1, n);

@@ -3,10 +3,10 @@
 //! Signal flow (identical topology to Voicemeeter Banana, but 6 input strips):
 //!
 //! ```text
-//!  strip input (L,R) + VBAN in ─► sanitize ─► [mono] ─► EQ ─► gain × fader × pan, mute/solo ─► meter ─┬─► route A1 ─┐
-//!                                                                                                    ├─► route A2  │
-//!                                                                                                    ├─► ...       ├─► bus sum ─►
-//!                                                                                                    └─► route B2 ─┘
+//!  strip input (L,R) + VBAN in ─► sanitize ─► [mono] ─► gate ─► comp ─► EQ ─► gain × fader × pan, mute/solo ─► meter ─┬─► route A1 ─┐
+//!                                                                                                                    ├─► route A2  │
+//!                                                                                                                    ├─► ...       ├─► bus sum ─►
+//!                                                                                                                    └─► route B2 ─┘
 //!  (+ player, on the buses it is routed to)
 //!  (+ other buses routed here) ─► [mono] ─► EQ ─► gain × fader × balance, mute ─► meter ─┬─► out
 //!                                                                                      └─► other buses (sends)
@@ -42,6 +42,9 @@
 //!   or syscalls (see [`crate::recorder`]).
 //! * **EQ.** Every strip and bus has a 6-band parametric EQ ([`crate::eq`]);
 //!   off (the default) or flat, it leaves the signal bit for bit unchanged.
+//! * **Gate and compressor.** Every strip has both, before its EQ
+//!   ([`crate::dynamics`]); their detectors read the level after the input
+//!   gain. Off (the default), they leave the signal bit for bit unchanged.
 //! * **VBAN.** With VBAN attached ([`Engine::attach_vban`]), incoming network
 //!   streams are added to their strips' inputs at the start of `process`
 //!   and outgoing streams are fed at the end, through preallocated
@@ -57,6 +60,7 @@
 //!   after mono and the input gain), which keeps showing what comes in while
 //!   the channel is muted.
 
+use crate::dynamics::{DynParams, DynRt};
 use crate::eq::{EqParams, EqRt};
 use crate::player::{PlayRt, PlayTap};
 use crate::recorder::{RecRt, RecTap};
@@ -149,6 +153,8 @@ pub struct StripParams {
     /// and fader), also while the strip is muted or soloed out.
     pub input_peak: [PeakMeter; 2],
     pub eq: EqParams,
+    /// Gate and compressor (before the EQ).
+    pub dynamics: DynParams,
 }
 
 #[derive(Debug, Default)]
@@ -383,6 +389,7 @@ pub struct Engine {
     send_gain: [[f32; NUM_BUSES]; NUM_BUSES],
     /// Strips 0..5, then buses.
     eq: [EqRt; NUM_STRIPS + NUM_BUSES],
+    dynamics: [DynRt; NUM_STRIPS],
     /// The rate the EQs are tuned for.
     rate: u32,
     /// The rate last told to the taps (0 = none yet).
@@ -406,6 +413,7 @@ impl Engine {
             bus_gain: [[0.0; 2]; NUM_BUSES],
             send_gain: [[0.0; NUM_BUSES]; NUM_BUSES],
             eq: array::from_fn(|_| EqRt::new(48_000)),
+            dynamics: array::from_fn(|_| DynRt::new(48_000)),
             rate: 48_000,
             tap_rate: 0,
             rec: None,
@@ -417,7 +425,7 @@ impl Engine {
         }
     }
 
-    /// The server's sample rate (for the EQ). Call it before the engine
+    /// The server's sample rate (for the EQ and the dynamics). Call it before the engine
     /// goes live; later, set [`Shared::sample_rate`] instead (the engine
     /// follows it at the start of its next cycle).
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
@@ -425,9 +433,12 @@ impl Engine {
         for eq in &mut self.eq {
             eq.set_sample_rate(sample_rate);
         }
+        for d in &mut self.dynamics {
+            d.set_sample_rate(sample_rate);
+        }
     }
 
-    /// Follow [`Shared::sample_rate`]: re-tune the EQs and tell the taps.
+    /// Follow [`Shared::sample_rate`]: re-tune the EQs and dynamics and tell the taps.
     /// No allocation, locks or system calls.
     #[inline]
     fn follow_rate(&mut self) {
@@ -552,7 +563,7 @@ impl Engine {
             let base = s * 2 * MAX_FRAMES;
 
             if g0 == [0.0; 2] && target == [0.0; 2] {
-                // Fully silent for the whole cycle: routing and EQ changes
+                // Fully silent for the whole cycle: routing, EQ and dynamics changes
                 // are inaudible, so take them at once. The input is still
                 // metered: a muted strip shows what comes in.
                 let (l, r) = self.scratch[base..base + 2 * MAX_FRAMES].split_at(MAX_FRAMES);
@@ -561,6 +572,7 @@ impl Engine {
                 p.input_peak[1].push(pr * trim);
                 self.route_gain[s] = route_target;
                 self.eq[s].reset(&p.eq);
+                self.dynamics[s].reset(&p.dynamics);
                 continue;
             }
             live |= 1 << s;
@@ -584,6 +596,7 @@ impl Engine {
             }
             p.input_peak[0].push(in_l * trim);
             p.input_peak[1].push(in_r * trim);
+            self.dynamics[s].process(&p.dynamics, l, r, trim);
             self.eq[s].process(&p.eq, l, r);
             let mut pk_l = 0.0f32;
             let mut pk_r = 0.0f32;
@@ -1246,6 +1259,41 @@ mod tests {
         assert_eq!(rig.eng.rate, 96_000);
         rig.run(0, |_, _, _| 0.0); // empty and oversize cycles count too
         assert_eq!(sh.cycles.load(Relaxed), 3);
+    }
+
+    #[test]
+    fn the_gate_and_compressor_sit_after_the_input_gain_and_before_the_fader() {
+        use crate::dynamics::{C_KNEE, C_THRESHOLD};
+        let (mut rig, sh) = Rig::new();
+        sh.strips[0].routes.store(1, Relaxed);
+        let d = &sh.strips[0].dynamics;
+        d.comp_on.store(true, Relaxed);
+        d.comp[C_THRESHOLD].store(-20.0);
+        d.comp[C_KNEE].store(0.0);
+        sh.strips[0].trim_db.store(6.0);
+        sh.strips[0].gain_db.store(-6.0);
+        // -14 dB in, +6 input gain = -8 dB at the detector: 12 over at 3:1 -> -8 dB
+        let x = db_to_gain(-14.0);
+        for _ in 0..400 {
+            rig.run(N, |s, _, _| if s == 0 { x } else { 0.0 });
+        }
+        let want = x * db_to_gain(-8.0);
+        assert!(rig.bus(0, 0).iter().all(|&v| (v - want).abs() < want * 0.01), "{} vs {want}", rig.bus(0, 0)[0]);
+        assert!((d.comp_gr.load() + 8.0).abs() < 0.05);
+        // the input meter still shows what comes in
+        let _ = sh.strips[0].input_peak[0].take();
+        rig.run(N, |s, _, _| if s == 0 { x } else { 0.0 });
+        assert!(approx(sh.strips[0].input_peak[0].take(), x * db_to_gain(6.0)));
+        // a gate that is on keeps a muted strip's background closed when it comes back
+        d.comp_on.store(false, Relaxed);
+        d.gate_on.store(true, Relaxed);
+        sh.strips[0].mute.store(true, Relaxed);
+        for _ in 0..3 {
+            rig.run(N, |s, _, _| if s == 0 { 0.001 } else { 0.0 });
+        }
+        sh.strips[0].mute.store(false, Relaxed);
+        rig.run(N, |s, _, _| if s == 0 { 0.001 } else { 0.0 });
+        assert!(rig.bus(0, 0).iter().all(|&v| v.abs() < 0.001 * 0.001), "{}", rig.bus(0, 0)[N - 1]);
     }
 
     #[test]
