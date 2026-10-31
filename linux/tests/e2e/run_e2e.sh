@@ -29,6 +29,24 @@ grep -q "^CYCLES 2000 " "$MOCKJACK_REPORT" || fail "process callback did not run
 echo "E2E PASS: all outputs sample-aligned at cycle 500 frame 77, zero added latency"
 rm -rf "$TMP"
 
+# ---- phase 1b: a gate on strip 1 (config keys read by the real binary) ----
+TMP=$(mktemp -d)
+# the mic's impulse (0.5 / 0.25) never reaches a 0 dB threshold: the gate
+# stays closed at -80 dB; Firefox (strip 2) passes untouched
+awk '{ print } /^connect = @physical$/ && !done { print "gate = on\ngate_threshold = 0\ngate_release = 5"; done = 1 }' \
+  "$HERE/e2e.ini" >"$TMP/bananasplit.ini"
+export MOCKJACK_REPORT="$TMP/report.txt"
+LD_LIBRARY_PATH="$HERE" "$BIN" --headless --config "$TMP/bananasplit.ini" 2>"$TMP/stderr.txt" &
+PID=$!
+sleep 7
+kill -INT $PID; wait $PID; RC=$?
+[ $RC -eq 0 ] || { cat "$TMP/stderr.txt"; fail "gate: exit code $RC"; }
+grep -q "^SIGNAL cycle=500 frame=77 BananaSplit:A1_L -> system:playback_1 value=0.125050$" "$MOCKJACK_REPORT" || { cat "$MOCKJACK_REPORT"; fail "gate: A1_L"; }
+grep -q "^SIGNAL cycle=500 frame=77 BananaSplit:B1_L -> OBS:input_1 value=0.000050$" "$MOCKJACK_REPORT" || fail "gate: B1_L"
+grep -q "^SIGNAL cycle=500 frame=77 BananaSplit:B1_R -> OBS:input_1 value=0.000025$" "$MOCKJACK_REPORT" || fail "gate: B1_R"
+echo "E2E PASS: a gate from the config holds strip 1 at -80 dB, strip 2 untouched"
+rm -rf "$TMP"
+
 # ---- phase 2: PipeWire virtual cables (fake pactl + cable ports in the mock) ----
 TMP=$(mktemp -d)
 export PACTL_LOG="$TMP/pactl.log" MOCKJACK_REPORT="$TMP/report.txt" MOCKJACK_CABLES=1 XDG_CONFIG_HOME="$TMP"

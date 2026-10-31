@@ -2,7 +2,7 @@
 //!
 //! A scene holds what you set while mixing: every strip's and bus's fader,
 //! input gain, pan, mute, solo, mono, routing (a bus's sends to other buses
-//! too) and EQ, and which channels are linked to the recorder. It does not hold names, device connections,
+//! too), EQ, each strip's gate and compressor, and which channels are linked to the recorder. It does not hold names, device connections,
 //! VBAN or recorder settings, so loading a scene never rewires anything.
 //! Loading goes through the same click-free ramps as moving a fader.
 //!
@@ -10,7 +10,7 @@
 //! (`~/.config/bananasplit/scenes/Live Room.ini`), in the config file's own
 //! format, so they can be read and edited by hand.
 
-use crate::config::{Config, format_routes, write_eq};
+use crate::config::{Config, format_routes, write_dynamics, write_eq};
 use crate::engine::{BUS_IDS, Shared};
 use crate::recorder;
 use std::fmt::Write as _;
@@ -52,8 +52,11 @@ pub fn to_ini(sh: &Shared) -> String {
     let mut c = Config::default();
     c.capture(sh);
     let mut o = String::new();
-    let _ = writeln!(o, "{HEADER}: faders, input gain, pan, mute, solo, mono, routing, EQ and");
-    let _ = writeln!(o, "# recorder links. Names, devices, VBAN and recorder settings are not part of a scene.");
+    let _ = writeln!(o, "{HEADER}: faders, input gain, pan, mute, solo, mono, routing, EQ, gate,");
+    let _ = writeln!(
+        o,
+        "# compressor and recorder links. Names, devices, VBAN and recorder settings are not part of a scene."
+    );
     for (i, s) in c.strips.iter().enumerate() {
         let _ = writeln!(o, "\n[strip{}]", i + 1);
         let _ = writeln!(o, "gain_db = {}", s.gain_db);
@@ -64,6 +67,7 @@ pub fn to_ini(sh: &Shared) -> String {
         let _ = writeln!(o, "mono = {}", s.mono);
         let _ = writeln!(o, "routes = {}", format_routes(s.routes));
         write_eq(&mut o, &s.eq);
+        write_dynamics(&mut o, &s.dynamics);
     }
     for (i, b) in c.buses.iter().enumerate() {
         let _ = writeln!(o, "\n[bus.{}]", BUS_IDS[i]);
@@ -81,6 +85,12 @@ pub fn to_ini(sh: &Shared) -> String {
     let _ = writeln!(o, "\n[recorder]");
     let _ = writeln!(o, "links = {}", recorder::format_links(c.recorder.links));
     o
+}
+
+/// `gate`, `comp` and their settings (strips only).
+fn is_dynamics_key(key: &str) -> bool {
+    use crate::dynamics::{COMP, GATE};
+    key == "gate" || key == "comp" || GATE.iter().chain(&COMP).any(|s| s.key == key)
 }
 
 /// Check that `text` only holds keys a scene may hold, then parse it with
@@ -108,7 +118,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
             || (key.len() == 3 && key.starts_with("eq") && key.as_bytes()[2].is_ascii_digit());
         let ok = match section.as_str() {
             "recorder" => key == "links",
-            s if s.starts_with("strip") => mixer || key == "solo" || key == "routes",
+            s if s.starts_with("strip") => mixer || key == "solo" || key == "routes" || is_dynamics_key(key),
             _ => mixer || key == "routes",
         };
         if !ok {
@@ -244,6 +254,8 @@ mod tests {
         sh.buses[3].eq.on.store(true, Relaxed);
         sh.buses[3].eq.bands[2].gain_db.store(-3.0);
         sh.buses[4].routes.store(0b00010, Relaxed); // B2 -> A2
+        sh.strips[0].dynamics.gate_on.store(true, Relaxed);
+        sh.strips[0].dynamics.comp[crate::dynamics::C_RATIO].store(6.5);
         sh.rec_links.store(0b100_0000_0001, Relaxed);
         store.save("Live Room", &sh).unwrap();
         store.save("acoustic", &Shared::new()).unwrap();
@@ -260,11 +272,15 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(sh2.strips[2].pan.load(), -0.25);
         assert_eq!(sh2.buses[4].routes.load(Relaxed), 0b00010);
+        assert!(sh2.strips[0].dynamics.gate_on.load(Relaxed));
+        assert_eq!(sh2.strips[0].dynamics.comp[crate::dynamics::C_RATIO].load(), 6.5);
         // a scene never touches names, connections or cables
         let text = std::fs::read_to_string(dir.join("Live Room.ini")).unwrap();
         assert!(
             !text.contains("name") && !text.contains("connect") && !text.contains("vban") && !text.contains("cable")
         );
+        // a strip with its gate and compressor as they come writes neither (2.8.15 can load it)
+        assert_eq!((text.matches("gate = ").count(), text.matches("comp_ratio = ").count()), (1, 1));
         // a bus without sends writes none (2.6 can load the scene)
         assert_eq!(text.matches("routes = ").count(), 6 + 1);
         store.delete("Live Room").unwrap();
