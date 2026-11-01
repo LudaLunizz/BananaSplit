@@ -13,6 +13,10 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.17
+
+* **Fix: the gate and compressor can no longer turn a broken sample into invalid audio** (#46). One absurdly loud sample from a misbehaving app, with the strip's input gain above 0 dB, made a whole audio cycle invalid (NaN) on every bus the strip feeds. The level they read is now capped, and a test covers it.
+
 ## What's new in 2.8.16
 
 * **A gate and a compressor on every input strip** (#40). The gate mutes a strip while it is quieter than its threshold (the hiss and room noise of a microphone between words); the compressor brings loud and quiet parts closer together, with make-up gain. Both sit before the EQ, read the level after the GAIN knob, and are off by default: off, the strip is unchanged bit for bit. Open them with the new **DYN** button next to EQ on a strip (or **D**); the terminal UI switches them with `g` and `C`. They are saved in the config and in scenes. See [Gate and compressor](#gate-and-compressor).
