@@ -317,7 +317,9 @@ impl DynRt {
 
         let (mut gate_min, mut comp_min) = (1.0f32, 0.0f32);
         for i in 0..n {
-            let x = l[i].abs().max(r[i].abs()) * trim;
+            // (capped: a huge but finite sample times the input gain would be inf,
+            // and inf in the dB smoother turns the gain into NaN)
+            let x = (l[i].abs().max(r[i].abs()) * trim).min(f32::MAX);
 
             // ---- gate: target gain, then a glide towards it
             let target = if gate_on {
@@ -557,6 +559,27 @@ mod tests {
         d.process(&p, &mut l, &mut r, f32::NAN);
         assert!(l.iter().chain(&r).all(|x| x.is_finite()), "{l:?} {r:?}");
         assert!(p.gate_gr.load().is_finite() && p.comp_gr.load().is_finite());
+    }
+
+    #[test]
+    fn a_huge_sample_with_input_gain_stays_finite() {
+        // a finite sample above f32::MAX / 15.85 times +24 dB of input gain
+        // overflows to inf at the detector (issue #46)
+        for ratio in [3.0, 1.0] {
+            let p = DynParams::default();
+            p.gate_on.store(true, Relaxed);
+            p.comp_on.store(true, Relaxed);
+            p.comp[C_RATIO].store(ratio);
+            let mut d = DynRt::new(SR);
+            let mut l = vec![f32::MAX, 3e37, 0.1, 0.1];
+            let mut r = vec![0.0, -3e37, 0.1, -0.1];
+            d.process(&p, &mut l, &mut r, db_to_gain(24.0));
+            assert!(l.iter().chain(&r).all(|x| x.is_finite()), "ratio {ratio}: {l:?} {r:?}");
+            assert!(p.gate_gr.load().is_finite() && p.comp_gr.load().is_finite());
+            // and the next cycle is normal again
+            let out = run(&mut d, &p, 0.01, 48_000);
+            assert!(out.iter().all(|x| x.is_finite()));
+        }
     }
 
     #[test]
