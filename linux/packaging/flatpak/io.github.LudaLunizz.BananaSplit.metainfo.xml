@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.17" date="2026-11-01">
+      <description>
+        <p>Fix: one absurdly loud sample from a broken app, with the input gain turned up, could make the gate and compressor output invalid audio (NaN) on every bus for a moment. The level they read is now capped.</p>
+      </description>
+    </release>
     <release version="2.8.16" date="2026-10-31">
       <description>
         <p>A noise gate and a compressor on every input strip, before the EQ: open them with the new DYN button. Off by default; saved in the config and in scenes.</p>
