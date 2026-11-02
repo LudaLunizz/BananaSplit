@@ -13,6 +13,10 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.18
+
+* **The logo shows the normal arrow cursor** (#50). Hovering "BananaSplit." in the header showed the text cursor; the logo is no longer selectable text.
+
 ## What's new in 2.8.17
 
 * **Fix: the gate and compressor can no longer turn a broken sample into invalid audio** (#46). One absurdly loud sample from a misbehaving app, with the strip's input gain above 0 dB, made a whole audio cycle invalid (NaN) on every bus the strip feeds. The level they read is now capped, and a test covers it.
