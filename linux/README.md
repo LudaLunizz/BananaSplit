@@ -20,6 +20,7 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
   * the app is signed with the audio-input entitlement, ready for a Developer ID signature later;
   * the macOS README says how to get the microphone back when an update leaves every input silent (`tccutil reset Microphone io.github.ludalunizz.bananasplit`);
   * Dependabot now also watches the macOS dependencies.
+* **A slow first start no longer loses the window** (#55, Linux and Windows): BananaSplit now waits up to 60 s (was 15 s) for its window to start. On Windows a slow start is no longer blamed on a missing WebView2; that message only shows when WebView2 itself fails.
 
 ## What's new in 2.8.18
 

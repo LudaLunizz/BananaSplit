@@ -238,21 +238,32 @@ pub fn open_sound_settings() -> Result<(), String> {
     if open_url("ms-settings:sound") { Ok(()) } else { Err("could not open the sound settings".into()) }
 }
 
-/// The desktop window could not start (usually: no WebView2 Runtime). The
-/// mixer runs anyway, so its page opens in the browser, and the user can
-/// get WebView2 from Microsoft.
+/// Did the window fail because of WebView2 itself (not installed, or it
+/// would not start)? Only then is the user sent to Microsoft for it.
+pub fn webview2_failed(why: &str) -> bool {
+    why.contains("WebView2")
+}
+
+/// The desktop window could not start. The mixer runs anyway, so its page
+/// opens in the browser; when WebView2 was the reason, the user can get it
+/// from Microsoft.
 pub fn no_window(why: &str, mixer_url: &str) {
-    let text = format!(
-        "BananaSplit's window could not open:\n{why}\n\nIt needs the Microsoft Edge WebView2 Runtime. \
-         The mixer is running, and opens in your web browser for now.\n\n\
-         Open Microsoft's download page for WebView2?"
-    );
-    let (cap, t) = (wide("BananaSplit"), wide(&text));
-    // SAFETY: NUL-terminated UTF-16 strings.
-    let answer = unsafe {
-        MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND)
+    let webview2 = webview2_failed(why);
+    let text = if webview2 {
+        format!(
+            "BananaSplit's window could not open:\n{why}\n\nIt needs the Microsoft Edge WebView2 Runtime. \
+             The mixer is running, and opens in your web browser for now.\n\n\
+             Open Microsoft's download page for WebView2?"
+        )
+    } else {
+        format!("BananaSplit's window could not open:\n{why}\n\nThe mixer is running, and opens in your web browser for now.")
     };
-    if answer == IDYES {
+    let (cap, t) = (wide("BananaSplit"), wide(&text));
+    let buttons = if webview2 { MB_YESNO } else { MB_OK };
+    // SAFETY: NUL-terminated UTF-16 strings.
+    let answer =
+        unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), buttons | MB_ICONWARNING | MB_SETFOREGROUND) };
+    if webview2 && answer == IDYES {
         open_url(WEBVIEW2_PAGE);
     }
     open_url(mixer_url);
@@ -270,6 +281,16 @@ pub fn error_dialog(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_webview2_error_points_to_webview2() {
+        // what the window process says when WebView2 itself fails (window.rs)
+        assert!(webview2_failed("could not start WebView2: CreateCoreWebView2Environment failed"));
+        // a slow start, or a window that ended, is not WebView2's fault
+        assert!(!webview2_failed("the window did not open within 60 s"));
+        assert!(!webview2_failed("the window ended before it opened"));
+        assert!(!webview2_failed("could not create the window: access denied"));
+    }
 
     #[test]
     fn run_entry_must_start_this_program() {

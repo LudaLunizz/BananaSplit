@@ -1972,6 +1972,9 @@ pub fn parse_win_line(line: &str) -> Option<WinMsg> {
     }
 }
 
+/// How long the window process may take to say it is ready.
+const WINDOW_START: Duration = Duration::from_secs(60);
+
 /// The window process, seen from the mixer.
 pub struct WindowProc {
     child: Child,
@@ -2036,16 +2039,23 @@ impl WindowProc {
             return Err("cannot start a thread".into());
         }
         let stdin = child.stdin.take();
-        match ready_rx.recv_timeout(Duration::from_secs(15)) {
+        // A window that ends at start ends this wait at once (Disconnected);
+        // one that is still starting gets WINDOW_START: a cold WebView2 or
+        // WebKit start on a slow computer can take well over 15 s.
+        match ready_rx.recv_timeout(WINDOW_START) {
             Ok(Ok(mode)) => Ok(WindowProc { child, stdin, mode, rx, gone: false }),
             Ok(Err(why)) => {
                 let _ = child.wait();
                 Err(why)
             }
-            Err(_) => {
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = child.wait();
+                Err("the window ended before it opened".into())
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                Err("the window did not start".into())
+                Err(format!("the window did not open within {} s", WINDOW_START.as_secs()))
             }
         }
     }
