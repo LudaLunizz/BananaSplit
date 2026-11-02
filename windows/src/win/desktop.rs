@@ -256,13 +256,16 @@ pub fn no_window(why: &str, mixer_url: &str) {
              Open Microsoft's download page for WebView2?"
         )
     } else {
-        format!("BananaSplit's window could not open:\n{why}\n\nThe mixer is running, and opens in your web browser for now.")
+        format!(
+            "BananaSplit's window could not open:\n{why}\n\nThe mixer is running, and opens in your web browser for now."
+        )
     };
     let (cap, t) = (wide("BananaSplit"), wide(&text));
     let buttons = if webview2 { MB_YESNO } else { MB_OK };
     // SAFETY: NUL-terminated UTF-16 strings.
-    let answer =
-        unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), buttons | MB_ICONWARNING | MB_SETFOREGROUND) };
+    let answer = unsafe {
+        MessageBoxW(std::ptr::null_mut(), t.as_ptr(), cap.as_ptr(), buttons | MB_ICONWARNING | MB_SETFOREGROUND)
+    };
     if webview2 && answer == IDYES {
         open_url(WEBVIEW2_PAGE);
     }
