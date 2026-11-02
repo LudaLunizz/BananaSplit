@@ -13,6 +13,14 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.19
+
+* **macOS follow-ups** (#52), Linux and Windows unchanged:
+  * a device left at a buffer size above 8192 frames now plays its whole cycle (only the first 8192 frames played before);
+  * the app is signed with the audio-input entitlement, ready for a Developer ID signature later;
+  * the macOS README says how to get the microphone back when an update leaves every input silent (`tccutil reset Microphone io.github.ludalunizz.bananasplit`);
+  * Dependabot now also watches the macOS dependencies.
+
 ## What's new in 2.8.18
 
 * **The logo shows the normal arrow cursor** (#50). Hovering "BananaSplit." in the header showed the text cursor; the logo is no longer selectable text.

@@ -324,11 +324,18 @@ unsafe extern "C" fn sink_proc(
     let st = unsafe { &mut *client.cast::<Sink>() };
     st.beat.enter();
     // SAFETY: this cycle's output from the HAL (zeroed, 32-bit floats).
-    let n = unsafe { catypes::output_frames(output) }.min(MAX_BLOCK);
+    let n = unsafe { catypes::output_frames(output) };
     if n > 0 {
-        st.reader.read(&mut st.l[..n], &mut st.r[..n], false);
-        // SAFETY: as above; n frames are there.
-        unsafe { catypes::put_output(output, st.pair, 0, &st.l[..n], &st.r[..n]) };
+        // in MAX_BLOCK chunks: a device left at a bigger buffer size
+        // (buffer_size = 0) still gets its whole cycle
+        let mut at = 0;
+        while at < n {
+            let k = (n - at).min(MAX_BLOCK);
+            st.reader.read(&mut st.l[..k], &mut st.r[..k], false);
+            // SAFETY: as above; frames at..at + k are there.
+            unsafe { catypes::put_output(output, st.pair, at, &st.l[..k], &st.r[..k]) };
+            at += k;
+        }
         let g = st.reader.glitches();
         if g != st.seen {
             st.shared.xruns.fetch_add(g.wrapping_sub(st.seen), Relaxed);
@@ -458,22 +465,26 @@ unsafe extern "C" fn master_proc(
                 n
             }
             Some(c) => {
-                // Mix exactly what the converter needs for this cycle, so
-                // the mix never waits in the ring.
-                let n = n.min(MAX_BLOCK);
-                let need = c.rr.needed(n);
-                let (mut have, mut mixed) = (c.prod.len(), 0);
-                while have < need {
-                    let k = (need - have).min(MAX_BLOCK);
-                    st.mix.run(k);
-                    let [l, r] = &st.mix.bus[st.bus];
-                    c.prod.push_planar(&l[..k], &r[..k]);
-                    have += k;
-                    mixed += k;
+                // Mix exactly what the converter needs for each chunk of
+                // this cycle, so the mix never waits in the ring.
+                let (mut at, mut mixed) = (0, 0);
+                while at < n {
+                    let m = (n - at).min(MAX_BLOCK);
+                    let need = c.rr.needed(m);
+                    let mut have = c.prod.len();
+                    while have < need {
+                        let k = (need - have).min(MAX_BLOCK);
+                        st.mix.run(k);
+                        let [l, r] = &st.mix.bus[st.bus];
+                        c.prod.push_planar(&l[..k], &r[..k]);
+                        have += k;
+                        mixed += k;
+                    }
+                    c.rr.read(&mut c.l[..m], &mut c.r[..m], false);
+                    // SAFETY: frames at..at + m are there.
+                    unsafe { catypes::put_output(output, st.pair, at, &c.l[..m], &c.r[..m]) };
+                    at += m;
                 }
-                c.rr.read(&mut c.l[..n], &mut c.r[..n], false);
-                // SAFETY: n frames are there.
-                unsafe { catypes::put_output(output, st.pair, 0, &c.l[..n], &c.r[..n]) };
                 mixed
             }
         };
