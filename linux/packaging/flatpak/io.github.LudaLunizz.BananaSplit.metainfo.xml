@@ -29,7 +29,7 @@
   <releases>
     <release version="2.8.19" date="2026-11-02">
       <description>
-        <p>A slow first start no longer loses the window: BananaSplit waits up to 60 seconds for it. On macOS, devices with very large buffers play their whole cycle, and the app is ready for a Developer ID signature.</p>
+        <p>A slow first start no longer loses the window: BananaSplit waits up to 60 seconds for it. The mixer keeps running meanwhile. On macOS, devices with very large buffers play their whole cycle, and the app is ready for a Developer ID signature.</p>
       </description>
     </release>
     <release version="2.8.18" date="2026-11-02">
