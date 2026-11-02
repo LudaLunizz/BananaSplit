@@ -2176,6 +2176,38 @@ impl WindowProc {
     }
 }
 
+/// A window process that is starting: `WindowProc::spawn` on a thread of
+/// its own, so the mixer's loop keeps running (and publishing its state)
+/// while a cold WebView2 or WebKit start takes its time.
+pub struct WindowStart {
+    rx: mpsc::Receiver<Result<WindowProc, String>>,
+}
+
+impl WindowStart {
+    pub fn begin(o: &WinOpts) -> WindowStart {
+        let (url, token) = (o.url.to_string(), o.token.map(str::to_string));
+        let (hidden, close_to_tray, size) = (o.hidden, o.close_to_tray, o.size);
+        let (tx, rx) = mpsc::channel();
+        // Without the thread, `tx` is gone and `poll` reports it.
+        let _ = std::thread::Builder::new().name("bs-window-start".into()).spawn(move || {
+            let o = WinOpts { url: &url, hidden, close_to_tray, size, token: token.as_deref() };
+            // Dropped when nobody waits any more (the mixer is closing):
+            // its input ends with it, so the window quits by itself.
+            let _ = tx.send(WindowProc::spawn(&o));
+        });
+        WindowStart { rx }
+    }
+
+    /// `None` while it is starting; then, once, how the start went.
+    pub fn poll(&self) -> Option<Result<WindowProc, String>> {
+        match self.rx.try_recv() {
+            Ok(r) => Some(r),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err("cannot start a thread for the window".into())),
+        }
+    }
+}
+
 // The page hard-codes the fader range and the channel layout.
 const _: () = assert!(MIN_GAIN_DB == -60.0 && MAX_GAIN_DB == 12.0, "gui.html assumes -60..+12 dB");
 const _: () = assert!(MIN_TRIM_DB == -24.0 && MAX_TRIM_DB == 24.0, "gui.html assumes -24..+24 dB of input gain");
