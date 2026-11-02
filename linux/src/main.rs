@@ -1087,6 +1087,12 @@ fn launch_token() -> String {
 /// The window: our own (with a tray icon), a browser's, or none.
 struct Window {
     proc: Option<gui::WindowProc>,
+    /// Starting (`poll_start` picks it up): the loop does not wait for it.
+    starting: Option<gui::WindowStart>,
+    /// It was started in the background (only the tray icon shows).
+    start_hidden: bool,
+    /// Asked to show while it was starting (with this launch token).
+    show_when_ready: Option<String>,
     url: String,
     browser: bool,
     /// For the tray of a window process started while recording.
@@ -1114,7 +1120,11 @@ impl Window {
         }
     }
 
+    /// It runs on a thread of its own; `poll_start` (every tick) takes it in.
     fn start(&mut self, cfg: &Config, hidden: bool, token: &str) {
+        if self.starting.is_some() {
+            return;
+        }
         let opts = gui::WinOpts {
             url: &self.url,
             hidden,
@@ -1122,9 +1132,22 @@ impl Window {
             size: cfg.gui.window,
             token: Some(token),
         };
-        match gui::WindowProc::spawn(&opts) {
+        self.starting = Some(gui::WindowStart::begin(&opts));
+        self.start_hidden = hidden;
+        self.show_when_ready = None;
+    }
+
+    /// A window that has finished starting: in use, or a browser instead.
+    fn poll_start(&mut self) {
+        let Some(result) = self.starting.as_ref().and_then(gui::WindowStart::poll) else {
+            return;
+        };
+        self.starting = None;
+        let hidden = self.start_hidden;
+        match result {
             Ok(p) => {
-                if p.mode == gui::WinMode::Tray {
+                let app = p.mode == gui::WinMode::App;
+                if !app {
                     eprintln!(
                         "bananasplit: WebKitGTK not found, showing the mixer in a browser (tray icon still works)"
                     );
@@ -1135,6 +1158,9 @@ impl Window {
                 self.proc = Some(p);
                 if self.recording {
                     self.send("rec 1");
+                }
+                if let Some(token) = self.show_when_ready.take().filter(|_| app) {
+                    self.send(&format!("show {}", if token.is_empty() { "-" } else { &token }));
                 }
             }
             Err(e) => {
@@ -1148,6 +1174,11 @@ impl Window {
 
     /// Bring it up (launched again from the app menu, or the tray).
     fn show(&mut self, cfg: &Config, token: &str) {
+        if self.starting.is_some() {
+            self.start_hidden = false;
+            self.show_when_ready = Some(token.to_string());
+            return;
+        }
         let alive = self.proc.as_mut().is_some_and(gui::WindowProc::alive);
         match &mut self.proc {
             Some(p) if alive && p.mode == gui::WinMode::App => {
@@ -1168,6 +1199,8 @@ impl Window {
     }
 
     fn close(&mut self) {
+        // One still starting quits by itself: its input ends with the mixer.
+        self.starting = None;
         if let Some(p) = self.proc.take() {
             p.close();
         }
@@ -1219,7 +1252,15 @@ fn run_gui(
         eprintln!("bananasplit: port {} is busy, using {port} instead", opts.port);
     }
     eprintln!("bananasplit: GUI at {url}  (quit with the power button in the GUI, or Ctrl-C)");
-    let mut window = Window { proc: None, url: url.clone(), browser: false, recording: rec.is_recording() };
+    let mut window = Window {
+        proc: None,
+        starting: None,
+        start_hidden: false,
+        show_when_ready: None,
+        url: url.clone(),
+        browser: false,
+        recording: rec.is_recording(),
+    };
     if opts.open {
         window.start(cfg, opts.hidden, &launch_token());
     }
@@ -1352,6 +1393,7 @@ fn run_gui(
                 }
             }
         }
+        window.poll_start();
         if let Some(p) = &mut window.proc {
             for m in p.poll() {
                 match m {

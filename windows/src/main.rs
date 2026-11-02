@@ -226,6 +226,12 @@ struct GuiOpts {
 /// input from the mixer, so it closes when the mixer ends, however it ends.
 struct Window {
     proc: Option<gui::WindowProc>,
+    /// Starting (`poll_start` picks it up): the loop does not wait for it.
+    starting: Option<gui::WindowStart>,
+    /// It was started in the background (only the tray icon shows).
+    start_hidden: bool,
+    /// Asked to show while it was starting.
+    show_when_ready: bool,
     url: String,
     /// Recording (the tray icon shows it).
     recording: bool,
@@ -234,7 +240,11 @@ struct Window {
 impl Window {
     /// Start the window process: its window, and its tray icon. `hidden`
     /// (started in the background): only the tray icon shows.
+    /// It runs on a thread of its own; `poll_start` (every tick) takes it in.
     fn start(&mut self, cfg: &Config, hidden: bool) {
+        if self.starting.is_some() {
+            return;
+        }
         let opts = gui::WinOpts {
             url: &self.url,
             hidden,
@@ -242,16 +252,30 @@ impl Window {
             size: cfg.gui.window,
             token: None,
         };
-        match gui::WindowProc::spawn(&opts) {
+        self.starting = Some(gui::WindowStart::begin(&opts));
+        self.start_hidden = hidden;
+        self.show_when_ready = false;
+    }
+
+    /// A window that has finished starting: in use, or why there is none.
+    fn poll_start(&mut self) {
+        let Some(result) = self.starting.as_ref().and_then(gui::WindowStart::poll) else {
+            return;
+        };
+        self.starting = None;
+        match result {
             Ok(p) => {
                 self.proc = Some(p);
                 if self.recording {
                     self.send("rec 1");
                 }
+                if self.show_when_ready {
+                    self.send("show -");
+                }
             }
             Err(e) => {
                 eprintln!("bananasplit: no window: {e}");
-                if hidden {
+                if self.start_hidden {
                     return; // nothing was asked to show; the next start tries again
                 }
                 // Not on this thread: the mixer keeps running meanwhile.
@@ -268,6 +292,11 @@ impl Window {
 
     /// Bring it up (BananaSplit was started again), or open it again.
     fn show(&mut self, cfg: &Config) {
+        if self.starting.is_some() {
+            self.start_hidden = false;
+            self.show_when_ready = true;
+            return;
+        }
         let alive = self.proc.as_mut().is_some_and(gui::WindowProc::alive);
         match &mut self.proc {
             Some(p) if alive => p.send("show -"),
@@ -285,6 +314,8 @@ impl Window {
     }
 
     fn close(&mut self) {
+        // One still starting quits by itself: its input ends with the mixer.
+        self.starting = None;
         if let Some(p) = self.proc.take() {
             p.close();
         }
@@ -322,7 +353,14 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     for n in &notes {
         eprintln!("bananasplit: {n}");
     }
-    let mut window = Window { proc: None, url: url.clone(), recording: false };
+    let mut window = Window {
+        proc: None,
+        starting: None,
+        start_hidden: false,
+        show_when_ready: false,
+        url: url.clone(),
+        recording: false,
+    };
     // Started after the first frame is published (it takes a moment). In the
     // background (`--no-open`), the window stays hidden: only the tray icon.
     let mut open_window = true;
@@ -432,6 +470,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                 }
             }
         }
+        window.poll_start();
         if let Some(p) = &mut window.proc {
             for m in p.poll() {
                 match m {
