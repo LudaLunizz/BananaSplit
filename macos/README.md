@@ -58,6 +58,12 @@ A virtual cable is an audio device that exists only in software: what an app pla
 
 **Menu ▸ Check for updates…** looks for the newest BananaSplit release on GitHub that has a macOS app (`bananasplit-<version>-macos.zip`), is published and not marked pre-release, and shows its notes. A macOS app is replaced as a whole, so BananaSplit doesn't install it itself: **Release page** opens the download, and the new app goes in place of the old one in Applications. With **Check for updates automatically** on, BananaSplit checks a minute after it starts and once a day, and says when there is a new version. The new app isn't signed with an Apple Developer ID either: open it the first time as under [Installing](#installing), and allow the microphone again if macOS asks.
 
+macOS ties the microphone permission to the exact build of an app that isn't signed with a Developer ID. So after an update the setting can still show BananaSplit as allowed while every input is silent, without a question. Then reset it in the Terminal, start BananaSplit again and allow the microphone when it asks:
+
+```sh
+tccutil reset Microphone io.github.ludalunizz.bananasplit
+```
+
 ## Command line
 
 The program is inside the app: `/Applications/BananaSplit.app/Contents/MacOS/bananasplit`.

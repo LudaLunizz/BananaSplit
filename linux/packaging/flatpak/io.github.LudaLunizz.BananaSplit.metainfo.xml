@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.19" date="2026-11-02">
+      <description>
+        <p>macOS fixes only: devices with very large buffers play their whole cycle, and the app is ready for a Developer ID signature. Nothing changes on Linux.</p>
+      </description>
+    </release>
     <release version="2.8.18" date="2026-11-02">
       <description>
         <p>The logo in the header shows the normal arrow cursor instead of the text cursor.</p>

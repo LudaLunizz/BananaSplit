@@ -35,8 +35,12 @@ sed "s/@VERSION@/$version/g" packaging/Info.plist > "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist"
 # Apple silicon runs only signed code; the signature also seals Info.plist,
 # whose microphone and network texts macOS shows when it asks.
-codesign --force --sign - "$app"
+codesign --force --sign - --entitlements packaging/entitlements.plist "$app"
 codesign --verify --deep --strict "$app"
+codesign -d --entitlements - "$app" 2>/dev/null | grep -q com.apple.security.device.audio-input || {
+    echo "the app's signature lacks the audio-input entitlement" >&2
+    exit 1
+}
 archs=$(lipo -archs "$app/Contents/MacOS/bananasplit")
 for a in arm64 x86_64; do
     case " $archs " in
