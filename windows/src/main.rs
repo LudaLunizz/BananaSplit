@@ -258,7 +258,7 @@ impl Window {
     }
 
     /// A window that has finished starting: in use, or why there is none.
-    fn poll_start(&mut self) {
+    fn poll_start(&mut self, cfg: &Config) {
         let Some(result) = self.starting.as_ref().and_then(gui::WindowStart::poll) else {
             return;
         };
@@ -266,6 +266,8 @@ impl Window {
         match result {
             Ok(p) => {
                 self.proc = Some(p);
+                // Changed while it started (it was started with the old one).
+                self.send(&format!("close-to-tray {}", u8::from(cfg.gui.close_to_tray)));
                 if self.recording {
                     self.send("rec 1");
                 }
@@ -470,7 +472,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                 }
             }
         }
-        window.poll_start();
+        window.poll_start(cfg);
         if let Some(p) = &mut window.proc {
             for m in p.poll() {
                 match m {
