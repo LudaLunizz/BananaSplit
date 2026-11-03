@@ -1,6 +1,6 @@
 <div align="center">
 
-# BananaSplit
+# BananaSplit.
 
 **A low-latency virtual audio mixer for Linux, Windows and macOS, in the spirit of Voicemeeter Banana.**
 
