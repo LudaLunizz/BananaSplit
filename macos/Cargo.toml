@@ -15,7 +15,7 @@ rust-version = "1.88"
 tao = "0.37"
 wry = "0.57"
 # 0.21 is the newest that builds with Rust 1.85; it uses Tao's objc2 0.6.
-tray-icon = { version = "0.21", default-features = false }
+tray-icon = { version = "0.24", default-features = false }
 
 [lib]
 name = "bananasplit"
