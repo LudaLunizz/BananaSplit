@@ -13,6 +13,10 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.20
+
+* **A touch deck for a small screen** (#59): open `http://127.0.0.1:8790/deck` on a 7" touchscreen (1024×600 or 1280×600) or a phone held sideways. One column per strip with a big fader, level meter, MUTE, SOLO and the A1 A2 A3 / B1 B2 route buttons; a Buses tab (`/deck#buses`) with the bus faders, mutes and which strips feed each bus; a REC button. Faders move by dragging (a tap never jumps the volume) and a double tap puts one at 0 dB. It changes the same mixer as the window and answers only your own user, like the main page.
+
 ## What's new in 2.8.19
 
 * **macOS follow-ups** (#52), Linux and Windows unchanged:
