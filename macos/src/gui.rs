@@ -52,6 +52,9 @@ use std::time::Duration;
 
 pub const DEFAULT_PORT: u16 = 8790;
 const PAGE: &str = include_str!("gui.html");
+/// The touch deck at `/deck`: the everyday controls (faders, mute, solo,
+/// routes, record) sized for a small touchscreen. Same API as the page.
+const DECK: &str = include_str!("deck.html");
 const MAX_HEAD: usize = 16 * 1024;
 const MAX_BODY: usize = 64 * 1024;
 const MAX_CONNS: usize = 32;
@@ -261,13 +264,22 @@ impl Hub {
     }
 
     fn page(&self) -> String {
+        self.themed(PAGE)
+    }
+
+    fn deck(&self) -> String {
+        self.themed(DECK)
+    }
+
+    /// `html` with the theme and zoom set on its `<html lang="en">` tag.
+    fn themed(&self, html: &str) -> String {
         let theme = THEMES[self.theme.load(SeqCst) as usize % THEMES.len()];
         let zoom = f32::from_bits(self.zoom.load(SeqCst));
         let attrs = match theme {
             Theme::Auto => format!(" data-zoom=\"{zoom}\""),
             t => format!(" data-theme=\"{}\" data-zoom=\"{zoom}\"", t.as_str()),
         };
-        PAGE.replacen("<html lang=\"en\">", &format!("<html lang=\"en\"{attrs}>"), 1)
+        html.replacen("<html lang=\"en\">", &format!("<html lang=\"en\"{attrs}>"), 1)
     }
 }
 
@@ -1643,6 +1655,9 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
         ("GET", "/") | ("GET", "/index.html") => {
             respond(&mut s, 200, "text/html; charset=utf-8", hub.page().as_bytes(), PAGE_HEADERS)
         }
+        ("GET", "/deck") | ("GET", "/deck.html") => {
+            respond(&mut s, 200, "text/html; charset=utf-8", hub.deck().as_bytes(), PAGE_HEADERS)
+        }
         ("GET", "/api/ping") => {
             let who = format!("X-BananaSplit-Client: {}\r\n", url_encode(&lock(&hub.client)));
             respond(&mut s, 200, text, b"bananasplit-gui", &who)
@@ -2476,6 +2491,28 @@ mod tests {
     }
 
     #[test]
+    fn deck_is_self_contained() {
+        assert!(DECK.starts_with("<!doctype html>\n<html lang=\"en\">"), "Hub::deck() injects the theme here");
+        for bad in ["http://", "https://", "<link", "src=\"", "localStorage"] {
+            assert!(!DECK.contains(bad), "deck references {bad}");
+        }
+        assert!(DECK.contains("X-BananaSplit") && DECK.contains("/api/events"));
+        assert!(DECK.contains(r#":root[data-theme="light"]"#) && DECK.contains(r#":root:not([data-theme])"#));
+        // the same channel layout, bus order and fader taper as the engine and the page
+        assert!(DECK.contains(&format!("const NUM_STRIPS = {NUM_STRIPS}, BUS_IDS = {BUS_IDS:?};")));
+        assert!(DECK.contains(&format!("const MIN_DB = {}, MAX_DB = {};", MIN_GAIN_DB, MAX_GAIN_DB)));
+        let taper = |h: &str| h.lines().find(|l| l.starts_with("const TAPER")).map(str::to_string);
+        assert_eq!(taper(DECK), taper(PAGE), "deck and page faders use the same taper");
+        for op in ["gain", "mute", "solo", "route", "rec"] {
+            assert!(DECK.contains(&format!("op: \"{op}\"")), "deck never sends {op}");
+            assert!(
+                PAGE.contains(&format!("op: \"{op}\"")) || PAGE.contains(&format!("(ch, \"{op}\"")),
+                "{op} is a page command"
+            );
+        }
+    }
+
+    #[test]
     fn page_is_self_contained() {
         assert!(PAGE.starts_with("<!doctype html>\n<html lang=\"en\">"), "Hub::page() injects the theme here");
         // no external resources: everything works offline and under the CSP
@@ -2567,6 +2604,9 @@ mod tests {
         };
         let page = get("/", "");
         assert!(page.starts_with("HTTP/1.1 200") && page.contains("Content-Security-Policy"));
+        let deck = get("/deck", "");
+        assert!(deck.starts_with("HTTP/1.1 200") && deck.contains("Content-Security-Policy"));
+        assert!(deck.contains("<title>BananaSplit Deck</title>"));
         assert!(get("/api/state", "").ends_with("{\"x\":1}"));
         assert!(get("/nope", "").starts_with("HTTP/1.1 404"));
         let post = |body: &str, hdr: &str| -> String {
