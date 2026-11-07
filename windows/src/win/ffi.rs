@@ -543,7 +543,8 @@ unsafe extern "system" {
     pub fn QueryFullProcessImageNameW(process: HANDLE, flags: u32, name: *mut u16, size: *mut u32) -> BOOL;
 }
 
-#[cfg_attr(windows, link(name = "combase"))]
+// combase.dll, through its import library runtimeobject.lib (the SDK has no combase.lib)
+#[cfg_attr(windows, link(name = "runtimeobject"))]
 unsafe extern "system" {
     pub fn RoGetActivationFactory(class: HSTRING, iid: *const GUID, factory: *mut *mut c_void) -> HRESULT;
     pub fn WindowsCreateString(s: *const u16, len: u32, out: *mut HSTRING) -> HRESULT;
