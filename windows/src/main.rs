@@ -178,12 +178,16 @@ fn run_headless(ctx: &mut Ctx, cfg: &Config, notes: Vec<String>) -> Result<(), S
     eprintln!("BananaSplit {VERSION} running (headless). Ctrl-C to quit.");
     sys::install_signal_handlers();
     let mut last = Instant::now();
+    let mut apps = win::apppolicy::AppRestore::new(&ctx.path);
     while !sys::QUIT.load(SeqCst) {
         if ctx.session.take_changed() {
             let (_, errs) = ctx.session.connect(cfg, false);
             for e in errs {
                 eprintln!("bananasplit: {e}");
             }
+        }
+        for m in apps.tick(cfg, &channel_names(cfg)) {
+            eprintln!("bananasplit: {m}");
         }
         if last.elapsed() >= Duration::from_secs(1) {
             last = Instant::now();
@@ -381,6 +385,8 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     let mut views_rev = dev_rev;
     let mut disk = sys::disk_space(&folder);
     let frame = Duration::from_millis(33);
+    // Puts apps back on their strips (see `win::apphome`).
+    let mut apps = win::apppolicy::AppRestore::new(&ctx.path);
 
     sys::install_signal_handlers();
     let result = loop {
@@ -519,6 +525,13 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             hub.autostart.store(desktop::autostart_enabled(), SeqCst);
             hub.installed.store(desktop::menu_installed(), SeqCst);
             updater.tick(cfg.gui.auto_update);
+        }
+        let moved = apps.tick(cfg, &channel_names(cfg));
+        if !moved.is_empty() {
+            for m in &moved {
+                eprintln!("bananasplit: {m}");
+            }
+            status = moved.join(" | ");
         }
         if let Some(m) = updater.take_event() {
             eprintln!("bananasplit: {m}");

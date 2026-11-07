@@ -8,6 +8,8 @@
 //! | JACK port regex in `connect`       | part of a device name in `connect`                |
 //! | termios raw mode, signals          | console raw mode, console control handler        |
 
+pub mod apphome;
+pub mod apppolicy;
 pub mod cables;
 pub mod chanmenu;
 pub mod console;

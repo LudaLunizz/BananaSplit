@@ -1,6 +1,8 @@
 //! Hand-written Windows API declarations (no crates), following the
 //! Windows SDK headers: mmdeviceapi.h, audioclient.h, propsys.h,
-//! consoleapi.h, wincon.h, winuser.h, shellapi.h, avrt.h.
+//! consoleapi.h, wincon.h, winuser.h, shellapi.h, avrt.h, audiopolicy.h,
+//! roapi.h, winstring.h; and one undocumented interface,
+//! `IAudioPolicyConfigFactory` (see [`IAudioPolicyConfigFactoryVtbl`]).
 //!
 //! COM interfaces are plain vtable structs. Every vtable starts with the
 //! three IUnknown slots, and methods are listed in header order, because the
@@ -38,6 +40,18 @@ pub const IID_IAudioRenderClient: GUID =
     guid(0xF294ACFC, 0x3146, 0x4483, [0xA7, 0xBF, 0xAD, 0xDC, 0xA7, 0xC2, 0x60, 0xE2]);
 pub const IID_IAudioCaptureClient: GUID =
     guid(0xC8ADBD64, 0xE71E, 0x48A0, [0xA4, 0xDE, 0x18, 0x5C, 0x39, 0x5C, 0xD3, 0x17]);
+pub const IID_IAudioSessionManager2: GUID =
+    guid(0x77AA99A0, 0x1BD6, 0x484F, [0x8B, 0xC7, 0x2C, 0x65, 0x4C, 0x9A, 0x9B, 0x6F]);
+pub const IID_IAudioSessionControl2: GUID =
+    guid(0xBFB7FF88, 0x7239, 0x4FC9, [0x8F, 0xA2, 0x07, 0xC9, 0x50, 0xBE, 0x9C, 0x6D]);
+/// `IAudioPolicyConfigFactory` on Windows 10 21H2 and later.
+pub const IID_IAudioPolicyConfigFactory: GUID =
+    guid(0xAB3D4648, 0xE242, 0x459F, [0xB0, 0x2F, 0x54, 0x1C, 0x70, 0x30, 0x63, 0x24]);
+/// The same interface before 21H2 (Windows 10 1803 to 21H1).
+pub const IID_IAudioPolicyConfigFactoryDownlevel: GUID =
+    guid(0x2A59116D, 0x6C4F, 0x45E0, [0xA7, 0x4F, 0x70, 0x7E, 0x3F, 0xEF, 0x92, 0x58]);
+/// The runtime class `IAudioPolicyConfigFactory` is the factory of.
+pub const AUDIO_POLICY_CONFIG_CLASS: &str = "Windows.Media.Internal.AudioPolicyConfig";
 
 #[repr(C)]
 pub struct PROPERTYKEY {
@@ -77,6 +91,7 @@ pub const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
 pub const eRender: u32 = 0;
 pub const eCapture: u32 = 1;
 pub const eConsole: u32 = 0;
+pub const eMultimedia: u32 = 1;
 pub const DEVICE_STATE_ACTIVE: u32 = 1;
 pub const STGM_READ: u32 = 0;
 pub const CLSCTX_ALL: u32 = 0x1 | 0x2 | 0x4 | 0x10;
@@ -93,6 +108,10 @@ pub const AUDCLNT_BUFFERFLAGS_SILENT: u32 = 0x2;
 pub const AUDCLNT_E_DEVICE_INVALIDATED: HRESULT = 0x8889_0004_u32 as i32;
 pub const AUDCLNT_E_SERVICE_NOT_RUNNING: HRESULT = 0x8889_0010_u32 as i32;
 pub const AUDCLNT_E_RESOURCES_INVALIDATED: HRESULT = 0x8889_0026_u32 as i32;
+/// `IAudioSessionControl::GetState`: the session's app is gone.
+pub const AudioSessionStateExpired: u32 = 2;
+/// `IAudioSessionControl2::GetProcessId`: a session of several processes.
+pub const AUDCLNT_S_NO_SINGLE_PROCESS: HRESULT = 0x0889_000D;
 pub const RPC_E_CHANGED_MODE: HRESULT = 0x8001_0106_u32 as i32;
 
 // Waits
@@ -248,6 +267,76 @@ pub struct IAudioCaptureClientVtbl {
         unsafe extern "system" fn(*mut c_void, *mut *mut u8, *mut u32, *mut u32, *mut u64, *mut u64) -> HRESULT,
     pub ReleaseBuffer: unsafe extern "system" fn(*mut c_void, u32) -> HRESULT,
     pub GetNextPacketSize: unsafe extern "system" fn(*mut c_void, *mut u32) -> HRESULT,
+}
+
+#[repr(C)]
+pub struct IAudioSessionManager2Vtbl {
+    pub base: IUnknownVtbl,
+    // IAudioSessionManager
+    pub GetAudioSessionControl: unsafe extern "system" fn(*mut c_void, *const GUID, u32, *mut *mut c_void) -> HRESULT,
+    pub GetSimpleAudioVolume: unsafe extern "system" fn(*mut c_void, *const GUID, u32, *mut *mut c_void) -> HRESULT,
+    // IAudioSessionManager2
+    pub GetSessionEnumerator: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> HRESULT,
+    pub RegisterSessionNotification: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
+    pub UnregisterSessionNotification: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
+    pub RegisterDuckNotification: unsafe extern "system" fn(*mut c_void, *const u16, *mut c_void) -> HRESULT,
+    pub UnregisterDuckNotification: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
+}
+
+#[repr(C)]
+pub struct IAudioSessionEnumeratorVtbl {
+    pub base: IUnknownVtbl,
+    pub GetCount: unsafe extern "system" fn(*mut c_void, *mut i32) -> HRESULT,
+    pub GetSession: unsafe extern "system" fn(*mut c_void, i32, *mut *mut c_void) -> HRESULT,
+}
+
+#[repr(C)]
+pub struct IAudioSessionControl2Vtbl {
+    pub base: IUnknownVtbl,
+    // IAudioSessionControl
+    pub GetState: unsafe extern "system" fn(*mut c_void, *mut u32) -> HRESULT,
+    pub GetDisplayName: unsafe extern "system" fn(*mut c_void, *mut *mut u16) -> HRESULT,
+    pub SetDisplayName: unsafe extern "system" fn(*mut c_void, *const u16, *const GUID) -> HRESULT,
+    pub GetIconPath: unsafe extern "system" fn(*mut c_void, *mut *mut u16) -> HRESULT,
+    pub SetIconPath: unsafe extern "system" fn(*mut c_void, *const u16, *const GUID) -> HRESULT,
+    pub GetGroupingParam: unsafe extern "system" fn(*mut c_void, *mut GUID) -> HRESULT,
+    pub SetGroupingParam: unsafe extern "system" fn(*mut c_void, *const GUID, *const GUID) -> HRESULT,
+    pub RegisterAudioSessionNotification: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
+    pub UnregisterAudioSessionNotification: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
+    // IAudioSessionControl2
+    pub GetSessionIdentifier: unsafe extern "system" fn(*mut c_void, *mut *mut u16) -> HRESULT,
+    pub GetSessionInstanceIdentifier: unsafe extern "system" fn(*mut c_void, *mut *mut u16) -> HRESULT,
+    pub GetProcessId: unsafe extern "system" fn(*mut c_void, *mut u32) -> HRESULT,
+    pub IsSystemSoundsSession: unsafe extern "system" fn(*mut c_void) -> HRESULT,
+    pub SetDuckingPreference: unsafe extern "system" fn(*mut c_void, BOOL) -> HRESULT,
+}
+
+/// A slot BananaSplit never calls: only its place in the vtable matters.
+pub type Unused = unsafe extern "system" fn(*mut c_void) -> HRESULT;
+
+/// HSTRING (Windows Runtime string handle; NULL is the empty string).
+pub type HSTRING = *mut c_void;
+
+/// `IAudioPolicyConfigFactory`, the activation factory of
+/// `Windows.Media.Internal.AudioPolicyConfig`: what the Windows "Volume
+/// mixer" uses to give an app its own output device. Undocumented; the
+/// layout follows EarTrumpet (MIT), which has used it since Windows 10 1803:
+/// IInspectable, then 19 slots up to the chat-app events, then the three
+/// persisted-endpoint methods. Its IID changed in 21H2, the layout did not.
+#[repr(C)]
+pub struct IAudioPolicyConfigFactoryVtbl {
+    pub base: IUnknownVtbl,
+    // IInspectable
+    pub GetIids: Unused,
+    pub GetRuntimeClassName: Unused,
+    pub GetTrustLevel: Unused,
+    pub _unused: [Unused; 19],
+    /// (process id, EDataFlow, ERole, device interface path or NULL for
+    /// "follow the default").
+    pub SetPersistedDefaultAudioEndpoint: unsafe extern "system" fn(*mut c_void, u32, u32, u32, HSTRING) -> HRESULT,
+    pub GetPersistedDefaultAudioEndpoint:
+        unsafe extern "system" fn(*mut c_void, u32, u32, u32, *mut HSTRING) -> HRESULT,
+    pub ClearAllPersistedApplicationDefaultEndpoints: unsafe extern "system" fn(*mut c_void) -> HRESULT,
 }
 
 // ---------------------------------------------------------------- window, tray and network structs
@@ -451,6 +540,15 @@ unsafe extern "system" {
     pub fn OpenProcess(access: u32, inherit: BOOL, pid: u32) -> HANDLE;
     pub fn ProcessIdToSessionId(pid: u32, session: *mut u32) -> BOOL;
     pub fn GetLocalTime(out: *mut SystemTime);
+    pub fn QueryFullProcessImageNameW(process: HANDLE, flags: u32, name: *mut u16, size: *mut u32) -> BOOL;
+}
+
+#[cfg_attr(windows, link(name = "combase"))]
+unsafe extern "system" {
+    pub fn RoGetActivationFactory(class: HSTRING, iid: *const GUID, factory: *mut *mut c_void) -> HRESULT;
+    pub fn WindowsCreateString(s: *const u16, len: u32, out: *mut HSTRING) -> HRESULT;
+    pub fn WindowsDeleteString(s: HSTRING) -> HRESULT;
+    pub fn WindowsGetStringRawBuffer(s: HSTRING, len: *mut u32) -> *const u16;
 }
 
 /// `AllowSetForegroundWindow`: any process.
@@ -729,6 +827,12 @@ mod tests {
         assert_eq!(std::mem::size_of::<IAudioClientVtbl>(), 15 * std::mem::size_of::<usize>());
         assert_eq!(std::mem::size_of::<IMMDeviceEnumeratorVtbl>(), 8 * std::mem::size_of::<usize>());
         assert_eq!(std::mem::size_of::<IAudioCaptureClientVtbl>(), 6 * std::mem::size_of::<usize>());
+        let ptr = std::mem::size_of::<usize>();
+        assert_eq!(std::mem::size_of::<IAudioSessionManager2Vtbl>(), 10 * ptr);
+        assert_eq!(std::mem::size_of::<IAudioSessionControl2Vtbl>(), 17 * ptr);
+        // IUnknown 3 + IInspectable 3 + 19 unused, then Set/Get/Clear at slots 25, 26, 27
+        assert_eq!(std::mem::offset_of!(IAudioPolicyConfigFactoryVtbl, SetPersistedDefaultAudioEndpoint), 25 * ptr);
+        assert_eq!(std::mem::size_of::<IAudioPolicyConfigFactoryVtbl>(), 28 * ptr);
     }
 
     #[test]
