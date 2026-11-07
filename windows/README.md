@@ -55,6 +55,7 @@ Extract the release zip, put `bananasplit.exe` in a folder of your own (your Des
 | --- | --- |
 | Config | `%APPDATA%\bananasplit\bananasplit.ini` |
 | Scenes | `%APPDATA%\bananasplit\scenes\` |
+| Apps kept on their strips | `%APPDATA%\bananasplit\app-strips` (see [Apps keep their strip](#apps-keep-their-strip)) |
 | Recordings | `~/Music/BananaSplit/` by default, configurable in the app or config |
 | Port file | `%LOCALAPPDATA%\bananasplit\<client>.port` |
 | Window (WebView2) data | `%LOCALAPPDATA%\bananasplit\WebView2\` |
@@ -88,6 +89,16 @@ A channel uses its cable while the cable is switched on in its menu: every strip
 - **Quitting** BananaSplit leaves the cables installed; they carry no sound until it starts again.
 
 Windows has no per-app stream routing like PipeWire, so device lists show WASAPI endpoints only.
+
+### Apps keep their strip
+
+An app goes to a strip by playing into the strip's cable: in **Settings ▸ System ▸ Sound ▸ Volume mixer** (Windows 10: *App volume and device preferences*), set the app's output device to `Splitter 2` (say), or pick the cable in the app's own settings.
+
+Windows remembers a Volume mixer choice per program path, and forgets it when an update installs the app into a new folder (Discord does that with every update) or when the cable driver is reinstalled. The app then plays on the default device, and a recording of its strip stays silent. So BananaSplit notes every app the Volume mixer puts on a strip's cable in `app-strips` next to the config, and when such an app plays on the default device again, puts it back on its strip's cable once and says so in the status line. Setting the app to a device of the computer in the Volume mixer takes it out of the list; an app moved after BananaSplit put it back is left alone.
+
+The file has one `<strip> <app>` per line, with the program's name without `.exe` (`2 Discord`; case doesn't matter), and may be edited while BananaSplit runs. It is the same file and format as on Linux. A device chosen only inside the app (Discord's own *Output Device*) is not visible to Windows' per-app settings, and needs nothing from BananaSplit.
+
+This uses the per-app device setting behind the Volume mixer (Windows 10 1803 and later). Windows doesn't document it; if a Windows version lacks it, the status line says so once and everything else works as before.
 
 ## Building
 
