@@ -138,6 +138,75 @@ impl Enumerator {
     }
 }
 
+impl Device {
+    /// The processes with a sound session open on this device (playing or
+    /// quiet), without system sounds and sessions of several processes.
+    pub fn session_pids(&self) -> Vec<u32> {
+        let mut pids = Vec::new();
+        let mut pm: *mut c_void = std::ptr::null_mut();
+        // SAFETY: `self.dev` owns a live IMMDevice; the IID is a static and `pm` a local out-pointer.
+        let hr = unsafe {
+            (self.dev.vt().Activate)(
+                self.dev.as_ptr(),
+                &IID_IAudioSessionManager2,
+                CLSCTX_ALL,
+                std::ptr::null_mut(),
+                &mut pm,
+            )
+        };
+        if hr < 0 {
+            return pids;
+        }
+        // SAFETY: `pm` is the owned IAudioSessionManager2 Activate returned for its IID, on this MTA thread.
+        let Some(mgr) = (unsafe { Com::<IAudioSessionManager2Vtbl>::from_raw(pm) }) else { return pids };
+        let mut pe: *mut c_void = std::ptr::null_mut();
+        // SAFETY: `mgr` owns a live IAudioSessionManager2; `pe` is a local out-pointer.
+        if unsafe { (mgr.vt().GetSessionEnumerator)(mgr.as_ptr(), &mut pe) } < 0 {
+            return pids;
+        }
+        // SAFETY: `pe` is the owned IAudioSessionEnumerator GetSessionEnumerator returned.
+        let Some(list) = (unsafe { Com::<IAudioSessionEnumeratorVtbl>::from_raw(pe) }) else { return pids };
+        let mut n = 0i32;
+        // SAFETY: `list` owns a live IAudioSessionEnumerator; `n` is a local out-pointer.
+        if unsafe { (list.vt().GetCount)(list.as_ptr(), &mut n) } < 0 {
+            return pids;
+        }
+        for i in 0..n {
+            let mut pc: *mut c_void = std::ptr::null_mut();
+            // SAFETY: `list` owns a live IAudioSessionEnumerator, 0 <= `i` < GetCount; `pc` is a local out-pointer.
+            if unsafe { (list.vt().GetSession)(list.as_ptr(), i, &mut pc) } < 0 {
+                continue;
+            }
+            // SAFETY: `pc` is an owned IAudioSessionControl (GetSession's reference), released on drop.
+            let Some(ctl) = (unsafe { Com::<IUnknownVtbl>::from_raw(pc) }) else { continue };
+            let mut p2: *mut c_void = std::ptr::null_mut();
+            // SAFETY: `ctl` is a live COM object; the IID is a static and `p2` a local out-pointer.
+            if unsafe { (ctl.vt().QueryInterface)(ctl.as_ptr(), &IID_IAudioSessionControl2, &mut p2) } < 0 {
+                continue;
+            }
+            // SAFETY: `p2` is the owned IAudioSessionControl2 QueryInterface returned.
+            let Some(c2) = (unsafe { Com::<IAudioSessionControl2Vtbl>::from_raw(p2) }) else { continue };
+            let mut state = 0u32;
+            // SAFETY: `c2` owns a live IAudioSessionControl2; `state` is a local out-pointer.
+            if unsafe { (c2.vt().GetState)(c2.as_ptr(), &mut state) } < 0 || state == AudioSessionStateExpired {
+                continue;
+            }
+            // S_OK (0) means system sounds, S_FALSE (1) an app
+            // SAFETY: `c2` owns a live IAudioSessionControl2.
+            if unsafe { (c2.vt().IsSystemSoundsSession)(c2.as_ptr()) } == 0 {
+                continue;
+            }
+            let mut pid = 0u32;
+            // SAFETY: `c2` owns a live IAudioSessionControl2; `pid` is a local out-pointer.
+            let hr = unsafe { (c2.vt().GetProcessId)(c2.as_ptr(), &mut pid) };
+            if hr == 0 && pid != 0 && !pids.contains(&pid) {
+                pids.push(pid);
+            }
+        }
+        pids
+    }
+}
+
 fn device_id(dev: &Com<IMMDeviceVtbl>) -> String {
     let mut p: *mut u16 = std::ptr::null_mut();
     // SAFETY: `dev` owns a live IMMDevice; `p` is a local out-pointer for the CoTaskMem id string.
