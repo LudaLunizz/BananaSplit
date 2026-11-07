@@ -94,6 +94,13 @@ pub fn cable_extra(
     (p.strip_cable.to_vec(), p.bus_cable.to_vec())
 }
 
+/// For each strip, the name of the playback device apps play into to reach
+/// it ("Splitter 2 (Splitter Cables)", or a VB-Audio pair's "CABLE Input");
+/// `None` when the strip has no cable.
+pub fn strip_inputs(cfg: &Config, caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Vec<Option<String>> {
+    build_plan_info(cfg, caps, rens).strip_cable_label.to_vec()
+}
+
 /// The complete VB-Audio cable pairs (both ends installed), CABLE first.
 fn families(caps: &[route::DevInfo], rens: &[route::DevInfo]) -> Vec<Family> {
     // find families
