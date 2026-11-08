@@ -17,10 +17,10 @@
 //! selected channel are edited. The line under the header shows VBAN when it
 //! is on (`v` switches it on and off).
 
-use bananasplit::config::Config;
-use bananasplit::engine::{BUS_IDS, MAX_GAIN_DB, MIN_GAIN_DB, NUM_BUSES, NUM_STRIPS, Shared, gain_to_db};
-use bananasplit::eq::{self, BANDS, Band, DEFAULT_BANDS, Kind};
-use bananasplit::recorder::source_id;
+use crate::config::Config;
+use crate::engine::{BUS_IDS, MAX_GAIN_DB, MIN_GAIN_DB, NUM_BUSES, NUM_STRIPS, Shared, gain_to_db};
+use crate::eq::{self, BANDS, Band, DEFAULT_BANDS, Kind};
+use crate::recorder::source_id;
 use std::fmt::Write as _;
 use std::sync::atomic::Ordering::Relaxed;
 

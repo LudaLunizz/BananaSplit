@@ -17,6 +17,38 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The shared mixer core, on every system it ships on: config and recorder
+  # have per-OS branches (config folder, `~` expansion, connect hints).
+  core:
+    name: Core (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Unit tests
+        run: cargo test --locked
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
   linux:
     name: Linux
     runs-on: ubuntu-24.04

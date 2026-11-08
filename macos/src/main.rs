@@ -15,9 +15,7 @@ mod gui;
 mod app;
 #[path = "mac/mod.rs"]
 mod mac;
-#[path = "tui.rs"]
-#[allow(dead_code)]
-mod tui;
+use bananasplit::tui;
 #[path = "update.rs"]
 mod update;
 

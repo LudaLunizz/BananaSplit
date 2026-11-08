@@ -9,6 +9,7 @@ rust-version = "1.88"
 # WASAPI and most Win32 APIs use hand-declared FFI (src/win/ffi.rs). The native
 # desktop window uses Tao/Wry and the installed Microsoft WebView2 Runtime.
 [dependencies]
+bananasplit-core = { path = "../core" }
 
 [target.'cfg(windows)'.dependencies]
 tao = "0.37"

@@ -2,8 +2,9 @@
 //! clock-drift correction.
 //!
 //! On Linux every port lives in one JACK/PipeWire graph driven by one clock,
-//! so none of this is needed there. On macOS each Core Audio device (sound
-//! card, headset, BlackHole, ...) runs on its **own** clock, as on Windows.
+//! so none of this is needed there. On Windows and macOS each WASAPI or Core
+//! Audio device (sound card, headset, VB-Audio cable, BlackHole, ...) runs
+//! on its **own** clock.
 //! The mixer is driven by one of them (the "master"), and every other device
 //! is connected through one of these rings. The consumer side reads through
 //! a [`DriftReader`], which resamples by a tiny, continuously adjusted ratio
