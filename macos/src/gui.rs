@@ -1634,13 +1634,25 @@ fn mapped(a: SocketAddr) -> SocketAddr {
 }
 
 /// Only processes of the user BananaSplit runs as may use it: other users
-/// on this computer can reach 127.0.0.1 too. macOS has no /proc: it asks
+/// on this computer can reach 127.0.0.1 too. And a BananaSplit that looks
+/// for a running one (Start menu launch, `--quit`, `--update`) talks only to
+/// its own user's, as on Linux. macOS has no /proc: it asks
 /// the kernel's socket list (`sys::same_user`), as Windows asks its own.
 fn peer_allowed(s: &TcpStream) -> bool {
     let (Ok(peer), Ok(us)) = (s.peer_addr(), s.local_addr()) else { return false };
     #[cfg(any(windows, target_os = "macos"))]
     {
-        crate::sys::same_user(peer, us)
+        // Seen from the client (`probe`, `post_cmd`), the server's end may
+        // show in the system's list a moment after `connect` returns.
+        for attempt in 0..4 {
+            if crate::sys::same_user(peer, us) {
+                return true;
+            }
+            if attempt < 3 {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        false
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -1869,6 +1881,9 @@ pub fn find_running(client: &str, explicit: Option<u16>) -> Option<u16> {
 pub fn probe(port: u16, client: &str) -> bool {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(300)) else { return false };
+    if !peer_allowed(&s) {
+        return false; // another user's program on this port: not ours
+    }
     let _ = s.set_read_timeout(Some(Duration::from_millis(800)));
     let _ = s.set_write_timeout(Some(Duration::from_millis(800)));
     let req = format!("GET /api/ping HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
@@ -1915,6 +1930,9 @@ fn url_encode(s: &str) -> String {
 fn post_cmd(port: u16, body: &str) -> Option<(u16, String)> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok()?;
+    if !peer_allowed(&s) {
+        return None; // never send requests (or a launch token) to another user
+    }
     let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
     let req = format!(

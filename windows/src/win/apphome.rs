@@ -82,7 +82,8 @@ pub fn plan(
     cable: impl Fn(&str) -> bool,
     done: &HashSet<u32>,
 ) -> Plan {
-    let strip_of = |id: &str| cables.iter().position(|c| c.as_deref() == Some(id));
+    // (endpoint IDs hold GUIDs: Windows may print them in either case)
+    let strip_of = |id: &str| cables.iter().position(|c| c.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(id)));
     let mut p = Plan::default();
     for a in apps {
         // where Windows puts it on purpose; a device that is gone counts
@@ -285,6 +286,15 @@ mod tests {
         let p = plan(&h, &[app(9, "Discord", "old-s2")], &cables(), present, cable, &none());
         assert_eq!(p.moves, [(9, 1)]);
         assert!(p.forget.is_empty());
+    }
+
+    /// Review #10: endpoint IDs are compared without case.
+    #[test]
+    fn an_endpoint_id_in_other_case_is_the_same_device() {
+        let h = homes(&[("Discord", 1)]);
+        let p = plan(&h, &[app(9, "Discord", "S3")], &cables(), |id| present(&id.to_lowercase()), cable, &none());
+        assert_eq!(p.learn, [("Discord".to_string(), 2)], "put on strip 3 on purpose");
+        assert!(p.moves.is_empty() && p.forget.is_empty());
     }
 
     #[test]
