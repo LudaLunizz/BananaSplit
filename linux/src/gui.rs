@@ -2114,9 +2114,17 @@ impl WindowProc {
         !self.gone && matches!(self.child.try_wait(), Ok(None))
     }
 
-    /// Close it (it saves nothing; the mixer has the state).
+    /// Close it (it saves nothing; the mixer has the state). Dropping it
+    /// waits for the process to end.
     pub fn close(mut self) {
         self.send("quit");
+    }
+}
+
+impl Drop for WindowProc {
+    /// Every way out (close, a crashed or closed window, a restart) ends
+    /// here, so the process is always waited for and never stays a zombie.
+    fn drop(&mut self) {
         self.stdin = None; // end of input: it quits even if it missed "quit"
         let t0 = Instant::now();
         while t0.elapsed() < Duration::from_secs(3) {
@@ -2172,6 +2180,23 @@ mod tests {
     use super::*;
     use bananasplit::recorder::RecTap;
     use std::sync::atomic::Ordering::Relaxed;
+
+    /// A window process that ended by itself (a crash) is waited for when
+    /// the mixer drops it, so it does not stay a zombie (review #9).
+    #[test]
+    fn a_window_that_died_is_reaped() {
+        let child = Command::new("true").stdin(Stdio::piped()).spawn().unwrap();
+        let pid = child.id();
+        let (_tx, rx) = mpsc::channel();
+        let mut w = WindowProc { child, stdin: None, mode: WinMode::App, rx, gone: false };
+        while matches!(std::fs::read_to_string(format!("/proc/{pid}/stat")), Ok(s) if !s.contains(") Z ")) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        w.gone = true; // the reader saw the pipe close
+        assert!(!w.alive());
+        drop(w);
+        assert!(std::fs::metadata(format!("/proc/{pid}")).is_err(), "pid {pid} is still there");
+    }
 
     /// A hub in a folder of its own. Tests run in parallel and `hub_in`
     /// starts by removing its folder, so two tests sharing one would delete

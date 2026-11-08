@@ -1537,7 +1537,9 @@ pub struct Status {
     /// Files of the current (or last) take, in the order they were made:
     /// one per track, and again when the take continues in new files (every
     /// `split` minutes, at 4 GB, or when the server changes its sample rate).
-    pub files: Vec<PathBuf>,
+    /// Shared, because the UIs copy the status 30 times a second and a long
+    /// take collects thousands of files.
+    pub files: Arc<Vec<PathBuf>>,
     /// Tracks of the current (or last) take (files at a time).
     pub tracks: usize,
     /// Frames written in the current (or last) take.
@@ -1617,7 +1619,7 @@ impl Recorder {
         let status = Arc::new(Mutex::new(Status {
             on: false,
             mode: settings.mode,
-            files: Vec::new(),
+            files: Arc::default(),
             tracks: 0,
             frames: 0,
             sample_rate,
@@ -1741,7 +1743,7 @@ impl Recorder {
             *st = Status {
                 on: true,
                 mode: s.mode,
-                files: files.clone(),
+                files: Arc::new(files.clone()),
                 tracks: files.len(),
                 frames: 0,
                 sample_rate: file_rate,
@@ -1891,7 +1893,7 @@ fn drain(tap: &RecTap, cur: &mut Option<Take>, status: &Mutex<Status>) {
             st.note = t.rate_note.clone();
         }
         if st.files.len() != t.files.len() {
-            st.files = t.files.clone();
+            st.files = Arc::new(t.files.clone());
         }
     }
 }
@@ -1904,7 +1906,7 @@ fn finish(t: Take, status: &Mutex<Status>) {
     st.secs = secs;
     st.sample_rate = rate;
     st.clipped = clipped;
-    st.files = files;
+    st.files = Arc::new(files);
     if let Err(e) = res {
         st.error = Some(format!("could not finish the recording: {e}"));
     }
@@ -1920,7 +1922,7 @@ fn fail(t: Option<Take>, tap: &RecTap, status: &Mutex<Status>, e: &io::Error) {
     st.frames = frames;
     st.secs = secs;
     st.clipped = clipped;
-    st.files = files;
+    st.files = Arc::new(files);
     st.dropped = tap.dropped_frames();
     st.error = Some(format!("recording stopped: {e}"));
 }
@@ -2257,7 +2259,7 @@ mod tests {
         let mut st = Status {
             on: true,
             mode: Mode::Multi,
-            files: vec![p("t_1-Mic.wav"), p("t_A1-Speakers.wav")],
+            files: Arc::new(vec![p("t_1-Mic.wav"), p("t_A1-Speakers.wav")]),
             tracks: 2,
             frames: 0,
             sample_rate: 48000,
@@ -2270,11 +2272,11 @@ mod tests {
         };
         assert_eq!(st.current_files(), [p("t_1-Mic.wav"), p("t_A1-Speakers.wav")]);
         // the server changed its rate: the take continues in new files
-        st.files.extend([p("t-2_1-Mic.wav"), p("t-2_A1-Speakers.wav")]);
+        Arc::make_mut(&mut st.files).extend([p("t-2_1-Mic.wav"), p("t-2_A1-Speakers.wav")]);
         assert_eq!(st.current_files(), [p("t-2_1-Mic.wav"), p("t-2_A1-Speakers.wav")]);
         st.tracks = 0;
         assert_eq!(st.current_files(), [p("t-2_A1-Speakers.wav")]);
-        st.files.clear();
+        Arc::make_mut(&mut st.files).clear();
         assert!(st.current_files().is_empty());
     }
 
