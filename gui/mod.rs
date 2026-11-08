@@ -60,18 +60,12 @@
 //! and `window_stderr()`, which `window.rs` needs, and `open_window(url)`.
 
 use crate::tui::{Info, ROWS};
-use bananasplit::config::{Config, Theme, parse_pan, parse_trim, parse_zoom};
-use bananasplit::dynamics::{COMP, GATE};
-use bananasplit::engine::{
-    BUS_IDS, MAX_GAIN_DB, MAX_TRIM_DB, MIN_GAIN_DB, MIN_TRIM_DB, NUM_BUSES, NUM_STRIPS, Shared, clamp_db,
-};
-use bananasplit::eq::{self, BANDS, DEFAULT_BANDS, Kind};
-use bananasplit::player::{self, PlayState, PlayStatus, Player, ScanCache, TakeInfo};
-use bananasplit::recorder::{self, ALL_LINKS, Format, Mode, NUM_SOURCES, Recorder, Settings, Status};
-use bananasplit::scenes::{self, SceneStore};
-use bananasplit::vban::{
-    self, FromAddr, InState, NUM_IN, NUM_OUT, OutState, SampleFormat, Vban, VbanConfig, VbanStatus,
-};
+use bananasplit::config::{Config, Theme};
+use bananasplit::engine::{MAX_GAIN_DB, MAX_TRIM_DB, MIN_GAIN_DB, MIN_TRIM_DB, NUM_BUSES, NUM_STRIPS, Shared};
+use bananasplit::player::{self, PlayStatus, Player, ScanCache, TakeInfo};
+use bananasplit::recorder::{self, Recorder, Settings, Status};
+use bananasplit::scenes::SceneStore;
+use bananasplit::vban::{InState, OutState, Vban, VbanConfig, VbanStatus};
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -84,6 +78,15 @@ use std::time::Duration;
 // `cargo test` everywhere (see each file).
 pub mod peer;
 pub mod portdir;
+
+// The API: what it refuses with (`api`), a command read and checked (`cmd`) and
+// done (`apply`).
+pub mod api;
+mod apply;
+mod cmd;
+pub use api::{ApiError, message_of};
+pub use apply::command;
+pub use cmd::Form;
 
 // What the mixer and its window say to each other (all three apps).
 mod winmsg;
@@ -909,105 +912,6 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
 // Commands
 // ---------------------------------------------------------------------------
 
-fn hex(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn url_decode(s: &str) -> Option<String> {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'+' => out.push(b' '),
-            b'%' => {
-                let (h, l) = (hex(*b.get(i + 1)?)?, hex(*b.get(i + 2)?)?);
-                out.push(h << 4 | l);
-                i += 2;
-            }
-            c => out.push(c),
-        }
-        i += 1;
-    }
-    String::from_utf8(out).ok()
-}
-
-/// `application/x-www-form-urlencoded` body -> key/value pairs.
-pub fn parse_form(body: &str) -> Result<Vec<(String, String)>, String> {
-    body.split('&')
-        .filter(|kv| !kv.is_empty())
-        .map(|kv| {
-            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-            match (url_decode(k), url_decode(v)) {
-                (Some(k), Some(v)) => Ok((k, v)),
-                _ => Err("malformed form data".to_string()),
-            }
-        })
-        .collect()
-}
-
-/// The fields of one `POST /api/cmd`. `get` and `req` are also what a
-/// `gui_platform::command` reads its own fields with.
-pub struct Form(Vec<(String, String)>);
-
-impl Form {
-    pub fn get(&self, k: &str) -> Option<&str> {
-        self.0.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str())
-    }
-    pub fn req(&self, k: &str) -> Result<&str, String> {
-        self.get(k).ok_or_else(|| format!("missing {k:?}"))
-    }
-    fn flag(&self) -> Result<bool, String> {
-        match self.req("v")? {
-            "1" | "true" | "on" => Ok(true),
-            "0" | "false" | "off" => Ok(false),
-            v => Err(format!("expected 0 or 1, got {v:?}")),
-        }
-    }
-    fn ch(&self) -> Result<usize, String> {
-        self.req("ch")?.parse::<usize>().ok().filter(|&c| c < NUM_SOURCES).ok_or_else(|| "bad channel".into())
-    }
-    /// `ch`, which must be an input strip (gate and compressor are on strips only).
-    fn strip(&self) -> Result<usize, String> {
-        let c = self.ch()?;
-        if c < NUM_STRIPS { Ok(c) } else { Err("gate and compressor are on the input strips only".into()) }
-    }
-    fn index(&self, k: &str, n: usize) -> Result<usize, String> {
-        self.req(k)?.parse::<usize>().ok().filter(|&i| i < n).ok_or_else(|| format!("bad {k}"))
-    }
-    fn bool_of(&self, k: &str) -> Result<Option<bool>, String> {
-        match self.get(k) {
-            None => Ok(None),
-            Some("1" | "true" | "on") => Ok(Some(true)),
-            Some("0" | "false" | "off") => Ok(Some(false)),
-            Some(v) => Err(format!("{k}: expected 0 or 1, got {v:?}")),
-        }
-    }
-    fn num_of(&self, k: &str, what: &str, lo: f32, hi: f32) -> Result<Option<f32>, String> {
-        let Some(v) = self.get(k) else { return Ok(None) };
-        let x: f32 = v.trim().parse().map_err(|_| format!("{what} must be a number"))?;
-        if !x.is_finite() || x < lo || x > hi {
-            return Err(format!("{what} must be {lo} to {hi}"));
-        }
-        Ok(Some(x))
-    }
-}
-
-/// `on`, `name` and the other fields of a VBAN stream form, checked.
-fn vban_name(f: &Form) -> Result<Option<String>, String> {
-    f.get("name")
-        .map(|v| {
-            let v = v.trim();
-            vban::proto::validate_name(v).map(|_| v.to_string())
-        })
-        .transpose()
-}
-
 /// "C", "L25", "R100".
 pub fn pan_text(p: f32) -> String {
     let n = (p * 100.0).round() as i32;
@@ -1035,461 +939,6 @@ fn changed_take(hub: &Hub, st: &PlayStatus) -> Option<TakeInfo> {
     ((t.secs() - st.dur).abs() > 1e-6).then_some(t)
 }
 
-pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
-    let f = Form(parse_form(body)?);
-    let sh = &*hub.shared;
-    let op = f.req("op")?;
-    match op {
-        "gain" => {
-            let c = f.ch()?;
-            let v: f32 = f.req("v")?.parse().map_err(|_| "gain must be a number")?;
-            if !v.is_finite() {
-                return Err("gain must be finite".into());
-            }
-            let v = clamp_db((v * 10.0).round() / 10.0);
-            if c < NUM_STRIPS {
-                sh.strips[c].gain_db.store(v)
-            } else {
-                sh.buses[c - NUM_STRIPS].gain_db.store(v)
-            }
-            Ok(format!("{v:+.1} dB"))
-        }
-        "trim" => {
-            let c = f.ch()?;
-            let v = parse_trim(f.req("v")?)?;
-            if c < NUM_STRIPS {
-                sh.strips[c].trim_db.store(v)
-            } else {
-                sh.buses[c - NUM_STRIPS].trim_db.store(v)
-            }
-            Ok(format!("gain {v:+.1} dB"))
-        }
-        "pan" => {
-            let c = f.ch()?;
-            let v = parse_pan(f.req("v")?)?;
-            if c < NUM_STRIPS {
-                sh.strips[c].pan.store(v)
-            } else {
-                sh.buses[c - NUM_STRIPS].pan.store(v)
-            }
-            Ok(pan_text(v))
-        }
-        "mute" | "mono" => {
-            let (c, on) = (f.ch()?, f.flag()?);
-            let a = match (op, c < NUM_STRIPS) {
-                ("mute", true) => &sh.strips[c].mute,
-                ("mute", false) => &sh.buses[c - NUM_STRIPS].mute,
-                (_, true) => &sh.strips[c].mono,
-                (_, false) => &sh.buses[c - NUM_STRIPS].mono,
-            };
-            a.store(on, SeqCst);
-            Ok("ok".into())
-        }
-        "solo" => {
-            let c = f.ch()?;
-            if c >= NUM_STRIPS {
-                return Err("buses have no solo".into());
-            }
-            sh.strips[c].solo.store(f.flag()?, SeqCst);
-            Ok("ok".into())
-        }
-        "route" => {
-            let c = f.ch()?;
-            let b: usize = f.req("bus")?.parse().ok().filter(|&b| b < NUM_BUSES).ok_or("bad bus")?;
-            let on = f.flag()?;
-            if c < NUM_STRIPS {
-                set_bit_u8(&sh.strips[c].routes, b, on);
-                return Ok("ok".into());
-            }
-            // a bus feeding another bus: never itself, never in a loop
-            let from = c - NUM_STRIPS;
-            let _g = lock(&hub.routing);
-            if on && from == b {
-                return Err(format!("{} cannot feed itself", BUS_IDS[from]));
-            }
-            if on && sh.send_loops(from, b) {
-                return Err(format!(
-                    "{} already feeds {} (through its sends): that would be a loop",
-                    BUS_IDS[b], BUS_IDS[from]
-                ));
-            }
-            set_bit_u8(&sh.buses[from].routes, b, on);
-            Ok("ok".into())
-        }
-        // ---- what a channel is connected to (the main loop does it) ----
-        "cable" => hub.ask(DevOp::Cable { ch: f.ch()?, on: f.flag()? }),
-        "dev" => {
-            let client = f.req("client")?.to_string();
-            if client.is_empty() || client.len() > 320 || client.chars().any(char::is_control) {
-                return Err("bad client name".into());
-            }
-            hub.ask(DevOp::Client { ch: f.ch()?, client, on: f.flag()? })
-        }
-        "devdefault" => hub.ask(DevOp::Default { ch: f.ch()?, on: f.flag()? }),
-        "devpattern" => hub.ask(DevOp::Unpattern { ch: f.ch()?, pattern: f.req("pattern")?.to_string() }),
-        "devnone" => hub.ask(DevOp::Nothing { ch: f.ch()? }),
-        "stream" => {
-            let rec = match f.req("kind")? {
-                "play" => false,
-                "rec" => true,
-                k => return Err(format!("unknown stream kind {k:?}")),
-            };
-            let id: u32 = f.req("id")?.parse().map_err(|_| "bad stream id")?;
-            let ch = match f.get("ch") {
-                None | Some("" | "none") => None,
-                Some(_) => Some(f.ch()?),
-            };
-            hub.ask(DevOp::Stream { rec, id, ch })
-        }
-        "link" => {
-            let (c, on) = (f.ch()?, f.flag()?);
-            if on {
-                sh.rec_links.fetch_or(1 << c, SeqCst)
-            } else {
-                sh.rec_links.fetch_and(!(1u16 << c), SeqCst)
-            };
-            Ok("ok".into())
-        }
-        "rec" => {
-            let rec = &hub.recorder;
-            if f.flag()? {
-                let names = lock(&hub.names).clone();
-                let files =
-                    rec.start(sh.rec_links.load(SeqCst) & ALL_LINKS, &names, &crate::gui_platform::local_timestamp())?;
-                Ok(match files.len() {
-                    1 => format!("recording to {}", files[0].display()),
-                    n => format!(
-                        "recording {n} tracks to {}",
-                        files[0].parent().map_or(String::new(), |p| p.display().to_string())
-                    ),
-                })
-            } else {
-                rec.stop();
-                Ok("recording stopped".into())
-            }
-        }
-        "recset" => {
-            let rec = &hub.recorder;
-            let mut s = rec.settings();
-            if let Some(m) = f.get("mode") {
-                s.mode = Mode::parse(m)?;
-            }
-            if let Some(fm) = f.get("format") {
-                s.format = Format::parse(fm)?;
-            }
-            if let Some(k) = f.get("kbps") {
-                s.kbps = recorder::parse_kbps(k)?;
-            }
-            if let Some(d) = f.get("folder") {
-                s.folder = d.trim().to_string();
-            }
-            rec.set_settings(s)?;
-            Ok(if rec.is_recording() { "applies to the next recording".into() } else { "ok".into() })
-        }
-        "name" => {
-            let c = f.ch()?;
-            let v = f.req("v")?.trim();
-            if v.is_empty() || v.chars().count() > MAX_NAME || v.chars().any(char::is_control) {
-                return Err(format!("names are 1-{MAX_NAME} characters"));
-            }
-            hub.request(Request::Rename(c, v.to_string()));
-            Ok("ok".into())
-        }
-        "eq" => {
-            let (c, on) = (f.ch()?, f.flag()?);
-            sh.eq(c).on.store(on, SeqCst);
-            Ok(if on { "EQ on" } else { "EQ off" }.into())
-        }
-        "band" => {
-            let c = f.ch()?;
-            let k = f.index("band", BANDS)?;
-            let p = &sh.eq(c).bands[k];
-            let mut b = p.load();
-            if let Some(on) = f.bool_of("on")? {
-                b.on = on;
-            }
-            if let Some(t) = f.get("type") {
-                b.kind = Kind::parse(t)?;
-            }
-            if let Some(v) = f.num_of("f", "frequency", eq::MIN_FREQ, eq::MAX_FREQ)? {
-                b.freq = eq::round_freq(v);
-            }
-            if let Some(v) = f.num_of("g", "gain", eq::MIN_GAIN_DB, eq::MAX_GAIN_DB)? {
-                b.gain_db = eq::round_gain(v);
-            }
-            if let Some(v) = f.num_of("q", "Q", eq::MIN_Q, eq::MAX_Q)? {
-                b.q = eq::round_q(v);
-            }
-            p.store(&b);
-            Ok("ok".into())
-        }
-        "eqreset" => {
-            let c = f.ch()?;
-            sh.eq(c).store_bands(&DEFAULT_BANDS);
-            Ok("EQ bands reset (flat)".into())
-        }
-        "gate" | "comp" => {
-            let (c, on) = (f.strip()?, f.flag()?);
-            let d = &sh.strips[c].dynamics;
-            let (flag, what) = if op == "gate" { (&d.gate_on, "Gate") } else { (&d.comp_on, "Compressor") };
-            flag.store(on, SeqCst);
-            Ok(format!("{what} {}", if on { "on" } else { "off" }))
-        }
-        "dynset" => {
-            let c = f.strip()?;
-            let d = &sh.strips[c].dynamics;
-            let key = f.req("key")?;
-            let (spec, slot) = if let Some(i) = GATE.iter().position(|s| s.key == key) {
-                (&GATE[i], &d.gate[i])
-            } else if let Some(i) = COMP.iter().position(|s| s.key == key) {
-                (&COMP[i], &d.comp[i])
-            } else {
-                return Err(format!("unknown setting {key:?}"));
-            };
-            let v = f.num_of("v", spec.key, spec.min, spec.max)?.ok_or("missing \"v\"")?;
-            slot.store(spec.clamp(v));
-            Ok("ok".into())
-        }
-        "dynreset" => {
-            let c = f.strip()?;
-            sh.strips[c].dynamics.reset_settings();
-            Ok("Gate and compressor settings reset".into())
-        }
-        "vban" => {
-            let on = f.flag()?;
-            hub.vban.update(|c| {
-                c.enabled = on;
-                Ok(())
-            })?;
-            Ok(if on { "VBAN on" } else { "VBAN off" }.into())
-        }
-        "vbanport" => {
-            let port = vban::parse_port(f.req("v")?)?;
-            hub.vban.update(|c| {
-                c.port = port;
-                Ok(())
-            })?;
-            Ok(format!("VBAN listens on UDP port {port}"))
-        }
-        "vbanin" => {
-            let k = f.index("slot", NUM_IN)?;
-            let name = vban_name(&f)?;
-            let from = f.get("from").map(FromAddr::parse).transpose()?;
-            let strip = f.get("strip").map(vban::parse_strip).transpose()?;
-            let buffer = f.get("buffer").map(vban::parse_buffer_ms).transpose()?;
-            let on = f.bool_of("on")?;
-            hub.vban.update(|c| {
-                let s = &mut c.ins[k];
-                if let Some(v) = name {
-                    s.name = v;
-                }
-                if let Some(v) = from {
-                    s.from = v;
-                }
-                if let Some(v) = strip {
-                    s.strip = v;
-                }
-                if let Some(v) = buffer {
-                    s.buffer_ms = v;
-                }
-                if let Some(v) = on {
-                    s.on = v;
-                }
-                Ok(())
-            })?;
-            Ok("ok".into())
-        }
-        "vbanout" => {
-            let k = f.index("slot", NUM_OUT)?;
-            let name = vban_name(&f)?;
-            let to = f.get("to").map(vban::parse_to).transpose()?;
-            let port = f.get("port").map(vban::parse_port).transpose()?;
-            let src = f.get("src").map(vban::parse_source).transpose()?;
-            let format = f.get("format").map(SampleFormat::parse_send).transpose()?;
-            let channels = f.get("channels").map(vban::parse_channels).transpose()?;
-            let on = f.bool_of("on")?;
-            hub.vban.update(|c| {
-                let s = &mut c.outs[k];
-                if let Some(v) = name {
-                    s.name = v;
-                }
-                if let Some(v) = to {
-                    s.to = v;
-                }
-                if let Some(v) = port {
-                    s.port = v;
-                }
-                if let Some(v) = src {
-                    s.source = v;
-                }
-                if let Some(v) = format {
-                    s.format = v;
-                }
-                if let Some(v) = channels {
-                    s.channels = v;
-                }
-                if let Some(v) = on {
-                    s.on = v;
-                }
-                Ok(())
-            })?;
-            Ok("ok".into())
-        }
-        // ---- player ----
-        "play" => {
-            let p = &hub.player;
-            let st = p.status();
-            let from = f.num_of("from", "position", 0.0, 1e9)?.map(f64::from);
-            let key = match f.get("key") {
-                Some(k) => k.to_string(),
-                None => match (&st.take, hub.takes.snapshot().1.last()) {
-                    (Some(k), _) => k.clone(),
-                    (None, Some(t)) => t.key.clone(),
-                    (None, None) => return Err("there are no recordings to play yet".into()),
-                },
-            };
-            if st.take.as_deref() == Some(key.as_str()) && from.is_none() {
-                if st.state == PlayState::Playing {
-                    return Ok("playing".into());
-                }
-                match changed_take(hub, &st) {
-                    Some(t) => p.play(&t, st.pos, true)?,
-                    None => p.resume()?,
-                }
-            } else {
-                let take = hub.takes.find(&key).ok_or("that recording is no longer in the recorder folder")?;
-                p.play(&take, from.unwrap_or(0.0), true)?;
-            }
-            Ok("playing".into())
-        }
-        "take" => {
-            let key = f.req("key")?;
-            let take = hub.takes.find(key).ok_or("that recording is no longer in the recorder folder")?;
-            hub.player.play(&take, 0.0, false)?;
-            Ok(format!("{} selected", take.label()))
-        }
-        "pause" => {
-            hub.player.pause()?;
-            Ok("paused".into())
-        }
-        "stop" => {
-            hub.player.stop()?;
-            Ok("stopped".into())
-        }
-        "seek" => {
-            let v = f.num_of("v", "position", 0.0, 1e9)?.ok_or("missing \"v\"")?;
-            let st = hub.player.status();
-            match changed_take(hub, &st) {
-                Some(t) => hub.player.play(&t, f64::from(v), st.state == PlayState::Playing)?,
-                None => hub.player.seek(f64::from(v))?,
-            }
-            Ok("ok".into())
-        }
-        "playto" => {
-            let b: usize = f.req("bus")?.parse().ok().filter(|&b| b < NUM_BUSES).ok_or("bad bus")?;
-            let on = f.flag()?;
-            let m = hub.player.routes();
-            hub.player.set_routes(if on { m | 1 << b } else { m & !(1u8 << b) });
-            Ok("ok".into())
-        }
-        "openfolder" => {
-            let dir = recorder::expand_home(&hub.recorder.settings().folder);
-            crate::gui_platform::open_folder(&dir)?;
-            Ok(format!("opened {}", dir.display()))
-        }
-        // ---- scenes ----
-        "scene" => {
-            let name = scenes::validate_name(f.req("name")?)?.to_string();
-            let msg = match f.req("act")? {
-                "load" => {
-                    hub.scenes.load(&name, sh)?;
-                    hub.request(Request::Scene(name.clone()));
-                    format!("scene \"{name}\" loaded")
-                }
-                "save" => {
-                    hub.scenes.save(&name, sh)?;
-                    hub.refresh_scenes();
-                    hub.request(Request::Scene(name.clone()));
-                    format!("scene \"{name}\" saved")
-                }
-                "delete" => {
-                    hub.scenes.delete(&name)?;
-                    hub.refresh_scenes();
-                    hub.request(Request::Scene(String::new()));
-                    format!("scene \"{name}\" deleted")
-                }
-                a => return Err(format!("unknown scene action {a:?}")),
-            };
-            Ok(msg)
-        }
-        // ---- app settings ----
-        "theme" => {
-            hub.request(Request::Theme(Theme::parse(f.req("v")?)?));
-            Ok("ok".into())
-        }
-        "closetray" => {
-            hub.request(Request::CloseToTray(f.flag()?));
-            Ok("ok".into())
-        }
-        "zoom" => {
-            hub.request(Request::Zoom(parse_zoom(f.req("v")?)?));
-            Ok("ok".into())
-        }
-        "autostart" => {
-            let msg = crate::gui_platform::set_autostart(f.flag()?)?;
-            hub.autostart.store(crate::gui_platform::autostart_enabled(), SeqCst);
-            Ok(msg)
-        }
-        "install" => {
-            let msg = crate::gui_platform::install()?;
-            hub.installed.store(crate::gui_platform::menu_installed(), SeqCst);
-            Ok(msg)
-        }
-        "autoupdate" => {
-            hub.request(Request::AutoUpdate(f.flag()?));
-            Ok("ok".into())
-        }
-        "update" => {
-            let u = hub.updater()?;
-            match f.req("a")? {
-                "check" => u.check(),
-                "install" => u.install(),
-                "restart" => {
-                    if !u.ready() {
-                        return Err("no update is installed yet".into());
-                    }
-                    hub.request(Request::Restart);
-                    Ok("restarting BananaSplit".into())
-                }
-                "page" => {
-                    crate::gui_platform::open_page(&u.page())?;
-                    Ok("opening the release page in your browser".into())
-                }
-                a => Err(format!("unknown update action {a:?}")),
-            }
-        }
-        "show" => {
-            let token: String =
-                f.get("token").unwrap_or("").chars().filter(|c| c.is_ascii_graphic()).take(256).collect();
-            hub.request(Request::Show(token));
-            Ok("ok".into())
-        }
-        "save" => {
-            hub.request(Request::Save);
-            Ok("saving".into())
-        }
-        "reconnect" => {
-            hub.request(Request::Reconnect);
-            Ok("reconnecting".into())
-        }
-        "quit" => {
-            hub.request(Request::Quit);
-            Ok("quitting".into())
-        }
-        _ => crate::gui_platform::command(hub, op, &f).unwrap_or_else(|| Err(format!("unknown op {op:?}"))),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
@@ -1509,8 +958,8 @@ impl Req {
     }
 }
 
-/// Read one request. Errors are (status, message).
-pub fn read_request(s: &mut impl Read) -> Result<Req, (u16, &'static str)> {
+/// Read one request.
+pub fn read_request(s: &mut impl Read) -> Result<Req, ApiError> {
     let mut buf = Vec::with_capacity(2048);
     let mut tmp = [0u8; 4096];
     let head_end = loop {
@@ -1518,48 +967,48 @@ pub fn read_request(s: &mut impl Read) -> Result<Req, (u16, &'static str)> {
             break p;
         }
         if buf.len() > MAX_HEAD {
-            return Err((431, "request header too large"));
+            return Err(ApiError::new(431, "request header too large"));
         }
-        let n = s.read(&mut tmp).map_err(|_| (408, "request timeout"))?;
+        let n = s.read(&mut tmp).map_err(|_| ApiError::new(408, "request timeout"))?;
         if n == 0 {
-            return Err((400, "incomplete request"));
+            return Err(ApiError::new(400, "incomplete request"));
         }
         buf.extend_from_slice(&tmp[..n]);
     };
     if head_end > MAX_HEAD {
-        return Err((431, "request header too large"));
+        return Err(ApiError::new(431, "request header too large"));
     }
-    let head = std::str::from_utf8(&buf[..head_end]).map_err(|_| (400, "bad request"))?;
+    let head = std::str::from_utf8(&buf[..head_end]).map_err(|_| ApiError::new(400, "bad request"))?;
     let mut lines = head.split("\r\n");
     let mut first = lines.next().unwrap_or("").split(' ');
     let (method, target, version) =
         (first.next().unwrap_or(""), first.next().unwrap_or(""), first.next().unwrap_or(""));
     if method.is_empty() || !target.starts_with('/') || !version.starts_with("HTTP/1.") || first.next().is_some() {
-        return Err((400, "bad request line"));
+        return Err(ApiError::new(400, "bad request line"));
     }
     let mut headers = Vec::new();
     for line in lines {
-        let (k, v) = line.split_once(':').ok_or((400, "bad header"))?;
+        let (k, v) = line.split_once(':').ok_or_else(|| ApiError::new(400, "bad header"))?;
         headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
     }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let mut req =
         Req { method: method.to_string(), path: path.to_string(), query: query.to_string(), headers, body: Vec::new() };
     if req.header("transfer-encoding").is_some() {
-        return Err((411, "send a Content-Length"));
+        return Err(ApiError::new(411, "send a Content-Length"));
     }
     let len = match req.header("content-length") {
         None => 0,
-        Some(v) => v.parse::<usize>().map_err(|_| (400, "bad Content-Length"))?,
+        Some(v) => v.parse::<usize>().map_err(|_| ApiError::new(400, "bad Content-Length"))?,
     };
     if len > MAX_BODY {
-        return Err((413, "request body too large"));
+        return Err(ApiError::new(413, "request body too large"));
     }
     let mut body = buf[head_end + 4..].to_vec();
     while body.len() < len {
-        let n = s.read(&mut tmp).map_err(|_| (408, "request timeout"))?;
+        let n = s.read(&mut tmp).map_err(|_| ApiError::new(408, "request timeout"))?;
         if n == 0 {
-            return Err((400, "incomplete body"));
+            return Err(ApiError::new(400, "incomplete body"));
         }
         body.extend_from_slice(&tmp[..n]);
     }
@@ -1627,6 +1076,11 @@ fn respond(s: &mut TcpStream, code: u16, ctype: &str, body: &[u8], extra: &str) 
     let _ = s.shutdown(Shutdown::Write);
 }
 
+/// Refuse: the status and `{"error": "..."}`.
+fn fail(s: &mut TcpStream, e: &ApiError, extra: &str) {
+    respond(s, e.status, "application/json", e.json().as_bytes(), extra)
+}
+
 const PAGE_HEADERS: &str = "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; \
 style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; \
 frame-ancestors 'none'\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\n";
@@ -1656,17 +1110,17 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
     let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(5)));
     if !peer_allowed(&s) {
-        return respond(&mut s, 403, "text/plain; charset=utf-8", b"BananaSplit only answers the user it runs as", "");
+        return fail(&mut s, &ApiError::new(403, "BananaSplit only answers the user it runs as"), "");
     }
     let req = match read_request(&mut s) {
         Ok(r) => r,
-        Err((code, msg)) => return respond(&mut s, code, "text/plain; charset=utf-8", msg.as_bytes(), ""),
+        Err(e) => return fail(&mut s, &e, ""),
     };
     if !host_ok(&req, port) {
-        return respond(&mut s, 403, "text/plain; charset=utf-8", b"wrong Host", "");
+        return fail(&mut s, &ApiError::new(403, "wrong Host"), "");
     }
     if req.path.starts_with("/api/") && !same_origin(&req, port) {
-        return respond(&mut s, 403, "text/plain; charset=utf-8", b"forbidden", "");
+        return fail(&mut s, &ApiError::new(403, "forbidden"), "");
     }
     let text = "text/plain; charset=utf-8";
     match (req.method.as_str(), req.path.as_str()) {
@@ -1682,15 +1136,15 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
         }
         ("GET", "/api/update") => match hub.updater() {
             Ok(u) => respond(&mut s, 200, "application/json", u.details_json().as_bytes(), ""),
-            Err(e) => respond(&mut s, 404, text, e.as_bytes(), ""),
+            Err(e) => fail(&mut s, &ApiError::new(404, e), ""),
         },
         ("GET", "/api/takes") => respond(&mut s, 200, "application/json", hub.takes.list_json().as_bytes(), ""),
         ("GET", "/api/devices") => match hub.ask(DevOp::List) {
             Ok(j) => respond(&mut s, 200, "application/json", j.as_bytes(), ""),
-            Err(e) => respond(&mut s, 503, text, e.as_bytes(), ""),
+            Err(e) => fail(&mut s, &ApiError::new(503, e), ""),
         },
         ("GET", "/api/wave") => {
-            let q = parse_form(&req.query).map(Form);
+            let q = Form::parse(&req.query);
             let r = q.and_then(|q| {
                 let key = q.req("key")?.to_string();
                 let n = q.get("n").map_or(Ok(480), |v| v.parse::<usize>().map_err(|_| "bad n".to_string()))?;
@@ -1698,7 +1152,7 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
             });
             match r {
                 Ok(j) => respond(&mut s, 200, "application/json", j.as_bytes(), ""),
-                Err(e) => respond(&mut s, 404, text, e.as_bytes(), ""),
+                Err(e) => fail(&mut s, &ApiError::new(404, e), ""),
             }
         }
         ("GET", "/api/state") => {
@@ -1708,23 +1162,23 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
         ("GET", "/api/events") => stream(s, hub),
         ("POST", "/api/cmd") => {
             if !csrf_ok(&req, port) {
-                return respond(&mut s, 403, text, b"forbidden", "");
+                return fail(&mut s, &ApiError::new(403, "forbidden"), "");
             }
             let Ok(body) = std::str::from_utf8(&req.body) else {
-                return respond(&mut s, 400, text, b"body is not UTF-8", "");
+                return fail(&mut s, &ApiError::new(400, "body is not UTF-8"), "");
             };
             match command(hub, body) {
                 Ok(m) => respond(&mut s, 200, text, m.as_bytes(), ""),
-                Err(e) => respond(&mut s, 400, text, e.as_bytes(), ""),
+                Err(e) => fail(&mut s, &e, ""),
             }
         }
         ("GET", path) => match crate::gui_platform::get(path) {
             Some(Ok(json)) => respond(&mut s, 200, "application/json", json.as_bytes(), ""),
-            Some(Err(e)) => respond(&mut s, 503, text, e.as_bytes(), ""),
-            None => respond(&mut s, 404, text, b"not found", ""),
+            Some(Err(e)) => fail(&mut s, &ApiError::new(503, e), ""),
+            None => fail(&mut s, &ApiError::new(404, "not found"), ""),
         },
-        ("POST", _) => respond(&mut s, 404, text, b"not found", ""),
-        _ => respond(&mut s, 405, text, b"method not allowed", "Allow: GET, POST\r\n"),
+        ("POST", _) => fail(&mut s, &ApiError::new(404, "not found"), ""),
+        _ => fail(&mut s, &ApiError::new(405, "method not allowed"), "Allow: GET, POST\r\n"),
     }
 }
 
@@ -1738,7 +1192,7 @@ impl Drop for Count<'_> {
 fn stream(mut s: TcpStream, hub: &Hub) {
     if hub.streams.fetch_add(1, SeqCst) >= MAX_STREAMS {
         hub.streams.fetch_sub(1, SeqCst);
-        return respond(&mut s, 503, "text/plain", b"too many windows open", "");
+        return fail(&mut s, &ApiError::new(503, "too many windows open"), "");
     }
     let _count = Count(&hub.streams);
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\
@@ -1800,7 +1254,7 @@ fn accept_loop(l: &TcpListener, hub: &Arc<Hub>, port: u16) {
         };
         if hub.conns.fetch_add(1, SeqCst) >= MAX_CONNS {
             hub.conns.fetch_sub(1, SeqCst);
-            respond(&mut s, 503, "text/plain", b"busy", "");
+            fail(&mut s, &ApiError::new(503, "busy"), "");
             continue;
         }
         let h = hub.clone();
@@ -1929,8 +1383,9 @@ fn post_cmd(port: u16, body: &str) -> Option<(u16, String)> {
     let _ = s.take(64 * 1024).read_to_end(&mut buf);
     let text = String::from_utf8_lossy(&buf);
     let code = text.strip_prefix("HTTP/1.1 ")?.get(..3)?.parse().ok()?;
-    let body = text.split_once("\r\n\r\n").map_or("", |(_, b)| b).to_string();
-    Some((code, body))
+    let body = text.split_once("\r\n\r\n").map_or("", |(_, b)| b);
+    // what a refusal says is its message, however the other BananaSplit wrote it
+    Some((code, if code == 200 { body.to_string() } else { message_of(body) }))
 }
 
 // The page hard-codes the fader range and the channel layout.
@@ -1941,7 +1396,13 @@ const _: () = assert!(NUM_STRIPS == 6 && NUM_BUSES == 5, "gui.html assumes 6 str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bananasplit::recorder::RecTap;
+    use bananasplit::dynamics::{COMP, GATE};
+    use bananasplit::engine::BUS_IDS;
+    use bananasplit::eq::{DEFAULT_BANDS, Kind};
+    use bananasplit::player::PlayState;
+    use bananasplit::recorder::{Format, Mode, NUM_SOURCES, RecTap};
+    use bananasplit::vban::{self, FromAddr, SampleFormat};
+    use cmd::parse_form;
     use std::sync::atomic::Ordering::Relaxed;
     use std::time::Instant;
 
@@ -1984,7 +1445,7 @@ mod tests {
         }
     }
 
-    fn req(raw: &str) -> Result<Req, (u16, &'static str)> {
+    fn req(raw: &str) -> Result<Req, ApiError> {
         read_request(&mut raw.as_bytes())
     }
 
@@ -2003,12 +1464,12 @@ mod tests {
         let r = req("POST /api/cmd?x=1 HTTP/1.1\r\nHost: 127.0.0.1:8790\r\nContent-Length: 5\r\n\r\nop=sx").unwrap();
         assert_eq!((r.method.as_str(), r.path.as_str(), r.body.as_slice()), ("POST", "/api/cmd", &b"op=sx"[..]));
         assert_eq!(r.header("host"), Some("127.0.0.1:8790"));
-        assert_eq!(req("GET / HTTP/1.1\r\nHost: x").unwrap_err().0, 400, "incomplete");
-        assert_eq!(req("GARBAGE\r\n\r\n").unwrap_err().0, 400);
-        assert_eq!(req("GET / HTTP/1.1\r\nContent-Length: 99999999\r\n\r\n").unwrap_err().0, 413);
-        assert_eq!(req("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n").unwrap_err().0, 411);
+        assert_eq!(req("GET / HTTP/1.1\r\nHost: x").unwrap_err().status, 400, "incomplete");
+        assert_eq!(req("GARBAGE\r\n\r\n").unwrap_err().status, 400);
+        assert_eq!(req("GET / HTTP/1.1\r\nContent-Length: 99999999\r\n\r\n").unwrap_err().status, 413);
+        assert_eq!(req("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n").unwrap_err().status, 411);
         let big = format!("GET / HTTP/1.1\r\nX: {}\r\n\r\n", "a".repeat(MAX_HEAD + 10));
-        assert_eq!(req(&big).unwrap_err().0, 431);
+        assert_eq!(req(&big).unwrap_err().status, 431);
     }
 
     #[test]
@@ -2184,7 +1645,7 @@ mod tests {
         let h = hub();
         h.set_names((0..NUM_SOURCES).map(|i| format!("n{i}")).collect());
         let dir = recorder::expand_home(&h.recorder.settings().folder);
-        assert!(command(&h, "op=rec&v=1").unwrap_err().contains("link"));
+        assert!(command(&h, "op=rec&v=1").unwrap_err().msg.contains("link"));
         command(&h, "op=link&ch=6&v=1").unwrap();
         let msg = command(&h, "op=rec&v=1").unwrap();
         assert!(msg.starts_with("recording to ") && msg.ends_with("_mix.mp3"), "{msg}");
@@ -2341,8 +1802,8 @@ mod tests {
         assert_eq!(h.player.routes(), 0b01000);
         assert!(command(&h, "op=playto&bus=5&v=1").is_err());
         // no recordings yet
-        assert!(command(&h, "op=play").unwrap_err().contains("no recordings"));
-        assert!(command(&h, "op=play&key=nope").unwrap_err().contains("no longer"));
+        assert!(command(&h, "op=play").unwrap_err().msg.contains("no recordings"));
+        assert!(command(&h, "op=play&key=nope").unwrap_err().msg.contains("no longer"));
         assert!(command(&h, "op=take&key=nope").is_err());
         assert!(command(&h, "op=seek&v=-1").is_err());
         command(&h, "op=pause").unwrap();
@@ -2690,7 +2151,36 @@ mod tests {
         assert!(!h.shared.strips[0].mute.load(Relaxed));
         assert!(post("op=mute&ch=0&v=1", "X-BananaSplit: 1\r\n").starts_with("HTTP/1.1 200"));
         assert!(h.shared.strips[0].mute.load(Relaxed));
-        assert!(post("op=bogus", "X-BananaSplit: 1\r\n").starts_with("HTTP/1.1 400"));
+        let bad = post("op=bogus", "X-BananaSplit: 1\r\n");
+        assert!(bad.starts_with("HTTP/1.1 400"));
+        // a refusal is {"error": "..."} whichever step refused it; a success is still the plain text
+        assert!(
+            bad.contains("Content-Type: application/json\r\n") && bad.ends_with(r#"{"error":"unknown op \"bogus\""}"#),
+            "{bad}"
+        );
+        let refused = |body: &str, hdr: &str| post(body, hdr).rsplit("\r\n\r\n").next().unwrap().to_string();
+        assert_eq!(refused("op=gain&ch=0&v=x", "X-BananaSplit: 1\r\n"), r#"{"error":"gain must be a number"}"#);
+        assert_eq!(refused("op=mute&ch=0&v=1", ""), r#"{"error":"forbidden"}"#);
+        let (code, body) = {
+            let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+            write!(s, "GET /nope HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
+            let mut out = String::new();
+            let _ = s.read_to_string(&mut out);
+            (out[9..12].to_string(), out.rsplit("\r\n\r\n").next().unwrap().to_string())
+        };
+        assert_eq!((code.as_str(), body.as_str()), ("404", r#"{"error":"not found"}"#));
+        let mut wrong_host = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        write!(wrong_host, "GET /api/state HTTP/1.1\r\nHost: evil.example\r\n\r\n").unwrap();
+        let mut out = String::new();
+        let _ = wrong_host.read_to_string(&mut out);
+        assert!(out.starts_with("HTTP/1.1 403") && out.ends_with(r#"{"error":"wrong Host"}"#), "{out}");
+        assert!(
+            post("op=gain&ch=0&v=-3", "X-BananaSplit: 1\r\n").ends_with("\r\n\r\n-3.0 dB"),
+            "a success is plain text"
+        );
+        // the program that talks to a running one (`--quit`, `--update`) gets the plain message back
+        assert_eq!(post_cmd(port, "op=gain&ch=0&v=x"), Some((400, "gain must be a number".to_string())));
+        assert_eq!(post_cmd(port, "op=gain&ch=0&v=-3"), Some((200, "-3.0 dB".to_string())));
         // event stream delivers published state
         let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
         write!(s, "GET /api/events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
