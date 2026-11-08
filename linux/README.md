@@ -16,6 +16,7 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
 ## What's new in 2.8.22
 
 * **Other web pages can no longer lock the window out** (#75): every `/api/` request from another site, or from a page on another localhost port, is now turned away, not only button presses. Before, any open web page could hold all 8 live-update streams and the mixer window showed "Lost connection". curl and `--quit` are not affected.
+* **The take list stays fast with thousands of recordings** (#74): the player's take list rescanned the whole recordings folder every 3 s, and that grew quadratically (about 2 s of CPU per rescan at 12,000 files). It now skips the scan when nothing changed (under 1 ms) and a full scan takes about 33 ms.
 * **No more short bursts of noise from a huge sample** (#67): a very loud but valid sample that a strip EQ pushed past the float limit could put about 0.7 ms of garbage on the buses and out of your speakers. The buses are now checked before they leave the mixer.
 * **Lighter EQ and compressor** (#68, #66): the EQ needs less CPU and the compressor skips work it doesn't need, with exactly the same sound as before.
 * **One shared mixer core** (#69): the mixer, EQ, dynamics, recorder, player, MP3, VBAN, scenes, config and terminal view now live once in `core/`, shared by the Linux, Windows and macOS apps. Nothing changes in use.
