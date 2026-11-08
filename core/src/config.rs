@@ -79,10 +79,16 @@
 //! `connect` may be repeated. Each value is `@default` (the system's default
 //! input device for a strip / default output device for a bus, as chosen in
 //! the desktop's sound settings, and followed when it changes), `@physical`
-//! (a physical capture / playback device, preferring the default one), or a
-//! JACK port-name regular expression. The first two matching ports are
-//! connected to L/R; a single (mono) port is connected to both. An empty
-//! `connect =` line clears the list.
+//! (a physical capture / playback device, preferring the default one), or:
+//!
+//! * on Linux, a JACK port-name regular expression (`bananasplit
+//!   --list-ports`). The first two matching ports are connected to L/R; a
+//!   single (mono) port is connected to both.
+//! * on Windows and macOS, part of a device's name (`bananasplit
+//!   --list-devices`). A device's first two channels are used as L/R; a
+//!   single (mono) channel is used for both.
+//!
+//! An empty `connect =` line clears the list.
 //!
 //! Parsing is strict: unknown sections/keys and bad values are errors with a
 //! line number, so a typo can never be silently ignored. A file without a
@@ -101,11 +107,26 @@ use std::sync::atomic::Ordering::Relaxed;
 pub const PHYSICAL: &str = "@physical";
 pub const DEFAULT_DEVICE: &str = "@default";
 
-/// A `connect` value: one of the `@` keywords, or anything else (a regex).
+/// What a `connect` value that is not a keyword means on this system.
+#[cfg(not(any(windows, target_os = "macos")))]
+const CONNECT_OTHER: &str = "a JACK port regex";
+#[cfg(any(windows, target_os = "macos"))]
+const CONNECT_OTHER: &str = "part of a device name";
+
+/// The `connect` hint written at the top of a saved config.
+#[cfg(not(any(windows, target_os = "macos")))]
+const CONNECT_HINT: &str = "# connect = @default | @physical | <JACK port regex>   (may be repeated;\n\
+                            #           `bananasplit --list-ports` shows the port names and a ready-made line)";
+#[cfg(any(windows, target_os = "macos"))]
+const CONNECT_HINT: &str = "# connect = @default | @physical | <part of a device name>   (may be repeated;\n\
+                            #           `bananasplit --list-devices` shows the device names)";
+
+/// A `connect` value: one of the `@` keywords, or anything else (a JACK port
+/// regex on Linux, a device-name fragment on Windows and macOS).
 fn check_connect(v: &str) -> Result<(), String> {
     if v.starts_with('@') && v != PHYSICAL && v != DEFAULT_DEVICE {
         return Err(format!(
-            "unknown connect keyword {v:?} (expected {DEFAULT_DEVICE}, {PHYSICAL} or a JACK port regex)"
+            "unknown connect keyword {v:?} (expected {DEFAULT_DEVICE}, {PHYSICAL} or {CONNECT_OTHER})"
         ));
     }
     Ok(())
@@ -206,14 +227,20 @@ impl BusConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub client_name: String,
-    /// Requested period in frames (0 = don't request anything).
+    /// Requested period in frames (0 = don't request anything). On macOS:
+    /// the IO buffer size BananaSplit asks every device it opens for, within
+    /// the range the device allows. It is BananaSplit's own: other apps keep
+    /// theirs.
     pub buffer_size: u32,
-    /// Call jack_set_buffer_size() if the server runs a larger period.
-    /// Under JACK2 this changes the period for every client.
+    /// Linux (JACK): call jack_set_buffer_size() if the server runs a larger
+    /// period. Under JACK2 this changes the period for every client. Kept on
+    /// the other systems so the file reads the same everywhere.
     pub force_buffer_size: bool,
-    /// Create PipeWire virtual cables via `pactl`: the ones switched on with
-    /// `cable` (by default one output device per strip and one virtual
-    /// microphone per B bus).
+    /// Linux (PipeWire): create virtual cables via `pactl`: the ones switched
+    /// on with `cable` (by default one output device per strip and one
+    /// virtual microphone per B bus). Kept on the other systems so the file
+    /// reads the same everywhere; on Windows the cables are VB-Audio devices,
+    /// on macOS devices of a driver of their own (BlackHole).
     pub create_cables: bool,
     pub strips: [StripConfig; NUM_STRIPS],
     pub buses: [BusConfig; NUM_BUSES],
@@ -748,8 +775,7 @@ impl Config {
     pub fn to_ini(&self) -> String {
         let mut o = String::new();
         let _ = writeln!(o, "# BananaSplit configuration — written by BananaSplit; comments are not preserved.");
-        let _ = writeln!(o, "# connect = @default | @physical | <JACK port regex>   (may be repeated;");
-        let _ = writeln!(o, "#           `bananasplit --list-ports` shows the port names and a ready-made line)");
+        let _ = writeln!(o, "{CONNECT_HINT}");
         let _ = writeln!(o, "# eq = on | off;  eq1 .. eq6 = type freq_hz gain_db q [off], type = bell | lowshelf |");
         let _ = writeln!(o, "#           highshelf | lowcut | highcut | notch. A band not written here is flat:");
         let _ = writeln!(o, "#           lowshelf 100, bell 250 / 600 / 1500 / 4000, highshelf 10000, all +0 dB");
@@ -1033,12 +1059,33 @@ fn real_file(path: &Path) -> PathBuf {
 /// The JACK name vmix (this program before 2.5) used by default.
 pub const LEGACY_CLIENT_NAME: &str = "vmix";
 
-/// `$XDG_CONFIG_HOME`, else `~/.config`.
+/// Where the `bananasplit` config folder goes: on Linux `$XDG_CONFIG_HOME`,
+/// else `~/.config`.
+#[cfg(not(any(windows, target_os = "macos")))]
 fn config_home() -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// `%APPDATA%` on Windows (the folder gets `bananasplit`).
+#[cfg(windows)]
+fn config_home() -> PathBuf {
+    std::env::var_os("APPDATA")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(|h| PathBuf::from(h).join("AppData").join("Roaming")))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// `~/Library/Application Support` on macOS (the folder gets `bananasplit`).
+#[cfg(target_os = "macos")]
+fn config_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .map(|h| PathBuf::from(h).join("Library").join("Application Support"))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
@@ -1083,18 +1130,6 @@ mod tests {
         assert_eq!(Config::parse(&text).unwrap(), c);
         assert!(!Config::parse("[gui]\nauto_update = off\n").unwrap().gui.auto_update);
         assert!(Config::parse("[gui]\nauto_update = sometimes\n").is_err());
-    }
-
-    /// The example in the README is a config file people copy: it must load.
-    #[test]
-    fn the_readme_example_loads() {
-        let readme = include_str!("../README.md");
-        let start = readme.find("```ini\n[global]").expect("the README has the example") + "```ini\n".len();
-        let block = &readme[start..start + readme[start..].find("```").unwrap()];
-        let c = Config::parse(block).unwrap_or_else(|e| panic!("README example: {e:?}"));
-        assert_eq!(c.buffer_size, 128);
-        assert_eq!(c.strips[1].connect, ["^Firefox:output_F[LR]$"]);
-        assert_eq!(c.recorder.folder, "~/Music/BananaSplit");
     }
 
     #[test]

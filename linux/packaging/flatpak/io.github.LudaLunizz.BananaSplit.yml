@@ -47,11 +47,18 @@ modules:
       - install -Dm644 packaging/flatpak/io.github.LudaLunizz.BananaSplit.metainfo.xml -t /app/share/metainfo
       - install -Dm644 assets/icons/bananasplit.svg /app/share/icons/hicolor/scalable/apps/io.github.LudaLunizz.BananaSplit.svg
       - for s in 16 24 32 48 64 128 256; do install -Dm644 assets/icons/bananasplit-$s.png /app/share/icons/hicolor/${s}x${s}/apps/io.github.LudaLunizz.BananaSplit.png; done
+    # The repository root: the build needs linux/ and the shared core/ next
+    # to it. Commands run in linux/.
+    subdir: linux
     sources:
       - type: dir
-        path: ../..
+        path: ../../..
         skip:
-          - target
-          - dist
-          - build
-          - .flatpak-builder
+          - .git
+          - windows
+          - macos
+          - core/target
+          - linux/target
+          - linux/dist
+          - linux/build
+          - linux/.flatpak-builder

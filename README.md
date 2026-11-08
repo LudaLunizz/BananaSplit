@@ -122,6 +122,8 @@ sh packaging/bundle.sh       # dist/BananaSplit.app, for Apple silicon and Intel
 
 ```
 .
+├── core/             shared mixer core (Rust crate, no dependencies): engine, EQ,
+│                     dynamics, recorder, player, MP3, VBAN, scenes, config, terminal view
 ├── linux/            Linux app (Rust crate, JACK / PipeWire)
 │   ├── src/
 │   ├── tests/        unit, end-to-end, GUI and window tests
@@ -135,7 +137,7 @@ sh packaging/bundle.sh       # dist/BananaSplit.app, for Apple silicon and Intel
 └── .github/          CI, release automation, templates
 ```
 
-The Linux, Windows and macOS apps are separate crates that share most of their mixer code by copy. Each builds on its own.
+The Linux, Windows and macOS apps are separate crates. Each builds on its own, and all three use the mixer in `core/` through a path dependency (`bananasplit-core = { path = "../core" }`) and re-export it, so their code keeps writing `bananasplit::engine::...`. The GUI server and the updater are still one copy per app. `core/` is not a Cargo workspace on purpose: all three apps are packages named `bananasplit`, and each keeps its own `target/`, which the packaging scripts expect.
 
 ## Building from source
 
@@ -168,8 +170,13 @@ target/release/bananasplit
 ## Testing
 
 ```sh
+cd core
+cargo test                          # the mixer's unit tests (also run on Windows and macOS in CI)
+```
+
+```sh
 cd linux
-cargo test                          # unit and no-allocation tests
+cargo test                          # app unit tests and no-allocation tests
 sh tests/e2e/run_e2e.sh             # real binary against a mock libjack (gcc, curl, python3)
 sh tests/window/run_window_test.sh  # app window and tray on Xvfb (GTK 3, dbus-python, PyGObject)
 node tests/gui/ui_check.js          # every GUI control in Chromium (Node.js, Playwright)
@@ -195,7 +202,7 @@ All of these run in CI on every push and pull request.
 
 ## Releasing
 
-1. Bump `version` in `linux/Cargo.toml`, `windows/Cargo.toml` and `macos/Cargo.toml`.
+1. Bump `version` in `linux/Cargo.toml`, `windows/Cargo.toml` and `macos/Cargo.toml` (`core/` is never published and keeps its own version).
 2. Tag the commit with the same version and push the tag:
 
    ```sh

@@ -12,7 +12,7 @@ mod jack;
 mod lowlat;
 mod shell;
 mod sys;
-mod tui;
+use bananasplit::tui;
 mod update;
 
 use backend::{Backend, Wiring};
