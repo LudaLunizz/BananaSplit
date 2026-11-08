@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.22" date="2026-11-08">
+      <description>
+        <p>Other web pages can no longer lock the mixer window out. A very loud sample no longer causes a short burst of noise on the outputs. The EQ and compressor use less CPU and sound exactly the same.</p>
+      </description>
+    </release>
     <release version="2.8.21" date="2026-11-07">
       <description>
         <p>On Windows, apps put on a strip in the Volume mixer go back to their strip when Windows forgets the choice, for example after an app update. Nothing changes on Linux.</p>
