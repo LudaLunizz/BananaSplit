@@ -306,6 +306,8 @@ struct Coefs {
 }
 
 impl Coefs {
+    const ZERO: Coefs = Coefs { g: 0.0, k: 0.0, a1: 0.0, a2: 0.0, a3: 0.0, m0: 0.0, m1: 0.0, m2: 0.0 };
+
     /// `a1..a3` for this `g`, `k`.
     #[inline(always)]
     fn derive(mut self) -> Coefs {
@@ -432,9 +434,35 @@ struct BandRt {
     /// Dry/wet: 0 = band bypassed, 1 = fully filtered.
     wet: f32,
     c: Coefs,
-    /// `[L/R][ic1eq, ic2eq]`
+    /// `[ic1eq, ic2eq]`, each as `[L, R]` lanes.
     s: [[f32; 2]; 2],
 }
+
+/// How a band runs over one sub-block.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Mode {
+    /// Settled and fully wet: the filter output as it is.
+    Full,
+    /// Settled coefficients, dry/wet moving.
+    Fade,
+    /// Coefficients moving from `c0` to `c1` sample by sample.
+    Glide,
+}
+
+/// A band that has to be computed in this sub-block.
+#[derive(Debug, Clone, Copy)]
+struct Job {
+    k: usize,
+    mode: Mode,
+    w0: f32,
+    w1: f32,
+    c0: Coefs,
+    c1: Coefs,
+    s: [[f32; 2]; 2],
+}
+
+const IDLE_JOB: Job =
+    Job { k: 0, mode: Mode::Full, w0: 0.0, w1: 0.0, c0: Coefs::ZERO, c1: Coefs::ZERO, s: [[0.0; 2]; 2] };
 
 /// The audio thread's part of one channel's EQ.
 #[derive(Debug, Clone)]
@@ -532,11 +560,13 @@ impl EqRt {
         if self.b.iter().zip(&targets).all(|(b, t)| b.wet == 0.0 && !(on && t.on)) {
             return;
         }
+        let mut jobs = [IDLE_JOB; BANDS];
         let mut i0 = 0;
         while i0 < n {
             let len = SUB.min(n - i0);
             let (lb, rb) = (&mut l[i0..i0 + len], &mut r[i0..i0 + len]);
-            for (b, t) in self.b.iter_mut().zip(&targets) {
+            let mut nj = 0;
+            for (k, (b, t)) in self.b.iter_mut().zip(&targets).enumerate() {
                 if b.wet == 0.0 {
                     // Inaudible: take the new settings at once.
                     if (b.kind, b.freq, b.gain_db, b.q) != (t.kind, t.freq, t.gain_db, t.q) {
@@ -574,7 +604,20 @@ impl EqRt {
                     continue;
                 }
                 let c1 = b.c;
-                run_band(&mut b.s, lb, rb, w0, w1, &c0, &c1);
+                let mode = if c0 != c1 {
+                    Mode::Glide
+                } else if w0 == 1.0 && w1 == 1.0 {
+                    Mode::Full
+                } else {
+                    Mode::Fade
+                };
+                jobs[nj] = Job { k, mode, w0, w1, c0, c1, s: b.s };
+                nj += 1;
+            }
+            let jobs = &mut jobs[..nj];
+            run_bands(jobs, lb, rb);
+            for j in jobs.iter() {
+                self.b[j.k].s = j.s.map(|lanes| lanes.map(clean));
             }
             i0 += len;
         }
@@ -586,44 +629,68 @@ impl EqRt {
     }
 }
 
-/// One SVF step: returns the output, updates the state.
+/// Left and right side by side: plain arrays the compiler keeps in one
+/// vector register (no intrinsics, so the same code on every CPU).
+type Lanes = [f32; 2];
+
+/// One SVF step on both lanes: returns the output, updates the state.
+/// Written out without fused multiply-add, so each lane rounds exactly like
+/// the plain scalar filter.
 #[inline(always)]
-fn svf(c: &Coefs, ic1: &mut f32, ic2: &mut f32, v0: f32) -> f32 {
-    let v3 = v0 - *ic2;
-    let v1 = c.a1 * *ic1 + c.a2 * v3;
-    let v2 = *ic2 + c.a2 * *ic1 + c.a3 * v3;
-    *ic1 = 2.0 * v1 - *ic1;
-    *ic2 = 2.0 * v2 - *ic2;
-    c.m0 * v0 + c.m1 * v1 + c.m2 * v2
+fn svf(c: &Coefs, s: &mut [Lanes; 2], v0: Lanes) -> Lanes {
+    let [ic1, ic2] = *s;
+    let v3 = [v0[0] - ic2[0], v0[1] - ic2[1]];
+    let v1 = [c.a1 * ic1[0] + c.a2 * v3[0], c.a1 * ic1[1] + c.a2 * v3[1]];
+    let v2 = [ic2[0] + c.a2 * ic1[0] + c.a3 * v3[0], ic2[1] + c.a2 * ic1[1] + c.a3 * v3[1]];
+    *s = [[2.0 * v1[0] - ic1[0], 2.0 * v1[1] - ic1[1]], [2.0 * v2[0] - ic2[0], 2.0 * v2[1] - ic2[1]]];
+    [c.m0 * v0[0] + c.m1 * v1[0] + c.m2 * v2[0], c.m0 * v0[1] + c.m1 * v1[1] + c.m2 * v2[1]]
 }
 
-/// Run one band over a sub-block: wet `w0 -> w1`, coefficients `c0 -> c1`.
+/// `v0 + w * (y - v0)` on both lanes (the dry/wet mix).
+#[inline(always)]
+fn mix(v0: Lanes, y: Lanes, w: f32) -> Lanes {
+    [v0[0] + w * (y[0] - v0[0]), v0[1] + w * (y[1] - v0[1])]
+}
+
+/// Run the bands of one sub-block in series, sample by sample: each sample
+/// goes through every band before the next one starts, with left and right
+/// in lanes. A band computes exactly what it would over the whole sub-block
+/// on its own (it only ever sees its own state and the previous band's
+/// output at the same sample), so the order changes the speed, not a bit of
+/// the output.
 #[inline]
-fn run_band(s: &mut [[f32; 2]; 2], l: &mut [f32], r: &mut [f32], w0: f32, w1: f32, c0: &Coefs, c1: &Coefs) {
-    let len = l.len();
-    let steady = c0 == c1;
-    for (ch, x) in [l, r].into_iter().enumerate() {
-        let [mut ic1, mut ic2] = s[ch];
-        if steady && w0 == 1.0 && w1 == 1.0 {
-            for v in x.iter_mut() {
-                *v = svf(c1, &mut ic1, &mut ic2, *v);
+fn run_bands(jobs: &mut [Job], l: &mut [f32], r: &mut [f32]) {
+    let len = l.len().min(r.len());
+    if jobs.iter().all(|j| j.mode == Mode::Full) {
+        // the settled case, kept free of per-band branches
+        for (a, b) in l.iter_mut().zip(r.iter_mut()) {
+            let mut x = [*a, *b];
+            for j in jobs.iter_mut() {
+                x = svf(&j.c1, &mut j.s, x);
             }
-        } else if steady {
-            for (i, v) in x.iter_mut().enumerate() {
-                let v0 = *v;
-                let y = svf(c1, &mut ic1, &mut ic2, v0);
-                *v = v0 + ramp(w0, w1, i, len) * (y - v0);
-            }
-        } else {
-            for (i, v) in x.iter_mut().enumerate() {
-                let t = if i + 1 >= len { 1.0 } else { (i + 1) as f32 / len as f32 };
-                let c = if t == 1.0 { *c1 } else { c0.lerp(c1, t) };
-                let v0 = *v;
-                let y = svf(&c, &mut ic1, &mut ic2, v0);
-                *v = v0 + ramp(w0, w1, i, len) * (y - v0);
-            }
+            [*a, *b] = x;
         }
-        s[ch] = [clean(ic1), clean(ic2)];
+        return;
+    }
+    for i in 0..len {
+        let mut x = [l[i], r[i]];
+        for j in jobs.iter_mut() {
+            x = match j.mode {
+                Mode::Full => svf(&j.c1, &mut j.s, x),
+                Mode::Fade => {
+                    let y = svf(&j.c1, &mut j.s, x);
+                    mix(x, y, ramp(j.w0, j.w1, i, len))
+                }
+                Mode::Glide => {
+                    let t = if i + 1 >= len { 1.0 } else { (i + 1) as f32 / len as f32 };
+                    let c = if t == 1.0 { j.c1 } else { j.c0.lerp(&j.c1, t) };
+                    let y = svf(&c, &mut j.s, x);
+                    mix(x, y, ramp(j.w0, j.w1, i, len))
+                }
+            };
+        }
+        l[i] = x[0];
+        r[i] = x[1];
     }
 }
 
@@ -905,5 +972,77 @@ mod tests {
         p.on.store(false, Relaxed);
         eq.reset(&p);
         assert!(!eq.active());
+    }
+
+    /// The scalar filter as it ran before the lanes: one band at a time over
+    /// the whole sub-block, left then right.
+    fn reference_band(s: &mut [[f32; 2]; 2], x: &mut [f32], ch: usize, j: &Job) {
+        let len = x.len();
+        let (mut ic1, mut ic2) = (s[0][ch], s[1][ch]);
+        let mut step = |c: &Coefs, v0: f32| {
+            let v3 = v0 - ic2;
+            let v1 = c.a1 * ic1 + c.a2 * v3;
+            let v2 = ic2 + c.a2 * ic1 + c.a3 * v3;
+            ic1 = 2.0 * v1 - ic1;
+            ic2 = 2.0 * v2 - ic2;
+            c.m0 * v0 + c.m1 * v1 + c.m2 * v2
+        };
+        for (i, v) in x.iter_mut().enumerate() {
+            let v0 = *v;
+            *v = match j.mode {
+                Mode::Full => step(&j.c1, v0),
+                Mode::Fade => v0 + ramp(j.w0, j.w1, i, len) * (step(&j.c1, v0) - v0),
+                Mode::Glide => {
+                    let t = if i + 1 >= len { 1.0 } else { (i + 1) as f32 / len as f32 };
+                    let c = if t == 1.0 { j.c1 } else { j.c0.lerp(&j.c1, t) };
+                    v0 + ramp(j.w0, j.w1, i, len) * (step(&c, v0) - v0)
+                }
+            };
+        }
+        (s[0][ch], s[1][ch]) = (ic1, ic2);
+    }
+
+    #[test]
+    fn lanes_match_the_scalar_filter_bit_for_bit() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 40) as f32 / (1u64 << 24) as f32
+        };
+        let modes = [Mode::Full, Mode::Fade, Mode::Glide];
+        for trial in 0..3000 {
+            let nj = 1 + trial % BANDS;
+            let len = [SUB, SUB, 17, 1][trial % 4];
+            let mut jobs = [IDLE_JOB; BANDS];
+            for (k, j) in jobs[..nj].iter_mut().enumerate() {
+                let kind = Kind::ALL[(rnd() * 6.0) as usize % 6];
+                let band = |r: [f32; 3]| {
+                    coefs(kind, 20.0 * 1000f32.powf(r[0]), r[1] * 48.0 - 24.0, 0.1 + r[2] * 10.0, 48_000.0)
+                };
+                let mode = modes[(rnd() * 3.0) as usize % 3];
+                let c1 = band([rnd(), rnd(), rnd()]);
+                let c0 = if mode == Mode::Glide { band([rnd(), rnd(), rnd()]) } else { c1 };
+                let (w0, w1) = if mode == Mode::Full { (1.0, 1.0) } else { (rnd(), rnd()) };
+                let s = [[rnd() - 0.5, rnd() - 0.5], [rnd() - 0.5, rnd() - 0.5]];
+                *j = Job { k, mode, w0, w1, c0, c1, s };
+            }
+            let l: Vec<f32> = (0..len).map(|_| rnd() * 2.0 - 1.0).collect();
+            let r: Vec<f32> = (0..len).map(|_| rnd() - 0.5).collect();
+            let mut want = (l.clone(), r.clone());
+            let mut states: Vec<_> = jobs[..nj].iter().map(|j| j.s).collect();
+            for (j, s) in jobs[..nj].iter().zip(&mut states) {
+                reference_band(s, &mut want.0, 0, j);
+                reference_band(s, &mut want.1, 1, j);
+            }
+            let (mut gl, mut gr) = (l, r);
+            run_bands(&mut jobs[..nj], &mut gl, &mut gr);
+            let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            assert_eq!((bits(&gl), bits(&gr)), (bits(&want.0), bits(&want.1)), "trial {trial}");
+            for (j, s) in jobs[..nj].iter().zip(&states) {
+                assert_eq!(j.s.map(|x| x.map(f32::to_bits)), s.map(|x| x.map(f32::to_bits)), "trial {trial} state");
+            }
+        }
     }
 }
