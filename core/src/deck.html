@@ -190,6 +190,17 @@ function toast(text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("show"), 5000);
 }
+// What an answer says: a refusal is {"error": "..."}; anything else (an older BananaSplit,
+// another program on the port) is the text as it is.
+async function answerText(r) {
+  const text = await r.text();
+  if (r.ok) return text;
+  try {
+    const j = JSON.parse(text);
+    if (j && typeof j.error === "string") return j.error;
+  } catch (e) { /* not JSON */ }
+  return text;
+}
 async function send(params) {
   try {
     const r = await fetch("/api/cmd", {
@@ -197,7 +208,7 @@ async function send(params) {
       headers: { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(params).toString(),
     });
-    if (!r.ok) toast(await r.text());
+    if (!r.ok) toast(await answerText(r));
     return r.ok;
   } catch (e) {
     toast("BananaSplit is not answering");
