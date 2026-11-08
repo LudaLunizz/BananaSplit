@@ -2194,9 +2194,18 @@ impl WindowProc {
         !self.gone && matches!(self.child.try_wait(), Ok(None))
     }
 
-    /// Close it (it saves nothing; the mixer has the state).
+    /// Close it (it saves nothing; the mixer has the state). Dropping it
+    /// waits for the process to end.
     pub fn close(mut self) {
         self.send("quit");
+    }
+}
+
+impl Drop for WindowProc {
+    /// Every way out (close, a crashed or closed window, a restart) ends
+    /// here, so the process is always waited for (the same code as Linux,
+    /// where an unwaited child stays a zombie).
+    fn drop(&mut self) {
         self.stdin = None; // end of input: it quits even if it missed "quit"
         let t0 = Instant::now();
         while t0.elapsed() < Duration::from_secs(3) {
