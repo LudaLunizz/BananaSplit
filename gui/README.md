@@ -47,5 +47,10 @@ Rules:
 * Do not touch the localhost checks (Host, Origin, custom header, same user) or
   the window process's isolation and reaping without a test that shows why.
 
-The page itself (`gui.html`) is still one file per app, next to its
-`gui_platform.rs`.
+The page (`gui.html`) is one file too. It holds the parts that only one system
+shows (the "Virtual cables" window of Windows and macOS, a few texts): the server
+sets `<html data-platform="linux|windows|macos">` and the page hides what is not
+its system's, with `data-only="windows macos"` in the markup and `PLATFORM`/`MAC`
+in the script. A change to one system's part must not move the others: the
+tests check that every `data-only` names a system and that no element id is
+used twice (three systems' markup now share one document).

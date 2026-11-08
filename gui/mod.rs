@@ -45,7 +45,7 @@
 //!
 //! | item | what it is |
 //! |---|---|
-//! | `PAGE` | the main page (`gui.html`) |
+//! | `PLATFORM` | `"linux"`, `"windows"` or `"macos"`: set on the page as `<html data-platform>` |
 //! | `Updater` | the app's updater (`crate::update::Updater`) |
 //! | `LocalIp`, `local_timestamp()` | the addresses and the clock the page shows |
 //! | `open_page(url)`, `open_folder(path)` | the default browser and file manager |
@@ -96,7 +96,8 @@ mod window;
 pub use window::*;
 
 pub const DEFAULT_PORT: u16 = 8790;
-const PAGE: &str = crate::gui_platform::PAGE;
+/// The page: one for all three systems, told its own by `<html data-platform>`.
+const PAGE: &str = include_str!("gui.html");
 /// The touch deck at `/deck` (shared: `core/src/deck.html`).
 const DECK: &str = bananasplit::DECK_PAGE;
 const MAX_HEAD: usize = 16 * 1024;
@@ -308,23 +309,24 @@ impl Hub {
         lock(&self.scene_list).clone()
     }
 
+    /// The page, which also learns what system it is on.
     fn page(&self) -> String {
-        self.themed(PAGE)
+        self.themed(PAGE, &format!(" data-platform=\"{}\"", crate::gui_platform::PLATFORM))
     }
 
     fn deck(&self) -> String {
-        self.themed(DECK)
+        self.themed(DECK, "")
     }
 
-    /// `html` with the theme and zoom set on its `<html lang="en">` tag.
-    fn themed(&self, html: &str) -> String {
+    /// `html` with the theme and zoom (and `extra`) set on its `<html lang="en">` tag.
+    fn themed(&self, html: &str, extra: &str) -> String {
         let theme = THEMES[self.theme.load(SeqCst) as usize % THEMES.len()];
         let zoom = f32::from_bits(self.zoom.load(SeqCst));
         let attrs = match theme {
             Theme::Auto => format!(" data-zoom=\"{zoom}\""),
             t => format!(" data-theme=\"{}\" data-zoom=\"{zoom}\"", t.as_str()),
         };
-        html.replacen("<html lang=\"en\">", &format!("<html lang=\"en\"{attrs}>"), 1)
+        html.replacen("<html lang=\"en\">", &format!("<html lang=\"en\"{attrs}{extra}>"), 1)
     }
 }
 
@@ -2479,15 +2481,60 @@ mod tests {
     }
 
     #[test]
-    fn page_gets_the_theme_and_zoom() {
+    fn page_gets_the_theme_zoom_and_platform() {
         let h = hub_in("page");
-        assert!(h.page().starts_with("<!doctype html>\n<html lang=\"en\" data-theme=\"dark\" data-zoom=\"1\">"));
+        let os = crate::gui_platform::PLATFORM;
+        assert!(h.page().starts_with(&format!(
+            "<!doctype html>\n<html lang=\"en\" data-theme=\"dark\" data-zoom=\"1\" data-platform=\"{os}\">"
+        )));
         h.set_look(Theme::Auto, 1.25);
-        assert!(h.page().contains("<html lang=\"en\" data-zoom=\"1.25\">"));
+        assert!(h.page().contains(&format!("<html lang=\"en\" data-zoom=\"1.25\" data-platform=\"{os}\">")));
         h.set_look(Theme::Light, 1.0);
-        assert!(h.page().contains("<html lang=\"en\" data-theme=\"light\" data-zoom=\"1\">"));
+        assert!(
+            h.page()
+                .contains(&format!("<html lang=\"en\" data-theme=\"light\" data-zoom=\"1\" data-platform=\"{os}\">"))
+        );
+        // the deck is the same on every system and is not told which
+        assert!(!h.deck().contains("data-platform"));
         h.player.shutdown();
         h.takes.shutdown();
+    }
+
+    /// The page holds the parts of all three systems; the server tells it which one it is.
+    #[test]
+    fn the_page_knows_its_three_systems() {
+        assert!(["linux", "windows", "macos"].contains(&crate::gui_platform::PLATFORM));
+        // every `data-only` names systems, and only these
+        let mut seen = std::collections::BTreeSet::new();
+        for part in PAGE.split("data-only=\"").skip(1) {
+            let names = part.split('"').next().unwrap();
+            for n in names.split(' ') {
+                assert!(["linux", "windows", "macos"].contains(&n), "data-only names {n:?}");
+                seen.insert(n);
+            }
+        }
+        assert_eq!(seen.len(), 3, "each system has parts of its own: {seen:?}");
+        // the hiding rules cover each system, and a page that is not told its system (opened as a file) shows Linux's
+        for p in ["linux", "windows", "macos"] {
+            assert!(
+                PAGE.contains(&format!("html[data-platform=\"{p}\"] [data-only]:not([data-only~=\"{p}\"])")),
+                "{p}"
+            );
+        }
+        assert!(PAGE.contains("html:not([data-platform]) [data-only]:not([data-only~=\"linux\"])"));
+    }
+
+    /// With the markup of three systems in one file, an id must not appear twice: `$("x")` would
+    /// find the first one, whatever system the page is on.
+    #[test]
+    fn the_pages_element_ids_are_unique() {
+        let mut ids = std::collections::BTreeMap::<&str, usize>::new();
+        for part in PAGE.split(" id=\"").skip(1) {
+            *ids.entry(part.split('"').next().unwrap()).or_default() += 1;
+        }
+        let twice: Vec<_> = ids.iter().filter(|&(_, &n)| n > 1).map(|(id, _)| *id).collect();
+        assert!(twice.is_empty(), "ids used twice: {twice:?}");
+        assert!(ids.len() > 100, "the scan found only {} ids", ids.len());
     }
 
     #[test]
