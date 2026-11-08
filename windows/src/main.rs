@@ -11,8 +11,9 @@
 // Not for `cargo test`: the test harness prints to its console.
 #![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
-#[path = "gui.rs"]
+#[path = "../../gui/mod.rs"]
 mod gui;
+mod gui_platform;
 // The same file as linux/src/tui.rs; the Windows console uses part of it.
 #[cfg(windows)]
 #[path = "win/window.rs"]
@@ -573,7 +574,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             installed: hub.installed.load(SeqCst),
             window: if window.proc.is_some() { "app" } else { "none" },
             tray: window.tray(),
-            welcome: hub.cable_welcome.load(SeqCst),
+            welcome: Some(hub.cable_welcome.load(SeqCst)),
             update: &update_json,
         };
         hub.publish(gui::state_json(
@@ -741,7 +742,7 @@ fn main() -> ExitCode {
         }
         // Its window comes to the front: this start may pass that on.
         sys::allow_foreground();
-        if !gui::request_show(port, "") && !gui::open_window(&url) {
+        if !gui::request_show(port, "") && !gui_platform::open_window(&url) {
             return fail(
                 &format!("BananaSplit is already running at {url}, but its window could not be opened"),
                 false,
