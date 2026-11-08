@@ -1535,18 +1535,25 @@ pub fn host_ok(req: &Req, port: u16) -> bool {
     req.header("host").is_some_and(|h| origins(port).iter().any(|o| o.eq_ignore_ascii_case(h)))
 }
 
-/// A state-changing request comes from our own page.
-pub fn csrf_ok(req: &Req, port: u16) -> bool {
-    if req.header("x-bananasplit") != Some("1") {
-        return false;
-    }
-    if req.header("sec-fetch-site").is_some_and(|v| v.eq_ignore_ascii_case("cross-site")) {
+/// A request comes from our own page, or from a program (which sends
+/// neither header). A web page on another site or port is turned away:
+/// it could otherwise hold all the event streams and lock the real window
+/// out, or keep the main loop busy with device lists. Checked for every
+/// request under `/api/`.
+pub fn same_origin(req: &Req, port: u16) -> bool {
+    let site = req.header("sec-fetch-site");
+    if site.is_some_and(|v| v.eq_ignore_ascii_case("cross-site") || v.eq_ignore_ascii_case("same-site")) {
         return false;
     }
     match req.header("origin") {
         None => true,
         Some(o) => origins(port).iter().any(|h| o.eq_ignore_ascii_case(&format!("http://{h}"))),
     }
+}
+
+/// A state-changing request comes from our own page.
+pub fn csrf_ok(req: &Req, port: u16) -> bool {
+    req.header("x-bananasplit") == Some("1") && same_origin(req, port)
 }
 
 fn reason(code: u16) -> &'static str {
@@ -1649,6 +1656,9 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
     };
     if !host_ok(&req, port) {
         return respond(&mut s, 403, "text/plain; charset=utf-8", b"wrong Host", "");
+    }
+    if req.path.starts_with("/api/") && !same_origin(&req, port) {
+        return respond(&mut s, 403, "text/plain; charset=utf-8", b"forbidden", "");
     }
     let text = "text/plain; charset=utf-8";
     match (req.method.as_str(), req.path.as_str()) {
@@ -2009,6 +2019,17 @@ mod tests {
         )
         .unwrap();
         assert!(!csrf_ok(&cross, 8790));
+        // reads under /api/ are checked too (no X-BananaSplit needed)
+        let get =
+            |extra: &str| req(&format!("GET /api/events HTTP/1.1\r\nHost: 127.0.0.1:8790\r\n{extra}\r\n")).unwrap();
+        assert!(same_origin(&get(""), 8790));
+        assert!(same_origin(&get("Origin: http://127.0.0.1:8790\r\nSec-Fetch-Site: same-origin\r\n"), 8790));
+        assert!(same_origin(&get("Sec-Fetch-Site: none\r\n"), 8790));
+        assert!(!same_origin(&get("Origin: https://evil.example\r\n"), 8790));
+        assert!(!same_origin(&get("Origin: null\r\n"), 8790));
+        assert!(!same_origin(&get("Origin: http://localhost:3000\r\n"), 8790));
+        assert!(!same_origin(&get("Sec-Fetch-Site: cross-site\r\n"), 8790));
+        assert!(!same_origin(&get("Sec-Fetch-Site: same-site\r\n"), 8790));
     }
 
     #[test]
