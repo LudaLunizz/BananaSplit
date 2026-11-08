@@ -468,10 +468,6 @@ dialog::backdrop { background: var(--overlay); }
 .upd-auto p { margin: 0; color: var(--muted); font-size: 10.5px; }
 .upd-auto b { color: var(--text); font-size: 11.5px; }
 
-/* ---- a Safari too old for this page (macOS 11 and 12 not updated) ---- */
-.too-old { max-width: 520px; margin: 72px auto; padding: 0 24px; font-size: 13px; line-height: 1.5; }
-.too-old b { display: block; margin-bottom: 8px; font-size: 15px; }
-
 /* ---- virtual cables ---- */
 #cabdlg { width: min(620px, calc(100vw - 32px)); }
 .cab p, .cab li { margin: 0 0 8px; font-size: 11.5px; line-height: 1.45; }
@@ -482,6 +478,16 @@ dialog::backdrop { background: var(--overlay); }
 .cab .warn { color: var(--amber); }
 .cab .muted { color: var(--muted); }
 .cab [hidden] { display: none; }
+
+/* ---- a Safari too old for this page (macOS 11 and 12 not updated) ---- */
+.too-old { max-width: 520px; margin: 72px auto; padding: 0 24px; font-size: 13px; line-height: 1.5; }
+.too-old b { display: block; margin-bottom: 8px; font-size: 15px; }
+
+/* ---- parts only one system shows: <html data-platform="..."> is set by the server ---- */
+html[data-platform="linux"] [data-only]:not([data-only~="linux"]),
+html[data-platform="windows"] [data-only]:not([data-only~="windows"]),
+html[data-platform="macos"] [data-only]:not([data-only~="macos"]),
+html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none !important; }
 
 /* ---- a channel's menu (what it takes in / plays on) ---- */
 .cmenu {
@@ -554,10 +560,10 @@ dialog::backdrop { background: var(--overlay); }
         <button class="mi" role="menuitemcheckbox" id="m-autostart" aria-checked="false"><span class="chk"></span>Start with the system</button>
         <button class="mi" role="menuitemcheckbox" id="m-tray" aria-checked="true"><span class="chk"></span>Closing the window keeps it running</button>
         <button class="mi" role="menuitem" id="m-install" hidden><span class="chk"></span>Add BananaSplit to the app menu</button>
-        <button class="mi" role="menuitem" id="m-cables"><span class="chk"></span>Virtual cables…</button>
+        <button class="mi" role="menuitem" id="m-cables" data-only="windows macos"><span class="chk"></span>Virtual cables…</button>
         <button class="mi" role="menuitem" id="m-update"><span class="chk"></span><span id="m-updtxt">Check for updates…</span><span class="kb" id="m-updkb"></span></button>
         <div class="msep"></div>
-        <button class="mi danger" role="menuitem" id="m-quit"><span class="chk"></span>Quit BananaSplit<span class="kb">cables fall silent</span></button>
+        <button class="mi danger" role="menuitem" id="m-quit"><span class="chk"></span>Quit BananaSplit<span class="kb" data-only="linux">removes the cables</span><span class="kb" data-only="windows macos">cables fall silent</span></button>
       </div>
     </div>
   </div>
@@ -653,7 +659,7 @@ dialog::backdrop { background: var(--overlay); }
   </div>
   <div class="dlg-body">
     <div class="here"><span class="caps">This computer's IP address<span id="vbaniplural"></span></span><div class="iplist" id="vbanips"></div>
-      <p id="vbanhint">In Voicemeeter's VBAN window, send to this address on UDP port 6980. If nothing arrives, allow BananaSplit in System Settings › Privacy &amp; Security › Local Network (and in the firewall, if it is on).</p></div>
+      <p id="vbanhint">In Voicemeeter's VBAN window, send to this address on UDP port 6980 (open that port in the firewall if nothing arrives).</p></div>
     <p class="vnote" id="vbanstate"></p>
     <p class="vnote">Compatible with Voicemeeter: a stream is known by its name and the sender's IPv4 address.</p>
     <datalist id="vbantos"></datalist>
@@ -690,7 +696,7 @@ dialog::backdrop { background: var(--overlay); }
     <div class="upd-notes" id="upd-notesw" hidden><h4 id="upd-notesh">What's new</h4><pre id="upd-notes"></pre></div>
     <div class="upd-auto">
       <button class="tool switch" id="upd-auto" aria-pressed="false" aria-describedby="upd-autotxt">Off</button>
-      <p id="upd-autotxt"><b>Check for updates automatically</b><br>BananaSplit then checks GitHub a minute after it starts and once a day, and tells you when there is a new version. It doesn’t install it itself: a macOS app is replaced as a whole, with the new one from the release page. Off (the default), it looks for a new version only when you click Check now.</p>
+      <p id="upd-autotxt"><span data-only="linux windows"><b>Install updates automatically</b><br>BananaSplit then checks GitHub a minute after it starts and once a day, installs a new version by itself once it has been out for two days and tells you when a restart finishes it. It never restarts on its own. Off (the default), it looks for a new version only when you click Check now.</span><span data-only="macos"><b>Check for updates automatically</b><br>BananaSplit then checks GitHub a minute after it starts and once a day, and tells you when there is a new version. It doesn’t install it itself: a macOS app is replaced as a whole, with the new one from the release page. Off (the default), it looks for a new version only when you click Check now.</span></p>
     </div>
   </div>
 </dialog>
@@ -701,11 +707,56 @@ dialog::backdrop { background: var(--overlay); }
     <p id="cab-welcome" hidden><b>Welcome to BananaSplit.</b> One optional step before you start: virtual cables. You can skip it, and come back with Menu › Virtual cables… at any time.</p>
     <p class="cab-state" id="cab-state" role="status">Looking for cables…</p>
     <div class="upd-acts">
-      <button class="tool primary" id="cab-page">BlackHole download page</button>
-      <button class="tool" id="cab-sound">Sound settings</button>
-      <button class="tool" id="cab-midi">Audio MIDI Setup</button>
+      <button class="tool primary" id="cab-splitter" data-only="windows">Splitter download page</button>
+      <button class="tool" id="cab-page" data-only="windows">VB-Audio download page</button>
+      <button class="tool" id="cab-sound" data-only="windows">Windows sound settings</button>
+      <button class="tool primary" id="cab-page-m" data-only="macos">BlackHole download page</button>
+      <button class="tool" id="cab-sound-m" data-only="macos">Sound settings</button>
+      <button class="tool" id="cab-midi" data-only="macos">Audio MIDI Setup</button>
       <button class="tool" id="cab-again">Check again</button>
     </div>
+    <div data-only="windows">
+
+    <h4>What they are for</h4>
+    <p>A virtual cable is an audio device that only exists in software. It gives a BananaSplit channel a device of its own:</p>
+    <ul>
+      <li><b>On a strip</b> it is an output device. Pick it as the speaker in a game, a browser or Discord, and that app’s sound has a strip of its own.</li>
+      <li><b>On a bus</b> it is a microphone. Pick it as the microphone in Discord or OBS, and they hear that bus’s mix.</li>
+    </ul>
+    <p>Two kinds of cables work:</p>
+    <ul>
+      <li><b>Splitter</b>, BananaSplit’s own: a cable for every channel, named after it. Apps play into “Splitter 1” … “Splitter 6” to reach strips 1 to 6, and record “Splitter A1” … “Splitter B2” to hear buses A1 to B2 (once the bus’s cable is on in its menu; B1 and B2 have theirs on to begin with).</li>
+      <li><b>VB-Audio’s cables</b> (VB-CABLE: CABLE, CABLE-A … CABLE-D). Each pair serves one channel, strips first, then buses: “CABLE Input” is the output device, “CABLE Output” the microphone. BananaSplit uses them for the channels Splitter doesn’t cover.</li>
+    </ul>
+    <p class="muted">Without cables, everything else works: your headset and other devices, the mixer, recording, playback and VBAN.</p>
+
+    <h4>With Voicemeeter</h4>
+    <p id="cab-vm"></p>
+    <p>Splitter and VB-CABLE add devices of their own and leave Voicemeeter’s (Voicemeeter Input, Voicemeeter AUX …) and its settings as they are. BananaSplit never uses Voicemeeter’s devices as its cables, and only connects to one if you pick it in a channel’s menu.</p>
+    <p>To pass sound between Voicemeeter and BananaSplit without installing anything, use VBAN (the VBAN button at the top). On the same computer only one of them can listen on UDP port 6980, so give BananaSplit another port there (6981, say) and send to 127.0.0.1.</p>
+
+    <h4>Your default devices</h4>
+    <p id="cab-def"></p>
+    <p>BananaSplit never changes the Windows defaults. When a new audio device is installed, though, Windows may make it the default, so after installing a cable check here, or in the Windows sound settings, that your headset is still the default. Apps would otherwise play into the cable instead of your ears. (A1 on “Default output” skips a cable either way, so the mixer never feeds itself.)</p>
+
+    <h4>Installing Splitter</h4>
+    <p>For now, Splitter is a test build: Microsoft hasn’t signed it yet, so Windows only loads it in test-signing mode. That mode needs Secure Boot off, and some games’ anti-cheat refuses to run in it. If that matters to you, use VB-Audio’s cables until Splitter is signed.</p>
+    <ol>
+      <li>Open the Splitter download page, download the Splitter zip and extract it.</li>
+      <li>Switch test signing on as its README.txt explains (once), then double-click <b>install.cmd</b> and allow it to make changes.</li>
+      <li>Start BananaSplit. It finds the cables by itself and uses them instead of VB-Audio’s, so point your apps at the Splitter cables; check your default devices here.</li>
+    </ol>
+
+    <h4>Installing VB-Audio’s cables</h4>
+    <ol>
+      <li>Open the VB-Audio download page and download the VB-CABLE driver pack (free). CABLE-A … CABLE-D, for more channels, come in two extra packs (A+B, C+D) on the same page.</li>
+      <li>Extract the zip, right-click <b>VBCABLE_Setup_x64.exe</b> and choose <b>Run as administrator</b>, then <b>Install Driver</b>.</li>
+      <li>Restart Windows: the driver needs it.</li>
+      <li>Start BananaSplit. It finds the cables by itself; check your default devices here.</li>
+    </ol>
+    <p class="muted">BananaSplit doesn’t install drivers itself: that takes administrator rights and the driver’s own installer, and you decide whether you want them.</p>
+    </div>
+    <div data-only="macos">
 
     <h4>What they are for</h4>
     <p>A virtual cable is an audio device that only exists in software: what an app plays into it comes out of its input. It gives a BananaSplit channel a device of its own:</p>
@@ -721,7 +772,7 @@ dialog::backdrop { background: var(--overlay); }
     <p class="muted">Without cables, everything else works: your headset and other devices, the mixer, recording, playback and VBAN.</p>
 
     <h4>Your default devices</h4>
-    <p id="cab-def"></p>
+    <p id="cab-def-m"></p>
     <p>BananaSplit never changes the macOS defaults. A newly installed cable can become one, though: after installing, check here or in System Settings › Sound that your headset is still the default output and input. Apps would otherwise play into the cable instead of your ears. (A1 on “Default output” skips a cable either way, so the mixer never feeds itself.)</p>
 
     <h4>Installing BlackHole</h4>
@@ -731,6 +782,7 @@ dialog::backdrop { background: var(--overlay); }
       <li>Check your default devices here.</li>
     </ol>
     <p class="muted">BlackHole is a program of its own, with a licence of its own (GPL-3.0): BananaSplit only uses its devices. BananaSplit doesn’t install drivers itself: that takes an administrator’s password and the driver’s own installer, and you decide whether you want them.</p>
+    </div>
   </div>
 </dialog>
 
@@ -740,10 +792,12 @@ dialog::backdrop { background: var(--overlay); }
 
 <script>
 "use strict";
+// The system this page is shown on, set on <html> by the server: some parts of the page are only for one.
+const PLATFORM = document.documentElement.dataset.platform || "linux", MAC = PLATFORM === "macos";
 // The window is drawn by the Safari this Mac has (WKWebView). One before
 // 15.4 (macOS 11, and 12 before 12.3, without Safari's updates) has no
 // <dialog>, so the console would not work: it says so instead.
-if (typeof HTMLDialogElement !== "function") {
+if (MAC && typeof HTMLDialogElement !== "function") {
   const p = document.createElement("p"), b = document.createElement("b");
   p.className = "too-old";
   b.textContent = "BananaSplit needs a newer Safari";
@@ -1272,6 +1326,7 @@ function placeChanMenu() {
   m.style.top = y.toFixed(1) + "px";
   m.style.maxHeight = Math.max(220, app.offsetHeight - y - 12).toFixed(0) + "px";
 }
+const reEscape = (s) => s.replace(/[\\.^$|?*+()[\]{}]/g, "\\$&");
 async function menuSend(params) {
   const ok = await send(params, false);
   if (menuCh >= 0) loadChanMenu(false);
@@ -1332,12 +1387,12 @@ function buildChanMenu(focus) {
       });
     }
   }
-  // devices (and the cables, as devices)
+  // devices, programs and (strips) what outputs play: JACK connections
   const cands = strip ? D.strip : D.bus;
   const conn = new Set(C.conn);
   const kinds = strip
-    ? [["device", "Inputs · microphones, sound cards"]]
-    : [["device", "Outputs · speakers, headphones"]];
+    ? [["device", "Inputs · microphones, sound cards"], ["app", "Programs (JACK)"], ["monitor", "What an output plays"]]
+    : [["device", "Outputs · speakers, headphones"], ["app", "Programs (JACK)"]];
   for (const [kind, title] of kinds) {
     const list = cands.filter((x) => x.kind === kind);
     if (!list.length && kind !== "device") continue;
@@ -1364,11 +1419,11 @@ function buildChanMenu(focus) {
   const def = cands.find((x) => x.default);
   item({
     on: C.connect.includes("@default"), label: strip ? "Default input" : "Default output",
-    sub: (def ? "Now " + def.label + ". " : "") + "Follows what you pick in System Settings › Sound",
+    sub: (def ? "Now " + def.label + ". " : "") + "Follows what you pick in " + (MAC ? "System Settings › Sound" : "the sound settings"),
     act: (v) => menuSend({ op: "devdefault", ch, v: v ? 1 : 0 }),
   });
-  // a line that names a device is that device's tick above
-  const exact = new Set(cands.map((x) => x.client));
+  // a line that names a device is that device's tick above (a JACK pattern on Linux and Windows, the device on macOS)
+  const exact = new Set(cands.map((x) => (MAC ? x.client : "^" + reEscape(x.client) + ":")));
   for (const p of C.connect.filter((p) => p !== "@default" && !exact.has(p))) {
     item({ on: true, label: "connect = " + p, sub: "A line of the config file; click to remove it", act: () => menuSend({ op: "devpattern", ch, pattern: p }) });
   }
@@ -1727,7 +1782,9 @@ $("m-quit").addEventListener("click", (e) => {
     if (events) events.close();
     closeMenus();
     send({ op: "quit" }, true);
-    showOverlay("BananaSplit has stopped", "The mixer is closed. Its virtual cables stay installed, but carry no sound until it starts again. You can close this window.");
+    showOverlay("BananaSplit has stopped", PLATFORM === "linux"
+      ? "The mixer is closed and its virtual cables are removed. You can close this window."
+      : "The mixer is closed. Its virtual cables stay installed, but carry no sound until it starts again. You can close this window.");
     return;
   }
   quitArmed = performance.now() + 3000;
@@ -1892,7 +1949,7 @@ function render(S) {
   if (!held("autostart")) setChecked($("m-autostart"), S.app.autostart);
   if (!held("tray")) setChecked($("m-tray"), S.app.closeToTray);
   if ($("m-install").hidden !== S.app.installed) $("m-install").hidden = S.app.installed;
-  setTitle($("m-tray"), S.app.tray ? "" : "No menu bar icon here: closing the window quits BananaSplit");
+  setTitle($("m-tray"), S.app.tray ? "" : MAC ? "No menu bar icon here: closing the window quits BananaSplit" : "No tray here: closing the window minimizes it instead");
   }
   // the first start: the "Virtual cables" window opens by itself, once
   if (S.app.welcome && !welcomed) { welcomed = true; $("cab-welcome").hidden = false; openCables(); }
@@ -2553,7 +2610,9 @@ function renderVbanIps(V) {
   if (!V.ips.length) box.append(el("span", "vnote", "No network connection: only this computer can be reached."));
   setText($("vbaniplural"), V.ips.length > 1 ? "es" : "");
   setText($("vbanhint"), "In Voicemeeter's VBAN window, send to " + (main || "this computer's address") + " on UDP port " + V.port +
-    ", with the stream name you give the incoming stream here. If nothing arrives (or nothing is sent), allow BananaSplit in System Settings › Privacy & Security › Local Network, and in the firewall if it is on.");
+    ", with the stream name you give the incoming stream here. " + (MAC
+      ? "If nothing arrives (or nothing is sent), allow BananaSplit in System Settings › Privacy & Security › Local Network, and in the firewall if it is on."
+      : "Open that UDP port in the firewall if nothing arrives."));
   // suggestions for "To IP": everyone on a network, and the computers that send to us
   const sug = new Map();
   for (const a of V.ips) if (a.bc) sug.set(a.bc, "everyone on " + a.if);
@@ -2630,7 +2689,7 @@ $("vbanport").addEventListener("keydown", (e) => { if (e.key === "Enter") $("vba
 $("vbanport").addEventListener("change", () => { hold("vbanport", 1500); send({ op: "vbanport", v: $("vbanport").value.trim() }, false); });
 document.querySelectorAll("dialog input, dialog select").forEach((i) => i.addEventListener("keydown", (e) => e.stopPropagation()));
 
-// ---- virtual cables (BlackHole and the like) ------------------------------------
+// ---- virtual cables (Windows: Splitter, VB-Audio; macOS: BlackHole and the like) ------
 let cabLoading = false, welcomed = false;
 async function loadCables() {
   if (cabLoading) return;
@@ -2642,7 +2701,34 @@ async function loadCables() {
   } catch (e) { /* "Check again" tries again */ }
   cabLoading = false;
 }
-function renderCables(C) {
+function renderCables(C) { if (MAC) renderMacCables(C); else renderWinCables(C); }
+function renderWinCables(C) {
+  const S = C.splitter, n = C.pairs.length;
+  const st = $("cab-state");
+  st.replaceChildren();
+  const lines = !S.found && !n ? [[null, "No virtual cables are installed. They are optional."]] : [
+    !S.found ? [null, "Splitter is not installed."]
+      : !S.missing.length ? [null, "Splitter is installed: " + S.cables.length + " cables, one for every channel."]
+      : ["warn", "Splitter is installed, but " + S.missing.join(", ") + (S.missing.length === 1 ? " is" : " are") + " missing (switched off or renamed in the Windows sound settings?)."],
+    [null, n ? "VB-Audio cables: " + C.pairs.join(", ") + (n === 1 ? ". It can serve one channel." : ". Each can serve one channel.") : "VB-Audio cables: none."],
+  ];
+  for (const [cls, text] of lines) {
+    if (st.childNodes.length) st.append(el("br"));
+    st.append(el("span", cls, text));
+  }
+  st.classList.toggle("ok", S.found || n > 0);
+  setText($("cab-vm"), C.voicemeeter.length
+    ? "Voicemeeter is installed here (" + C.voicemeeter.slice(0, 4).join(", ") + (C.voicemeeter.length > 4 ? " …" : "") + ")."
+    : "Voicemeeter is not installed here.");
+  const d = $("cab-def");
+  d.replaceChildren();
+  for (const [what, x] of [["Windows plays sound on ", C.output], ["Windows records from ", C.input]]) {
+    const line = el("span", x && x.cable ? "warn" : null, x ? what + x.name + (x.cable ? ": a virtual cable, not your headset or speakers." : ".") : what + "nothing (no device).");
+    if (d.childNodes.length) d.append(el("br"));
+    d.append(line);
+  }
+}
+function renderMacCables(C) {
   const st = $("cab-state"), n = C.cables.length;
   st.replaceChildren();
   const lines = !n ? [[null, "No virtual cables are installed. They are optional."]]
@@ -2652,7 +2738,7 @@ function renderCables(C) {
     st.append(el("span", cls, text));
   }
   st.classList.toggle("ok", n > 0);
-  const d = $("cab-def");
+  const d = $("cab-def-m");
   d.replaceChildren();
   for (const [what, x] of [["macOS plays sound on ", C.output], ["macOS records from ", C.input]]) {
     const line = el("span", x && x.cable ? "warn" : null, x ? what + x.name + (x.cable ? ": a virtual cable, not your headset or speakers." : ".") : what + "nothing (no device).");
@@ -2660,13 +2746,13 @@ function renderCables(C) {
     d.append(line);
   }
 }
-// Windows could not list its devices: nothing is known about the cables
+// the system could not list its devices: nothing is known about the cables
 function cablesError(why) {
   const st = $("cab-state");
   st.replaceChildren(el("span", "warn", "Could not list the sound devices: " + why));
   st.classList.remove("ok");
-  setText($("cab-vm"), "");
-  $("cab-def").replaceChildren();
+  if (!MAC) setText($("cab-vm"), "");
+  $(MAC ? "cab-def-m" : "cab-def").replaceChildren();
 }
 function openCables() {
   closeMenus();
@@ -2677,10 +2763,15 @@ $("m-cables").addEventListener("click", openCables);
 $("cabclose").addEventListener("click", () => $("cabdlg").close());
 // the first start's welcome: shown once
 $("cabdlg").addEventListener("close", () => { if (!$("cab-welcome").hidden) { $("cab-welcome").hidden = true; send({ op: "cables", a: "seen" }, true); } });
+$("cab-splitter").addEventListener("click", () => send({ op: "cables", a: "splitter" }, false));
 $("cab-page").addEventListener("click", () => send({ op: "cables", a: "page" }, false));
 $("cab-sound").addEventListener("click", () => send({ op: "cables", a: "sound" }, false));
+$("cab-page-m").addEventListener("click", () => send({ op: "cables", a: "page" }, false));
+$("cab-sound-m").addEventListener("click", () => send({ op: "cables", a: "sound" }, false));
 $("cab-midi").addEventListener("click", () => send({ op: "cables", a: "midi" }, false));
 $("cab-again").addEventListener("click", loadCables);
+// macOS says it a little differently (the text is set again when the state comes)
+if (MAC) $("vbanhint").textContent = "In Voicemeeter's VBAN window, send to this address on UDP port 6980. If nothing arrives, allow BananaSplit in System Settings › Privacy & Security › Local Network (and in the firewall, if it is on).";
 
 // ---- connection --------------------------------------------------------------------
 let lastMsg = 0, stopped = false, events = null;
