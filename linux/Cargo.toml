@@ -6,9 +6,10 @@ description = "6-strip, 5-bus low-latency virtual audio mixer for Linux (JACK / 
 license = "MIT"
 rust-version = "1.88"
 
-# Intentionally zero dependencies: libjack is loaded at runtime with dlopen,
+# Intentionally no outside dependencies (only the shared core in ../core): libjack is loaded at runtime with dlopen,
 # so the same binary works with JACK2 and with PipeWire's libjack.
 [dependencies]
+bananasplit-core = { path = "../core" }
 
 [lib]
 name = "bananasplit"
