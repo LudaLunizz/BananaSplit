@@ -3,7 +3,7 @@
 //! `gui/mod.rs`; every app has the same one. (macOS shows the page in a window
 //! of its own process, `mac/app.rs`, so it has no `window_command`.)
 
-use crate::gui::{Form, Hub};
+use crate::gui::{Form, Hub, portdir};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering::SeqCst;
@@ -25,7 +25,7 @@ pub fn peer_is_ours(peer: SocketAddr, us: SocketAddr) -> Option<bool> {
 /// The folder above `bananasplit/` where a running GUI notes its port
 /// (`~/Library/Caches/bananasplit/<client>.port`).
 pub fn port_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").filter(|h| !h.is_empty()).map(|h| PathBuf::from(h).join("Library").join("Caches"))
+    portdir::macos(std::env::var_os("HOME"))
 }
 
 /// Make `dir` (and what is above it) if it is missing, for this user only.

@@ -16,6 +16,7 @@ so there is one copy to fix and review instead of three.
 | file | |
 |---|---|
 | `mod.rs` | the server, the state, `command()`, the client helpers (`probe`, `request_show`, `request_quit`, ...). All three apps. |
+| `peer.rs`, `portdir.rs` | the per-system readers and choices that need no system call (see below). All three apps. |
 | `window.rs` | the window process (`bananasplit --window`) as seen from the mixer. Linux and Windows; macOS has its window in its own process. |
 
 ## The platform contract
@@ -38,7 +39,10 @@ Rules:
   thing, tested once in the shared tests.
 * The system calls stay at the leaves. Anything that decides something (who may
   connect, where a file goes) is a plain function that can be tested without the
-  system.
+  system. Those that differ per system live in `peer.rs` (reading each system's
+  table of connections) and `portdir.rs` (the folder of the port note), compiled
+  as `#[cfg(any(target_os = "...", test))]`: an app only contains its own, and
+  `cargo test` on any system, Linux CI included, tests all three.
 * Do not touch the localhost checks (Host, Origin, custom header, same user) or
   the window process's isolation and reaping without a test that shows why.
 

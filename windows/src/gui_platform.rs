@@ -2,7 +2,7 @@
 //! Windows. The list of items is the platform contract documented in
 //! `gui/mod.rs`; every app has the same one.
 
-use crate::gui::{Form, Hub, WINDOW_FLAG};
+use crate::gui::{Form, Hub, WINDOW_FLAG, portdir};
 use std::net::SocketAddr;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -25,13 +25,8 @@ pub fn peer_is_ours(peer: SocketAddr, us: SocketAddr) -> Option<bool> {
 
 /// The folder above `bananasplit\` where a running GUI notes its port.
 pub fn port_dir() -> Option<PathBuf> {
-    Some(
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
-            .or_else(|| std::env::var_os("USERPROFILE").map(|h| PathBuf::from(h).join("AppData").join("Local")))
-            .unwrap_or_else(std::env::temp_dir),
-    )
+    let var = std::env::var_os;
+    Some(portdir::windows(var("LOCALAPPDATA"), var("APPDATA"), var("USERPROFILE"), std::env::temp_dir()))
 }
 
 /// Make `dir` (and what is above it) if it is missing. (The per-user folder
