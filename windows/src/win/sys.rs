@@ -265,9 +265,6 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
 }
 
 pub fn cloexec_all() {}
-pub fn uid() -> u32 {
-    0
-}
 
 pub fn term_cols() -> Option<usize> {
     None

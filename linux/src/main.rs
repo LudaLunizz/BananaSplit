@@ -7,7 +7,9 @@ mod chanmenu;
 mod desktop;
 mod devices;
 mod dl;
+#[path = "../../gui/mod.rs"]
 mod gui;
+mod gui_platform;
 mod jack;
 mod lowlat;
 mod shell;
@@ -357,7 +359,7 @@ fn run(args: Args) -> Result<(), String> {
         if args.hidden {
             return Ok(());
         }
-        let shown = !args.no_open && (gui::request_show(gui_port, &launch_token()) || gui::open_window(&url));
+        let shown = !args.no_open && (gui::request_show(gui_port, &launch_token()) || gui_platform::open_window(&url));
         if !shown {
             eprintln!("bananasplit: already running; open {url}");
         }
@@ -1113,7 +1115,7 @@ impl Window {
     }
 
     fn open_browser(&mut self) {
-        if gui::open_window(&self.url) {
+        if gui_platform::open_window(&self.url) {
             self.browser = true;
         } else {
             eprintln!("bananasplit: could not open a window; open {} in a browser", self.url);
@@ -1400,7 +1402,7 @@ fn run_gui(
             for m in p.poll() {
                 match m {
                     gui::WinMsg::Quit => quit = true,
-                    gui::WinMsg::Open => window.browser |= gui::open_window(&url),
+                    gui::WinMsg::Open => window.browser |= gui_platform::open_window(&url),
                     gui::WinMsg::Record => {
                         status = match toggle_record(rec, shared, &channel_names(cfg)) {
                             Ok(m) => m,
@@ -1545,6 +1547,7 @@ fn run_gui(
             installed: hub.installed.load(SeqCst),
             window: window.kind(),
             tray: window.tray(),
+            welcome: None,
             update: &update_json,
         };
         hub.publish(gui::state_json(
