@@ -36,7 +36,7 @@ use crate::mp3;
 use crate::recorder::{NUM_SOURCES, source_id, stamp_day};
 use crate::vban::resample::{MAX_DOWN, Resampler};
 use crate::vban::ring::Ring;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -44,7 +44,7 @@ use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Ring size in samples (stereo): 1.36 s at 48 kHz.
 pub const RING_SAMPLES: usize = 1 << 17;
@@ -652,10 +652,67 @@ fn stamp_text(key: &str) -> Option<String> {
     Some(format!("{} {}:{}:{}", &key[..10], &key[11..13], &key[14..16], &key[17..19]))
 }
 
-/// Header cache for [`scan`]: (path, size, mtime) -> header.
+/// Header cache for [`scan`]: (path, size, mtime) -> header. It also
+/// remembers the last full scan for [`scan_changed`].
 #[derive(Default)]
 pub struct ScanCache {
     headers: HashMap<PathBuf, (u64, u64, Result<FileInfo, String>)>,
+    last: Option<LastScan>,
+}
+
+/// What [`scan_changed`] compares against: the folder, its signature, when
+/// it was scanned, and whether a file in it was still being written.
+struct LastScan {
+    folder: PathBuf,
+    sig: Vec<(PathBuf, SystemTime)>,
+    at: Instant,
+    live: bool,
+}
+
+/// [`scan_changed`] scans in full at least this often, even when no folder
+/// changed (a file edited in place does not touch its folder).
+const FULL_RESCAN: Duration = Duration::from_secs(60);
+
+/// A file changed less than this long ago may still be growing (a
+/// recording), so its take is rescanned every time.
+const LIVE_SECS: u64 = 120;
+
+/// The modification times of `folder` and its day folders: a file added,
+/// removed or renamed in any of them changes one of these.
+fn folder_sig(folder: &Path) -> Option<Vec<(PathBuf, SystemTime)>> {
+    let mut sig = vec![(folder.to_path_buf(), std::fs::metadata(folder).ok()?.modified().ok()?)];
+    for e in std::fs::read_dir(folder).ok()?.flatten() {
+        let name = e.file_name();
+        let day = name.to_str().is_some_and(|n| n.len() == 10 && stamp_day(n).is_some());
+        if day && e.file_type().is_ok_and(|t| t.is_dir()) {
+            sig.push((e.path(), e.metadata().ok()?.modified().ok()?));
+        }
+    }
+    sig.sort_unstable();
+    Some(sig)
+}
+
+/// Like [`scan`], but `None` when nothing can have changed since the last
+/// call with this cache: the same folder, no folder or day folder modified,
+/// no file still being written, and the last full scan less than a minute
+/// ago. `force` always scans (a recording finished, the folder changed).
+pub fn scan_changed(folder: &Path, cache: &mut ScanCache, force: bool) -> Option<Vec<TakeInfo>> {
+    let sig = folder_sig(folder);
+    if !force
+        && let (Some(sig), Some(last)) = (&sig, &cache.last)
+        && last.folder == folder
+        && last.sig == *sig
+        && !last.live
+        && last.at.elapsed() < FULL_RESCAN
+    {
+        return None;
+    }
+    let at = Instant::now();
+    let takes = scan(folder, cache);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let live = takes.iter().any(|t| t.mtime + LIVE_SECS >= now);
+    cache.last = sig.map(|sig| LastScan { folder: folder.to_path_buf(), sig, at, live });
+    Some(takes)
 }
 
 /// One take while scanning: its time, label -> parts (part number, file,
@@ -682,7 +739,7 @@ pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
     }
     // grouped by key and extension: `x.wav` and `x.mp3` are two takes
     let mut groups: HashMap<(String, &'static str), Group> = HashMap::new();
-    let mut seen = Vec::new();
+    let mut seen = HashSet::new();
     for e in entries {
         let path = e.path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
@@ -704,7 +761,7 @@ pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
         }
         let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
         let size = meta.len();
-        seen.push(path.clone());
+        seen.insert(path.clone());
         let fresh = cache.headers.get(&path).is_some_and(|(s, m, _)| *s == size && *m == mtime);
         if !fresh {
             cache.headers.insert(path.clone(), (size, mtime, FileInfo::read(&path)));
@@ -725,7 +782,7 @@ pub fn scan(folder: &Path, cache: &mut ScanCache) -> Vec<TakeInfo> {
     cache.headers.retain(|p, _| seen.contains(p));
     // A key that has files of both kinds: the MP3 take is `<key>.mp3`, and
     // other files are labelled with their extension.
-    let both: Vec<String> = groups
+    let both: HashSet<String> = groups
         .keys()
         .filter(|(k, e)| *e == "mp3" && groups.contains_key(&(k.clone(), "wav")))
         .map(|(k, _)| k.clone())
@@ -1552,6 +1609,45 @@ mod tests {
         std::fs::remove_file(d.join("Song.WAV")).unwrap();
         assert_eq!(scan(&d, &mut cache).len(), 2);
         assert!(scan(&d.join("missing"), &mut cache).is_empty());
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn scan_changed_skips_unchanged_folders() {
+        let d = tmpdir("scanchanged");
+        let day = d.join("2026-10-21");
+        std::fs::create_dir_all(&day).unwrap();
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        // (folder times can be as coarse as a timer tick, so changes wait)
+        let w = |p: PathBuf| {
+            std::thread::sleep(Duration::from_millis(50));
+            write_wav(&p, Format::Wav16, 48000, 10, |_| (0.1, 0.1));
+            std::fs::File::options().write(true).open(&p).unwrap().set_modified(old).unwrap();
+        };
+        w(day.join("2026-10-21_09-00-00_mix.wav"));
+        w(d.join("Song.wav"));
+        let mut cache = ScanCache::default();
+        assert_eq!(scan_changed(&d, &mut cache, false).unwrap().len(), 2);
+        // nothing changed: no rescan, unless forced
+        assert_eq!(scan_changed(&d, &mut cache, false), None);
+        assert_eq!(scan_changed(&d, &mut cache, true).unwrap().len(), 2);
+        assert_eq!(scan_changed(&d, &mut cache, false), None);
+        // a new file in a day folder is noticed
+        w(day.join("2026-10-21_10-00-00_mix.wav"));
+        assert_eq!(scan_changed(&d, &mut cache, false).unwrap().len(), 3);
+        assert_eq!(scan_changed(&d, &mut cache, false), None);
+        // a removed file in the main folder too
+        std::thread::sleep(Duration::from_millis(50));
+        std::fs::remove_file(d.join("Song.wav")).unwrap();
+        assert_eq!(scan_changed(&d, &mut cache, false).unwrap().len(), 2);
+        // another folder is always scanned
+        assert_eq!(scan_changed(&d.join("missing"), &mut cache, false), Some(Vec::new()));
+        assert_eq!(scan_changed(&d.join("missing"), &mut cache, false), Some(Vec::new()));
+        assert_eq!(scan_changed(&d, &mut cache, false).unwrap().len(), 2);
+        // a file written just now may still grow: rescanned every time
+        write_wav(&day.join("2026-10-21_11-00-00_mix.wav"), Format::Wav16, 48000, 10, |_| (0.1, 0.1));
+        assert_eq!(scan_changed(&d, &mut cache, false).unwrap().len(), 3);
+        assert_eq!(scan_changed(&d, &mut cache, false).unwrap().len(), 3);
         let _ = std::fs::remove_dir_all(d);
     }
 
