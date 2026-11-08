@@ -319,12 +319,13 @@ impl Takes {
     fn run(&self) {
         let mut cache = ScanCache::default();
         while !self.stop.load(SeqCst) {
+            let kicked;
             {
                 let (m, c) = &self.kick;
                 let g = lock(m);
                 let (mut g, _) =
                     c.wait_timeout_while(g, Duration::from_secs(3), |k| !*k).unwrap_or_else(|e| e.into_inner());
-                *g = false;
+                kicked = std::mem::take(&mut *g);
             }
             if self.stop.load(SeqCst) {
                 break;
@@ -332,10 +333,18 @@ impl Takes {
             let folder = lock(&self.inner).folder.clone();
             // A file the scan trips over must not end the take list for the
             // rest of the session: keep the last list and try again later.
-            let scanned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| player::scan(&folder, &mut cache)));
-            let Ok(list) = scanned else {
-                cache = ScanCache::default();
-                continue;
+            // Unchanged folders are not rescanned (`scan_changed`), so a
+            // big recordings folder costs next to nothing between takes.
+            let scanned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                player::scan_changed(&folder, &mut cache, kicked)
+            }));
+            let list = match scanned {
+                Ok(Some(list)) => list,
+                Ok(None) => continue,
+                Err(_) => {
+                    cache = ScanCache::default();
+                    continue;
+                }
             };
             let mut g = lock(&self.inner);
             let same = g.folder == folder && *g.list == list;
