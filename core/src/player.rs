@@ -685,7 +685,11 @@ fn folder_sig(folder: &Path) -> Option<Vec<(PathBuf, SystemTime)>> {
         let name = e.file_name();
         let day = name.to_str().is_some_and(|n| n.len() == 10 && stamp_day(n).is_some());
         if day && e.file_type().is_ok_and(|t| t.is_dir()) {
-            sig.push((e.path(), e.metadata().ok()?.modified().ok()?));
+            // (the folder's own times: on Windows the parent's listing
+            // carries a copy that NTFS updates late)
+            let path = e.path();
+            let mtime = std::fs::metadata(&path).ok()?.modified().ok()?;
+            sig.push((path, mtime));
         }
     }
     sig.sort_unstable();
@@ -1635,7 +1639,10 @@ mod tests {
         let mut cache = ScanCache::default();
         assert_eq!(scan_changed(&d, &mut cache, false).unwrap().len(), 2);
         // nothing changed: no rescan, unless forced
-        assert_eq!(scan_changed(&d, &mut cache, false), None);
+        let before = cache.last.as_ref().map(|l| (l.sig.clone(), l.live));
+        let again = scan_changed(&d, &mut cache, false).map(|t| t.len());
+        let after = cache.last.as_ref().map(|l| (l.sig.clone(), l.live));
+        assert_eq!(again, None, "rescanned: {before:?} -> {after:?}");
         assert_eq!(scan_changed(&d, &mut cache, true).unwrap().len(), 2);
         assert_eq!(scan_changed(&d, &mut cache, false), None);
         // a new file in a day folder is noticed
