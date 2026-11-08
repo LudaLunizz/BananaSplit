@@ -124,6 +124,8 @@ sh packaging/bundle.sh       # dist/BananaSplit.app, for Apple silicon and Intel
 .
 ├── core/             shared mixer core (Rust crate, no dependencies): engine, EQ,
 │                     dynamics, recorder, player, MP3, VBAN, scenes, config, terminal view
+├── gui/              shared GUI layer (source files, not a crate): the HTTP server, the
+│                     state and command API and the window process, compiled into each app
 ├── linux/            Linux app (Rust crate, JACK / PipeWire)
 │   ├── src/
 │   ├── tests/        unit, end-to-end, GUI and window tests
@@ -137,7 +139,7 @@ sh packaging/bundle.sh       # dist/BananaSplit.app, for Apple silicon and Intel
 └── .github/          CI, release automation, templates
 ```
 
-The Linux, Windows and macOS apps are separate crates. Each builds on its own, and all three use the mixer in `core/` through a path dependency (`bananasplit-core = { path = "../core" }`) and re-export it, so their code keeps writing `bananasplit::engine::...`. The GUI server and the updater are still one copy per app. `core/` is not a Cargo workspace on purpose: all three apps are packages named `bananasplit`, and each keeps its own `target/`, which the packaging scripts expect.
+The Linux, Windows and macOS apps are separate crates. Each builds on its own, and all three use the mixer in `core/` through a path dependency (`bananasplit-core = { path = "../core" }`) and re-export it, so their code keeps writing `bananasplit::engine::...`. The GUI layer (`gui/`) is one source file set that each app compiles in with `#[path]`; what really differs between the systems is a small `gui_platform` module in each app (see [`gui/README.md`](gui/README.md)). The updater's platform-free half is in `core/`; its download and install half is still per app. `core/` is not a Cargo workspace on purpose: all three apps are packages named `bananasplit`, and each keeps its own `target/`, which the packaging scripts expect.
 
 ## Building from source
 

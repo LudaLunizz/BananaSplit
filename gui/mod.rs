@@ -2,6 +2,11 @@
 //! HTTP server on 127.0.0.1 serves one self-contained page (`gui.html`,
 //! embedded in the binary) and streams the mixer state to it.
 //!
+//! This file is the one copy of that layer for all three apps. It lives in
+//! `gui/` at the root of the repository and each app compiles it with
+//! `#[path = "../../gui/mod.rs"] mod gui;`; the few things that really differ
+//! between the systems are in the app's own `gui_platform` module (see below).
+//!
 //! * `GET  /`            the page
 //! * `GET  /api/events`  Server-Sent Events: one JSON state object per UI frame
 //! * `GET  /api/state`   the latest JSON state, once
@@ -11,6 +16,7 @@
 //! * `GET  /api/devices` what each channel can be connected to (its menu, JSON)
 //! * `GET  /api/update`  the updater's release page and notes (JSON)
 //! * `POST /api/cmd`     one control change, form-encoded (`op=gain&ch=0&v=-3.5`)
+//! * plus what the app's `gui_platform` adds (Windows and macOS: `GET /api/cables`)
 //!
 //! All mixer parameters (EQ, input gain and pan included) are atomics in
 //! [`Shared`], so the page changes them exactly like the terminal UI does,
@@ -20,14 +26,38 @@
 //! reconnect, rename, quit, window and theme settings) are queued as
 //! [`Request`]s.
 //!
-//! The page is shown by the app window process (`shell.rs`), managed here
-//! by [`WindowProc`], or in a browser when WebKitGTK is not installed.
+//! The page is shown by the app's window: a window process managed by
+//! `WindowProc` (`window.rs`, Linux and Windows), or the app's own window in
+//! this process (macOS).
 //!
 //! Security: listens on 127.0.0.1 only. Every request must carry a `Host`
 //! naming this server (defeats DNS rebinding). A `POST` must also carry
 //! `X-BananaSplit: 1` and, if the browser sends one, a same-origin `Origin`; a
 //! custom header forces a CORS preflight, which this server never grants,
 //! so other web pages open in the browser cannot drive the mixer.
+//!
+//! # The platform contract: `crate::gui_platform`
+//!
+//! Each app (`linux/src/gui_platform.rs`, `windows/src/gui_platform.rs`,
+//! `macos/src/gui_platform.rs`) provides the same items, and this file and
+//! `window.rs` reach the operating system only through them. A change to the
+//! list is a compile error in the app that misses it.
+//!
+//! | item | what it is |
+//! |---|---|
+//! | `PAGE` | the main page (`gui.html`) |
+//! | `Updater` | the app's updater (`crate::update::Updater`) |
+//! | `LocalIp`, `local_timestamp()` | the addresses and the clock the page shows |
+//! | `open_page(url)`, `open_folder(path)` | the default browser and file manager |
+//! | `autostart_enabled()`, `set_autostart(on)` | starting at login |
+//! | `menu_installed()`, `install()` | the application menu entry (Start menu, ...) |
+//! | `port_dir()`, `create_private_dir(dir)` | where a running GUI notes its port |
+//! | `peer_is_ours(peer, us)` | whose process is at the other end of a loopback connection |
+//! | `get(path)` | extra `GET` endpoints of the system (`None`: not ours) |
+//! | `command(hub, op, form)` | extra `op`s of `POST /api/cmd` (`None`: not ours) |
+//!
+//! The apps with a window process (Linux, Windows) also provide `window_command()`
+//! and `window_stderr()`, which `window.rs` needs, and `open_window(url)`.
 
 use crate::tui::{Info, ROWS};
 use bananasplit::config::{Config, Theme, parse_pan, parse_trim, parse_zoom};
@@ -43,17 +73,21 @@ use bananasplit::vban::{
     self, FromAddr, InState, NUM_IN, NUM_OUT, OutState, SampleFormat, Vban, VbanConfig, VbanStatus,
 };
 use std::fmt::Write as _;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// The window process: Linux and Windows. macOS has its window in this process.
+#[cfg(not(target_os = "macos"))]
+mod window;
+#[cfg(not(target_os = "macos"))]
+pub use window::*;
 
 pub const DEFAULT_PORT: u16 = 8790;
-const PAGE: &str = include_str!("gui.html");
+const PAGE: &str = crate::gui_platform::PAGE;
 /// The touch deck at `/deck` (shared: `core/src/deck.html`).
 const DECK: &str = bananasplit::DECK_PAGE;
 const MAX_HEAD: usize = 16 * 1024;
@@ -78,7 +112,7 @@ pub enum Request {
     Zoom(f32),
     /// The current scene ("" = none).
     Scene(String),
-    /// "Install updates automatically" on or off.
+    /// Automatic updates on or off.
     AutoUpdate(bool),
     /// Quit and start the version the updater installed.
     Restart,
@@ -144,6 +178,10 @@ pub struct Hub {
     zoom: AtomicU32,
     pub autostart: AtomicBool,
     pub installed: AtomicBool,
+    /// The first start without virtual cables (Windows, macOS): the page opens
+    /// its "Virtual cables" window by itself, once.
+    #[allow(dead_code)] // Linux has no such window
+    pub cable_welcome: AtomicBool,
     state: Mutex<(u64, Arc<String>)>,
     cond: Condvar,
     names: Mutex<Vec<String>>,
@@ -156,7 +194,7 @@ pub struct Hub {
     /// Bus sends are checked for loops and set under this lock.
     routing: Mutex<()>,
     /// The updater (the GUI has one; tests may not).
-    updater: Mutex<Option<Arc<crate::update::Updater>>>,
+    updater: Mutex<Option<Arc<crate::gui_platform::Updater>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -185,6 +223,7 @@ impl Hub {
             zoom: AtomicU32::new(1f32.to_bits()),
             autostart: AtomicBool::new(false),
             installed: AtomicBool::new(false),
+            cable_welcome: AtomicBool::new(false),
             state: Mutex::new((0, Arc::new("{}".into()))),
             cond: Condvar::new(),
             names: Mutex::new(Vec::new()),
@@ -198,11 +237,11 @@ impl Hub {
         })
     }
 
-    pub fn set_updater(&self, u: Arc<crate::update::Updater>) {
+    pub fn set_updater(&self, u: Arc<crate::gui_platform::Updater>) {
         *lock(&self.updater) = Some(u);
     }
 
-    fn updater(&self) -> Result<Arc<crate::update::Updater>, String> {
+    fn updater(&self) -> Result<Arc<crate::gui_platform::Updater>, String> {
         lock(&self.updater).clone().ok_or_else(|| "no updater here".to_string())
     }
 
@@ -361,6 +400,7 @@ impl Takes {
         c.notify_all();
     }
 
+    #[allow(dead_code)] // only the Linux app changes the recorder folder while it runs
     pub fn set_folder(&self, folder: PathBuf) {
         let mut g = lock(&self.inner);
         if g.folder != folder {
@@ -517,7 +557,7 @@ pub struct Frame<'a> {
     /// Bumped when what the channels' menus list changes.
     pub dev_rev: u64,
     /// This computer's IPv4 addresses (for the VBAN window).
-    pub ips: &'a [crate::sys::LocalIp],
+    pub ips: &'a [crate::gui_platform::LocalIp],
     pub status: &'a str,
     pub rec: &'a Status,
     pub rec_settings: &'a Settings,
@@ -541,6 +581,10 @@ pub struct Extra<'a> {
     /// "app" (our own window), "browser" or "none".
     pub window: &'a str,
     pub tray: bool,
+    /// `Some`: the first start's "Virtual cables" welcome is still to be shown
+    /// (Windows, macOS). `None` on Linux, which has no such window: the page's
+    /// state then has no `welcome` at all.
+    pub welcome: Option<bool>,
     /// The updater's state (a JSON object, `Updater::json`).
     pub update: &'a str,
 }
@@ -569,7 +613,7 @@ fn out_state(s: OutState) -> &'static str {
     }
 }
 
-fn vban_json(o: &mut String, st: &VbanStatus, c: &VbanConfig, sample_rate: u32, ips: &[crate::sys::LocalIp]) {
+fn vban_json(o: &mut String, st: &VbanStatus, c: &VbanConfig, sample_rate: u32, ips: &[crate::gui_platform::LocalIp]) {
     let _ = write!(o, "{{\"on\":{},\"port\":{},\"ips\":[", c.enabled, c.port);
     for (k, a) in ips.iter().enumerate() {
         if k > 0 {
@@ -832,9 +876,10 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
         jstr(&mut o, s);
     }
     let g = &f.cfg.gui;
+    let welcome = x.welcome.map(|w| format!(",\"welcome\":{w}")).unwrap_or_default();
     let _ = write!(
         o,
-        "],\"app\":{{\"theme\":\"{}\",\"closeToTray\":{},\"zoom\":{},\"autostart\":{},\"installed\":{},\"window\":\"{}\",\"tray\":{}}}",
+        "],\"app\":{{\"theme\":\"{}\",\"closeToTray\":{},\"zoom\":{},\"autostart\":{},\"installed\":{},\"window\":\"{}\",\"tray\":{}{welcome}}}",
         g.theme.as_str(),
         g.close_to_tray,
         g.zoom,
@@ -895,13 +940,15 @@ pub fn parse_form(body: &str) -> Result<Vec<(String, String)>, String> {
         .collect()
 }
 
-struct Form(Vec<(String, String)>);
+/// The fields of one `POST /api/cmd`. `get` and `req` are also what a
+/// `gui_platform::command` reads its own fields with.
+pub struct Form(Vec<(String, String)>);
 
 impl Form {
-    fn get(&self, k: &str) -> Option<&str> {
+    pub fn get(&self, k: &str) -> Option<&str> {
         self.0.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str())
     }
-    fn req(&self, k: &str) -> Result<&str, String> {
+    pub fn req(&self, k: &str) -> Result<&str, String> {
         self.get(k).ok_or_else(|| format!("missing {k:?}"))
     }
     fn flag(&self) -> Result<bool, String> {
@@ -1096,7 +1143,8 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
             let rec = &hub.recorder;
             if f.flag()? {
                 let names = lock(&hub.names).clone();
-                let files = rec.start(sh.rec_links.load(SeqCst) & ALL_LINKS, &names, &crate::sys::local_timestamp())?;
+                let files =
+                    rec.start(sh.rec_links.load(SeqCst) & ALL_LINKS, &names, &crate::gui_platform::local_timestamp())?;
                 Ok(match files.len() {
                     1 => format!("recording to {}", files[0].display()),
                     n => format!(
@@ -1335,7 +1383,7 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
         }
         "openfolder" => {
             let dir = recorder::expand_home(&hub.recorder.settings().folder);
-            crate::desktop::open_folder(&dir)?;
+            crate::gui_platform::open_folder(&dir)?;
             Ok(format!("opened {}", dir.display()))
         }
         // ---- scenes ----
@@ -1377,13 +1425,13 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
             Ok("ok".into())
         }
         "autostart" => {
-            let msg = crate::desktop::set_autostart(f.flag()?)?;
-            hub.autostart.store(crate::desktop::autostart_enabled(), SeqCst);
+            let msg = crate::gui_platform::set_autostart(f.flag()?)?;
+            hub.autostart.store(crate::gui_platform::autostart_enabled(), SeqCst);
             Ok(msg)
         }
         "install" => {
-            let msg = crate::desktop::install()?;
-            hub.installed.store(crate::desktop::menu_installed(), SeqCst);
+            let msg = crate::gui_platform::install()?;
+            hub.installed.store(crate::gui_platform::menu_installed(), SeqCst);
             Ok(msg)
         }
         "autoupdate" => {
@@ -1403,7 +1451,7 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
                     Ok("restarting BananaSplit".into())
                 }
                 "page" => {
-                    crate::desktop::open_page(&u.page())?;
+                    crate::gui_platform::open_page(&u.page())?;
                     Ok("opening the release page in your browser".into())
                 }
                 a => Err(format!("unknown update action {a:?}")),
@@ -1427,7 +1475,7 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, String> {
             hub.request(Request::Quit);
             Ok("quitting".into())
         }
-        _ => Err(format!("unknown op {op:?}")),
+        _ => crate::gui_platform::command(hub, op, &f).unwrap_or_else(|| Err(format!("unknown op {op:?}"))),
     }
 }
 
@@ -1572,55 +1620,19 @@ const PAGE_HEADERS: &str = "Content-Security-Policy: default-src 'none'; script-
 style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; \
 frame-ancestors 'none'\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\n";
 
-/// The owner (uid) of the socket at the other end of a loopback connection:
-/// in `/proc/net/tcp` (or `tcp6`, for a dual-stack IPv6 socket that came in
-/// as `::ffff:127.0.0.1`), its line has `peer` as local and `us` as remote
-/// address. The kernel prints each 32-bit word of an address in host order.
-pub fn socket_owner(table: &str, peer: SocketAddr, us: SocketAddr) -> Option<u32> {
-    let hex = |a: SocketAddr| {
-        let words = |b: &[u8]| {
-            b.chunks(4).map(|w| format!("{:08X}", u32::from_ne_bytes([w[0], w[1], w[2], w[3]]))).collect::<String>()
-        };
-        let ip = match a {
-            SocketAddr::V4(v) => words(&v.ip().octets()),
-            SocketAddr::V6(v) => words(&v.ip().octets()),
-        };
-        format!("{ip}:{:04X}", a.port())
-    };
-    let (p, u) = (hex(peer), hex(us));
-    table.lines().skip(1).find_map(|l| {
-        let f: Vec<&str> = l.split_whitespace().collect();
-        (f.len() > 7 && f[1].eq_ignore_ascii_case(&p) && f[2].eq_ignore_ascii_case(&u))
-            .then(|| f[7].parse().ok())
-            .flatten()
-    })
-}
-
-/// `a` as an IPv4-mapped IPv6 address (how a dual-stack socket sees it).
-fn mapped(a: SocketAddr) -> SocketAddr {
-    match a {
-        SocketAddr::V4(v) => SocketAddr::from((v.ip().to_ipv6_mapped(), v.port())),
-        v6 => v6,
-    }
-}
-
 /// Is the other end of this local connection a process of the user
 /// BananaSplit runs as? Other users on this computer can reach 127.0.0.1
 /// too: the server answers only its own user, and a BananaSplit that looks
-/// for a running one (`--gui`, `--quit`) talks only to its own user's.
-/// (Without /proc, as in 2.5: yes.)
-fn same_user(s: &TcpStream) -> bool {
+/// for a running one (`--gui`, `--quit`, the Start menu launch) talks only to
+/// its own user's. The system's own table of connections is asked by
+/// `gui_platform::peer_is_ours`.
+fn peer_allowed(s: &TcpStream) -> bool {
     let (Ok(peer), Ok(us)) = (s.peer_addr(), s.local_addr()) else { return false };
-    // Seen from the client, the server's end may show a moment after
-    // `connect` returns.
+    // Seen from the client (`probe`, `post_cmd`), the server's end may show in
+    // the system's list a moment after `connect` returns.
     for attempt in 0..4 {
-        let Ok(t4) = std::fs::read_to_string("/proc/net/tcp") else { return true };
-        let owner = socket_owner(&t4, peer, us).or_else(|| {
-            let t6 = std::fs::read_to_string("/proc/net/tcp6").ok()?;
-            socket_owner(&t6, mapped(peer), mapped(us))
-        });
-        if let Some(o) = owner {
-            return o == crate::sys::uid();
+        if let Some(ours) = crate::gui_platform::peer_is_ours(peer, us) {
+            return ours;
         }
         if attempt < 3 {
             std::thread::sleep(Duration::from_millis(5));
@@ -1632,7 +1644,7 @@ fn same_user(s: &TcpStream) -> bool {
 fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
     let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(5)));
-    if !same_user(&s) {
+    if !peer_allowed(&s) {
         return respond(&mut s, 403, "text/plain; charset=utf-8", b"BananaSplit only answers the user it runs as", "");
     }
     let req = match read_request(&mut s) {
@@ -1695,7 +1707,12 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
                 Err(e) => respond(&mut s, 400, text, e.as_bytes(), ""),
             }
         }
-        ("GET", _) | ("POST", _) => respond(&mut s, 404, text, b"not found", ""),
+        ("GET", path) => match crate::gui_platform::get(path) {
+            Some(Ok(json)) => respond(&mut s, 200, "application/json", json.as_bytes(), ""),
+            Some(Err(e)) => respond(&mut s, 503, text, e.as_bytes(), ""),
+            None => respond(&mut s, 404, text, b"not found", ""),
+        },
+        ("POST", _) => respond(&mut s, 404, text, b"not found", ""),
         _ => respond(&mut s, 405, text, b"method not allowed", "Allow: GET, POST\r\n"),
     }
 }
@@ -1790,18 +1807,11 @@ pub fn url(port: u16) -> String {
     format!("http://127.0.0.1:{port}/")
 }
 
-/// Where a running GUI notes its port (`$XDG_RUNTIME_DIR/bananasplit/<client>.port`),
-/// so that launching it again and `--quit` find it when 8790 was busy.
-/// In a Flatpak only `$XDG_RUNTIME_DIR/app/<app ID>` is shared by its instances.
+/// Where a running GUI notes its port (`bananasplit/<client>.port` in the
+/// system's per-user folder, `gui_platform::port_dir`), so that launching it
+/// again and `--quit` find it when 8790 was busy.
 fn port_file(client: &str) -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .map(|p| match crate::desktop::flatpak_id() {
-            Some(id) => p.join("app").join(id),
-            None => p,
-        })
-        .or_else(|| std::env::var_os("HOME").filter(|h| !h.is_empty()).map(|h| PathBuf::from(h).join(".cache")))?;
+    let base = crate::gui_platform::port_dir()?;
     let name: String =
         client.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
     Some(base.join("bananasplit").join(format!("{name}.port")))
@@ -1811,8 +1821,7 @@ fn port_file(client: &str) -> Option<PathBuf> {
 pub fn note_port(client: &str, port: u16) {
     let Some(f) = port_file(client) else { return };
     if let Some(d) = f.parent() {
-        use std::os::unix::fs::DirBuilderExt;
-        let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(d);
+        crate::gui_platform::create_private_dir(d);
     }
     let tmp = f.with_extension("port-tmp");
     if std::fs::write(&tmp, format!("{port}\n")).is_ok() && std::fs::rename(&tmp, &f).is_err() {
@@ -1848,7 +1857,7 @@ pub fn find_running(client: &str, explicit: Option<u16>) -> Option<u16> {
 pub fn probe(port: u16, client: &str) -> bool {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(300)) else { return false };
-    if !same_user(&s) {
+    if !peer_allowed(&s) {
         return false; // another user's program on this port: not ours
     }
     let _ = s.set_read_timeout(Some(Duration::from_millis(800)));
@@ -1869,44 +1878,6 @@ pub fn probe(port: u16, client: &str) -> bool {
         k.trim().eq_ignore_ascii_case("x-bananasplit-client").then(|| v.trim().to_string())
     });
     said.is_none_or(|c| c == url_encode(client))
-}
-
-/// Open the page in its own app window (Chromium-family `--app` mode), or
-/// in the default browser. Returns false if nothing could be started.
-pub fn open_window(url: &str) -> bool {
-    if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        return false;
-    }
-    crate::sys::cloexec_all();
-    let app = format!("--app={url}");
-    let browsers = [
-        "chromium",
-        "chromium-browser",
-        "google-chrome",
-        "google-chrome-stable",
-        "brave-browser",
-        "brave",
-        "microsoft-edge",
-        "vivaldi",
-    ];
-    let mut tries: Vec<(&str, &str)> = browsers.iter().map(|b| (*b, app.as_str())).collect();
-    tries.push(("xdg-open", url));
-    for (bin, arg) in tries {
-        let child = Command::new(bin)
-            .arg(arg)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0) // not killed by the terminal's Ctrl-C
-            .spawn();
-        if let Ok(mut child) = child {
-            std::thread::spawn(move || {
-                let _ = child.wait(); // reap it
-            });
-            return true;
-        }
-    }
-    false
 }
 
 /// Ask a running BananaSplit GUI to bring its window up. False if nothing
@@ -1935,7 +1906,7 @@ fn url_encode(s: &str) -> String {
 fn post_cmd(port: u16, body: &str) -> Option<(u16, String)> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok()?;
-    if !same_user(&s) {
+    if !peer_allowed(&s) {
         return None; // never send requests (or a launch token) to another user
     }
     let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
@@ -1954,221 +1925,6 @@ fn post_cmd(port: u16, body: &str) -> Option<(u16, String)> {
     Some((code, body))
 }
 
-// ---------------------------------------------------------------------------
-// The app window process (shell.rs)
-// ---------------------------------------------------------------------------
-
-pub const WINDOW_FLAG: &str = "--window";
-/// argv[0] of the helper processes (also when started from /proc/self/exe).
-const APP_ARG0: &str = "bananasplit";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WinMode {
-    /// Our own window (GTK + WebKitGTK), with the tray icon.
-    App,
-    /// Only the tray icon; the page is shown in a browser.
-    Tray,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum WinMsg {
-    /// Show the page in a browser (tray mode).
-    Open,
-    /// Start or stop recording (tray menu).
-    Record,
-    Quit,
-    Size(u32, u32),
-    /// The window process ended.
-    Gone,
-}
-
-pub struct WinOpts<'a> {
-    pub url: &'a str,
-    pub hidden: bool,
-    pub close_to_tray: bool,
-    pub size: Option<(u32, u32)>,
-    pub token: Option<&'a str>,
-}
-
-/// One line from the window process.
-pub fn parse_win_line(line: &str) -> Option<WinMsg> {
-    let mut w = line.split_whitespace();
-    match w.next()? {
-        "open" => Some(WinMsg::Open),
-        "record" => Some(WinMsg::Record),
-        "quit" => Some(WinMsg::Quit),
-        "size" => {
-            let (a, b) = (w.next()?.parse().ok()?, w.next()?.parse().ok()?);
-            Some(WinMsg::Size(a, b))
-        }
-        _ => None,
-    }
-}
-
-/// How long the window process may take to say it is ready.
-const WINDOW_START: Duration = Duration::from_secs(60);
-
-/// The window process, seen from the mixer.
-pub struct WindowProc {
-    child: Child,
-    stdin: Option<ChildStdin>,
-    pub mode: WinMode,
-    rx: mpsc::Receiver<WinMsg>,
-    gone: bool,
-}
-
-impl WindowProc {
-    /// Start it and wait until it says what it can do. `Err` explains why
-    /// there is neither a window nor a tray icon (then use a browser).
-    pub fn spawn(o: &WinOpts) -> Result<WindowProc, String> {
-        let exe = crate::desktop::helper_exe()?;
-        let mut cmd = Command::new(exe);
-        cmd.arg0(APP_ARG0);
-        cmd.arg(WINDOW_FLAG).arg(o.url).arg("--close-to-tray").arg(if o.close_to_tray { "1" } else { "0" });
-        if o.hidden {
-            cmd.arg("--hidden");
-        }
-        if let Some((w, h)) = o.size {
-            cmd.arg("--size").arg(format!("{w}x{h}"));
-        }
-        if let Some(t) = o.token.filter(|t| !t.is_empty()) {
-            cmd.arg("--token").arg(t);
-        }
-        // The launch token was for this window, not for anything it starts.
-        cmd.env_remove("DESKTOP_STARTUP_ID").env_remove("XDG_ACTIVATION_TOKEN");
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
-        let mut child = cmd.spawn().map_err(|e| format!("cannot start the window: {e}"))?;
-        let stdout = child.stdout.take().ok_or("no pipe from the window")?;
-        let (tx, rx) = mpsc::channel();
-        let (ready_tx, ready_rx) = mpsc::channel::<Result<WinMode, String>>();
-        let reader = std::thread::Builder::new().name("bs-window".into()).spawn(move || {
-            let mut ready = Some(ready_tx);
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if let Some(r) = ready.take() {
-                    let first = if let Some(m) = line.strip_prefix("ready ") {
-                        Ok(if m.starts_with("app") { WinMode::App } else { WinMode::Tray })
-                    } else {
-                        Err(line.strip_prefix("fail ").unwrap_or(&line).to_string())
-                    };
-                    let failed = first.is_err();
-                    let _ = r.send(first);
-                    if failed {
-                        break;
-                    }
-                    continue;
-                }
-                if let Some(m) = parse_win_line(&line)
-                    && tx.send(m).is_err()
-                {
-                    break;
-                }
-            }
-            let _ = tx.send(WinMsg::Gone);
-        });
-        if reader.is_err() {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("cannot start a thread".into());
-        }
-        let stdin = child.stdin.take();
-        // A window that ends at start ends this wait at once (Disconnected);
-        // one that is still starting gets WINDOW_START: a cold WebView2 or
-        // WebKit start on a slow computer can take well over 15 s.
-        match ready_rx.recv_timeout(WINDOW_START) {
-            Ok(Ok(mode)) => Ok(WindowProc { child, stdin, mode, rx, gone: false }),
-            Ok(Err(why)) => {
-                let _ = child.wait();
-                Err(why)
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                let _ = child.wait();
-                Err("the window ended before it opened".into())
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                Err(format!("the window did not open within {} s", WINDOW_START.as_secs()))
-            }
-        }
-    }
-
-    pub fn send(&mut self, line: &str) {
-        if let Some(s) = &mut self.stdin
-            && s.write_all(line.as_bytes()).and_then(|_| s.write_all(b"\n")).and_then(|_| s.flush()).is_err()
-        {
-            self.stdin = None;
-        }
-    }
-
-    pub fn poll(&mut self) -> Vec<WinMsg> {
-        let v: Vec<WinMsg> = self.rx.try_iter().collect();
-        if v.contains(&WinMsg::Gone) {
-            self.gone = true;
-        }
-        v
-    }
-
-    pub fn alive(&mut self) -> bool {
-        !self.gone && matches!(self.child.try_wait(), Ok(None))
-    }
-
-    /// Close it (it saves nothing; the mixer has the state). Dropping it
-    /// waits for the process to end.
-    pub fn close(mut self) {
-        self.send("quit");
-    }
-}
-
-impl Drop for WindowProc {
-    /// Every way out (close, a crashed or closed window, a restart) ends
-    /// here, so the process is always waited for and never stays a zombie.
-    fn drop(&mut self) {
-        self.stdin = None; // end of input: it quits even if it missed "quit"
-        let t0 = Instant::now();
-        while t0.elapsed() < Duration::from_secs(3) {
-            if !matches!(self.child.try_wait(), Ok(None)) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// A window process that is starting: `WindowProc::spawn` on a thread of
-/// its own, so the mixer's loop keeps running (and publishing its state)
-/// while a cold WebView2 or WebKit start takes its time.
-pub struct WindowStart {
-    rx: mpsc::Receiver<Result<WindowProc, String>>,
-}
-
-impl WindowStart {
-    pub fn begin(o: &WinOpts) -> WindowStart {
-        let (url, token) = (o.url.to_string(), o.token.map(str::to_string));
-        let (hidden, close_to_tray, size) = (o.hidden, o.close_to_tray, o.size);
-        let (tx, rx) = mpsc::channel();
-        // Without the thread, `tx` is gone and `poll` reports it.
-        let _ = std::thread::Builder::new().name("bs-window-start".into()).spawn(move || {
-            let o = WinOpts { url: &url, hidden, close_to_tray, size, token: token.as_deref() };
-            // Dropped when nobody waits any more (the mixer is closing):
-            // its input ends with it, so the window quits by itself.
-            let _ = tx.send(WindowProc::spawn(&o));
-        });
-        WindowStart { rx }
-    }
-
-    /// `None` while it is starting; then, once, how the start went.
-    pub fn poll(&self) -> Option<Result<WindowProc, String>> {
-        match self.rx.try_recv() {
-            Ok(r) => Some(r),
-            Err(mpsc::TryRecvError::Empty) => None,
-            Err(mpsc::TryRecvError::Disconnected) => Some(Err("cannot start a thread for the window".into())),
-        }
-    }
-}
-
 // The page hard-codes the fader range and the channel layout.
 const _: () = assert!(MIN_GAIN_DB == -60.0 && MAX_GAIN_DB == 12.0, "gui.html assumes -60..+12 dB");
 const _: () = assert!(MIN_TRIM_DB == -24.0 && MAX_TRIM_DB == 24.0, "gui.html assumes -24..+24 dB of input gain");
@@ -2179,23 +1935,7 @@ mod tests {
     use super::*;
     use bananasplit::recorder::RecTap;
     use std::sync::atomic::Ordering::Relaxed;
-
-    /// A window process that ended by itself (a crash) is waited for when
-    /// the mixer drops it, so it does not stay a zombie (review #9).
-    #[test]
-    fn a_window_that_died_is_reaped() {
-        let child = Command::new("true").stdin(Stdio::piped()).spawn().unwrap();
-        let pid = child.id();
-        let (_tx, rx) = mpsc::channel();
-        let mut w = WindowProc { child, stdin: None, mode: WinMode::App, rx, gone: false };
-        while matches!(std::fs::read_to_string(format!("/proc/{pid}/stat")), Ok(s) if !s.contains(") Z ")) {
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        w.gone = true; // the reader saw the pipe close
-        assert!(!w.alive());
-        drop(w);
-        assert!(std::fs::metadata(format!("/proc/{pid}")).is_err(), "pid {pid} is still there");
-    }
+    use std::time::Instant;
 
     /// A hub in a folder of its own. Tests run in parallel and `hub_in`
     /// starts by removing its folder, so two tests sharing one would delete
@@ -2231,6 +1971,7 @@ mod tests {
             installed: true,
             window: "app",
             tray: true,
+            welcome: None,
             update: r#"{"auto":false,"phase":"idle"}"#,
         }
     }
@@ -2493,30 +2234,33 @@ mod tests {
         let in_meters = [[-30.0f32, -31.5]; ROWS];
         let mut chans = vec![ChanView { dev: "Not connected".into(), cable: false }; ROWS];
         chans[0] = ChanView { dev: "Yeti <USB>".into(), cable: true };
-        let ips = [crate::sys::LocalIp {
+        let ips = [crate::gui_platform::LocalIp {
             iface: "enp3s0".into(),
             ip: [192, 168, 1, 23].into(),
             broadcast: Some([192, 168, 1, 255].into()),
         }];
-        let json = state_json(
-            &h.shared,
-            &Frame {
-                info: &info,
-                cfg: &cfg,
-                meters: &meters,
-                in_meters: &in_meters,
-                conn: &["Firefox".into()],
-                chans: &chans,
-                dev_rev: 42,
-                ips: &ips,
-                status: "\x1b[33msaved\x1b[0m\nok",
-                rec: &st,
-                rec_settings: &h.recorder.settings(),
-                vban: &vst,
-                vban_cfg: &vcfg,
-                extra: &x,
-            },
-        );
+        let render = |x: &Extra| {
+            state_json(
+                &h.shared,
+                &Frame {
+                    info: &info,
+                    cfg: &cfg,
+                    meters: &meters,
+                    in_meters: &in_meters,
+                    conn: &["Firefox".into()],
+                    chans: &chans,
+                    dev_rev: 42,
+                    ips: &ips,
+                    status: "\x1b[33msaved\x1b[0m\nok",
+                    rec: &st,
+                    rec_settings: &h.recorder.settings(),
+                    vban: &vst,
+                    vban_cfg: &vcfg,
+                    extra: x,
+                },
+            )
+        };
+        let json = render(&x);
         assert!(!json.contains('\n'), "one SSE data line");
         let (lt, gt) = (format!("\\u{:04x}", '<' as u32), format!("\\u{:04x}", '>' as u32));
         assert!(json.contains(&format!(r#""name":"Mic \"1\" {lt}b{gt}\\""#)), "{json}");
@@ -2548,6 +2292,10 @@ mod tests {
         );
         assert!(json.contains(r#","player":{"state":"stopped","take":null,"pos":0.00,"dur":0.00,"underruns":0,"error":null},"playTo":1,"takes":{"rev":3,"count":2,"newest":"2026-10-21_14-03-05"},"disk":{"total":64000000000,"free":52000000000},"#), "{json}");
         assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","closeToTray":true,"zoom":1,"autostart":false,"installed":true,"window":"app","tray":true}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
+        // Windows and macOS add whether the cables welcome is still to come, and nothing else.
+        let welcome = render(&Extra { welcome: Some(false), ..extra(&ps, &scene_list) });
+        assert!(welcome.contains(r#""window":"app","tray":true,"welcome":false},"update":"#), "{welcome}");
+        assert_eq!(welcome.replace(r#","welcome":false"#, ""), json);
         // balanced brackets outside strings
         let (mut depth, mut in_str, mut esc) = (0i32, false, false);
         for c in json.chars() {
@@ -2737,43 +2485,20 @@ mod tests {
     }
 
     #[test]
-    fn window_process_lines() {
-        assert_eq!(parse_win_line("quit"), Some(WinMsg::Quit));
-        assert_eq!(parse_win_line("record"), Some(WinMsg::Record));
-        assert_eq!(parse_win_line("open"), Some(WinMsg::Open));
-        assert_eq!(parse_win_line("size 1600 900"), Some(WinMsg::Size(1600, 900)));
-        assert_eq!(parse_win_line("size x"), None);
-        assert_eq!(parse_win_line("bogus"), None);
+    fn url_encoding_and_pan_text() {
         assert_eq!(url_encode("a b/c&d=é"), "a%20b%2Fc%26d%3D%C3%A9");
         assert_eq!(pan_text(-1.0), "L100");
         assert_eq!(pan_text(0.004), "C");
     }
 
+    /// A real connection: the system's table of connections says the other
+    /// end is ours.
     #[test]
-    fn only_our_user_gets_in() {
-        let table = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
-           0: 0100007F:2256 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1 1 0 100 0 0 10 0\n\
-           1: 0100007F:A1B2 0100007F:2256 01 00000000:00000000 00:00000000 00000000  1001        0 2 1 0 20 4 30 10 -1\n\
-           2: 0100007F:2256 0100007F:A1B2 01 00000000:00000000 00:00000000 00000000  1000        0 3 1 0 20 4 30 10 -1\n";
-        let at = |p: u16| SocketAddr::from((Ipv4Addr::LOCALHOST, p));
-        if cfg!(target_endian = "little") {
-            assert_eq!(socket_owner(table, at(0xA1B2), at(0x2256)), Some(1001), "the client's own line");
-            assert_eq!(socket_owner(table, at(0xA1B3), at(0x2256)), None);
-            // a dual-stack IPv6 client (Java, .NET) is listed in tcp6 as ::ffff:127.0.0.1
-            let t6 = "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n\
-               0: 0000000000000000FFFF00000100007F:A1B2 0000000000000000FFFF00000100007F:2256 01 00000000:00000000 00:00000000 00000000  1002        0 4 1 0 20 4 30 10 -1\n";
-            assert_eq!(socket_owner(t6, mapped(at(0xA1B2)), mapped(at(0x2256))), Some(1002));
-            assert_eq!(socket_owner(t6, at(0xA1B2), at(0x2256)), None, "IPv4 form does not match a tcp6 line");
-        }
-        // a real connection: the owner is this process's user
+    fn our_own_connection_gets_in() {
         let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
         let (srv, _) = l.accept().unwrap();
-        if let Ok(t) = std::fs::read_to_string("/proc/net/tcp") {
-            assert_eq!(socket_owner(&t, srv.peer_addr().unwrap(), srv.local_addr().unwrap()), Some(crate::sys::uid()));
-            assert!(same_user(&srv), "the server sees its own user");
-            assert!(same_user(&c), "and so does the client, of the server's end");
-        }
+        assert!(peer_allowed(&srv), "the server sees its own user");
         drop(c);
     }
 

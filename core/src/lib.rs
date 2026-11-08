@@ -34,6 +34,6 @@ pub mod vban;
 
 /// The touch deck at `/deck`: the everyday controls (faders, mute, solo,
 /// routes, record) sized for a small touchscreen, on the same API as the
-/// main page. The same page on every platform; each app's `gui.rs` serves
-/// it with the theme filled in.
+/// main page. The same page on every platform; the shared GUI layer (`gui/`)
+/// serves it with the theme filled in.
 pub const DECK_PAGE: &str = include_str!("deck.html");

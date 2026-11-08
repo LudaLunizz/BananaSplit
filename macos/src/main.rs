@@ -7,8 +7,9 @@
 //! on a thread of its own and drives the app as the other versions drive
 //! their window process.
 
-#[path = "gui.rs"]
+#[path = "../../gui/mod.rs"]
 mod gui;
+mod gui_platform;
 // The terminal UI of the Linux version: the app uses its meters and the
 // numbers it shows.
 #[path = "mac/app.rs"]
@@ -492,7 +493,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
             installed: hub.installed.load(SeqCst),
             window: if window.started && !window.failed { "app" } else { "none" },
             tray: window.tray,
-            welcome: hub.cable_welcome.load(SeqCst),
+            welcome: Some(hub.cable_welcome.load(SeqCst)),
             update: &update_json,
         };
         hub.publish(gui::state_json(
