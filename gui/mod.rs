@@ -85,6 +85,10 @@ use std::time::Duration;
 pub mod peer;
 pub mod portdir;
 
+// What the mixer and its window say to each other (all three apps).
+mod winmsg;
+pub use winmsg::{FromWindow, ToWindow};
+
 // The window process: Linux and Windows. macOS has its window in this process.
 #[cfg(not(target_os = "macos"))]
 mod window;

@@ -1159,12 +1159,12 @@ impl Window {
                 }
                 self.proc = Some(p);
                 // Changed while it started (it was started with the old one).
-                self.send(&format!("close-to-tray {}", u8::from(cfg.gui.close_to_tray)));
+                self.send(gui::ToWindow::CloseToTray(cfg.gui.close_to_tray));
                 if self.recording {
-                    self.send("rec 1");
+                    self.send(gui::ToWindow::Rec(true));
                 }
                 if let Some(token) = self.show_when_ready.take().filter(|_| app) {
-                    self.send(&format!("show {}", if token.is_empty() { "-" } else { &token }));
+                    self.send(gui::ToWindow::Show(Some(token)));
                 }
             }
             Err(e) => {
@@ -1185,9 +1185,7 @@ impl Window {
         }
         let alive = self.proc.as_mut().is_some_and(gui::WindowProc::alive);
         match &mut self.proc {
-            Some(p) if alive && p.mode == gui::WinMode::App => {
-                p.send(&format!("show {}", if token.is_empty() { "-" } else { token }))
-            }
+            Some(p) if alive && p.mode == gui::WinMode::App => p.send(gui::ToWindow::Show(Some(token.to_string()))),
             Some(_) if alive => self.open_browser(),
             _ => {
                 self.proc = None;
@@ -1196,9 +1194,9 @@ impl Window {
         }
     }
 
-    fn send(&mut self, line: &str) {
+    fn send(&mut self, m: gui::ToWindow) {
         if let Some(p) = &mut self.proc {
-            p.send(line);
+            p.send(m);
         }
     }
 
@@ -1345,7 +1343,7 @@ fn run_gui(
                 }
                 gui::Request::CloseToTray(on) => {
                     cfg.gui.close_to_tray = on;
-                    window.send(&format!("close-to-tray {}", u8::from(on)));
+                    window.send(gui::ToWindow::CloseToTray(on));
                 }
                 gui::Request::Scene(name) => cfg.gui.scene = name,
                 gui::Request::AutoUpdate(on) => {
@@ -1401,16 +1399,15 @@ fn run_gui(
         if let Some(p) = &mut window.proc {
             for m in p.poll() {
                 match m {
-                    gui::WinMsg::Quit => quit = true,
-                    gui::WinMsg::Open => window.browser |= gui_platform::open_window(&url),
-                    gui::WinMsg::Record => {
+                    gui::FromWindow::Quit => quit = true,
+                    gui::FromWindow::Open => window.browser |= gui_platform::open_window(&url),
+                    gui::FromWindow::Record => {
                         status = match toggle_record(rec, shared, &channel_names(cfg)) {
                             Ok(m) => m,
                             Err(e) => format!("recorder: {e}"),
                         }
                     }
-                    gui::WinMsg::Size(w, h) => cfg.gui.window = Some((w.clamp(640, 16384), h.clamp(480, 16384))),
-                    gui::WinMsg::Gone => {}
+                    gui::FromWindow::Size(w, h) => cfg.gui.window = Some((w.clamp(640, 16384), h.clamp(480, 16384))),
                 }
             }
             if !p.alive() {
@@ -1466,7 +1463,7 @@ fn run_gui(
         let recording = rec.is_recording();
         if recording != was_recording {
             window.recording = recording;
-            window.send(&format!("rec {}", u8::from(recording)));
+            window.send(gui::ToWindow::Rec(recording));
             takes.kick();
             was_recording = recording;
         }

@@ -239,7 +239,7 @@ impl Window<'_> {
         }));
         self.started = true;
         if self.recording {
-            self.ui.send(ToUi::Rec(true));
+            self.ui.send(ToUi::Window(gui::ToWindow::Rec(true)));
         }
     }
 
@@ -248,7 +248,7 @@ impl Window<'_> {
         if self.failed {
             let _ = desktop::open_page(&self.url);
         } else if self.started {
-            self.ui.send(ToUi::Show);
+            self.ui.send(ToUi::Window(gui::ToWindow::Show(None)));
         } else {
             self.start(cfg, false);
         }
@@ -350,7 +350,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
                 }
                 Request::CloseToTray(b) => {
                     cfg.gui.close_to_tray = b;
-                    ui.send(ToUi::CloseToTray(b));
+                    ui.send(ToUi::Window(gui::ToWindow::CloseToTray(b)));
                 }
                 Request::Zoom(z) => {
                     cfg.gui.zoom = z;
@@ -398,16 +398,20 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
         for m in ui.poll() {
             match m {
                 // Closed with "Closing the window keeps it running" off, or Quit.
-                FromUi::Quit => quit = true,
-                FromUi::Size(w, h) => cfg.gui.window = Some((w.clamp(640, 16384), h.clamp(480, 16384))),
+                FromUi::Window(gui::FromWindow::Quit) => quit = true,
+                FromUi::Window(gui::FromWindow::Size(w, h)) => {
+                    cfg.gui.window = Some((w.clamp(640, 16384), h.clamp(480, 16384)))
+                }
                 // The menu bar icon's menu.
-                FromUi::Record => {
+                FromUi::Window(gui::FromWindow::Record) => {
                     let on = if rec.is_recording() { "0" } else { "1" };
                     status = match gui::command(&hub, &format!("op=rec&v={on}")) {
                         Ok(m) => m,
                         Err(e) => format!("recorder: {e}"),
                     };
                 }
+                // (a window process asks for the browser with `Open`; this app never does)
+                FromUi::Window(gui::FromWindow::Open) => {}
                 FromUi::NoTray => window.tray = false,
                 FromUi::NoWindow(why) => {
                     eprintln!("bananasplit: no window: {why}");
@@ -524,7 +528,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
         if recording != was_recording {
             was_recording = recording;
             window.recording = recording;
-            ui.send(ToUi::Rec(recording));
+            ui.send(ToUi::Window(gui::ToWindow::Rec(recording)));
             takes.kick();
         }
         if last_save.elapsed() >= Duration::from_secs(120) {
@@ -540,7 +544,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
 
     // Out of sight at once, rather than showing a disconnected page while
     // everything stops and the settings are saved.
-    ui.send(ToUi::Hide);
+    ui.send(ToUi::Window(gui::ToWindow::Hide));
     hub.close();
     gui::forget_port(&cfg.client_name, port);
     // What must not be lost comes first (quit from the Dock, or at log out,
