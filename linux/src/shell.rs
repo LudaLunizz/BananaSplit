@@ -33,6 +33,7 @@ type FdFn = unsafe extern "C" fn(c_int, c_uint, Ptr) -> c_int;
 type SourceFn = unsafe extern "C" fn(Ptr) -> c_int;
 
 use crate::dl::{self, dl_api};
+use crate::gui::{FromWindow, Hello, ToWindow};
 
 dl_api!(
     struct Glib {
@@ -289,6 +290,16 @@ fn tell(msg: &str) {
     }
 }
 
+/// A message to the mixer.
+fn say(m: FromWindow) {
+    tell(&m.line());
+}
+
+/// The first line, which says what this window can do.
+fn hello(h: Hello) {
+    tell(&h.line());
+}
+
 // ---------------------------------------------------------------------------
 // State (GLib calls every callback on this one thread)
 // ---------------------------------------------------------------------------
@@ -326,7 +337,7 @@ fn quit() {
             // SAFETY: valid window.
             unsafe { (gtk.gtk_window_get_size)(win, &mut w, &mut h) };
             if w > 0 && h > 0 {
-                let _ = writeln!(std::io::stdout(), "size {w} {h}");
+                let _ = writeln!(std::io::stdout(), "{}", FromWindow::Size(w as u32, h as u32).line());
                 let _ = std::io::stdout().flush();
             }
         }
@@ -348,7 +359,7 @@ fn window_visible() -> bool {
 fn show_window(token: Option<&str>) {
     let Some((libs, win)) = with(|a| (a.libs, a.window)) else { return };
     let Some((gtk, _, _)) = &libs.ui else {
-        tell("open");
+        say(FromWindow::Open);
         return;
     };
     if win.is_null() {
@@ -377,7 +388,7 @@ fn hide_window() {
             (gtk.gtk_widget_hide)(win);
         }
         if w > 0 && h > 0 {
-            tell(&format!("size {w} {h}"));
+            say(FromWindow::Size(w as u32, h as u32));
         }
     }
     menu_changed();
@@ -388,7 +399,7 @@ fn hide_window() {
 fn toggle_window() {
     let Some((libs, win)) = with(|a| (a.libs, a.window)) else { return };
     let Some((gtk, _, _)) = &libs.ui else {
-        tell("open");
+        say(FromWindow::Open);
         return;
     };
     // SAFETY: valid window.
@@ -613,8 +624,8 @@ fn menu_event(id: i32) {
                 show_window(None)
             }
         }
-        MENU_RECORD => tell("record"),
-        MENU_QUIT => tell("quit"),
+        MENU_RECORD => say(FromWindow::Record),
+        MENU_QUIT => say(FromWindow::Quit),
         _ => {}
     }
 }
@@ -1187,7 +1198,7 @@ unsafe extern "C" fn on_delete(_w: Ptr, _ev: Ptr, _d: Ptr) -> c_int {
     let Some((libs, win, close_to_tray)) = with(|a| (a.libs, a.window, a.close_to_tray)) else { return 1 };
     if !close_to_tray {
         hide_window();
-        tell("quit");
+        say(FromWindow::Quit);
     } else if tray_available() {
         hide_window();
     } else if let Some((gtk, _, _)) = &libs.ui {
@@ -1243,23 +1254,22 @@ unsafe extern "C" fn hidden_check(_d: Ptr) -> c_int {
                 (gtk.gtk_widget_show_all)(win);
             }
         } else {
-            tell("open");
+            say(FromWindow::Open);
         }
     }
     0
 }
 
 fn handle_line(line: &str) {
-    let (cmd, arg) = line.split_once(' ').unwrap_or((line, ""));
-    match cmd {
-        "show" => show_window(Some(arg)),
-        "hide" => hide_window(),
-        "rec" => set_recording(arg == "1"),
-        "close-to-tray" => {
-            with(|a| a.close_to_tray = arg != "0");
+    match ToWindow::parse(line) {
+        Some(ToWindow::Show(token)) => show_window(token.as_deref()),
+        Some(ToWindow::Hide) => hide_window(),
+        Some(ToWindow::Rec(on)) => set_recording(on),
+        Some(ToWindow::CloseToTray(on)) => {
+            with(|a| a.close_to_tray = on);
         }
-        "quit" => quit(),
-        _ => {}
+        Some(ToWindow::Quit) => quit(),
+        None => {}
     }
 }
 
@@ -1355,7 +1365,7 @@ pub fn main(args: &[String]) -> ExitCode {
     let opts = match parse_args(args) {
         Ok(o) => o,
         Err(e) => {
-            tell(&format!("fail {e}"));
+            hello(Hello::Fail(e.to_string()));
             return ExitCode::from(2);
         }
     };
@@ -1370,7 +1380,7 @@ pub fn main(args: &[String]) -> ExitCode {
     let (glib, gobject, gio) = match load_glib() {
         Ok(l) => l,
         Err(e) => {
-            tell(&format!("fail GLib: {e}"));
+            hello(Hello::Fail(format!("GLib: {e}")));
             return ExitCode::from(2);
         }
     };
@@ -1466,7 +1476,7 @@ pub fn main(args: &[String]) -> ExitCode {
     };
 
     if ui_ok {
-        tell("ready app");
+        hello(Hello::app(false));
         if opts.hidden {
             // Give the tray a moment to pick up our icon.
             // SAFETY: main thread; `hidden_check` is a GSourceFunc that ignores its NULL data.
@@ -1477,10 +1487,10 @@ pub fn main(args: &[String]) -> ExitCode {
     } else {
         let why = if libs.ui.is_some() { "no display".to_string() } else { libs.no_ui.clone() };
         if conn.is_null() {
-            tell(&format!("fail {why}; no D-Bus session for a tray icon either"));
+            hello(Hello::Fail(format!("{why}; no D-Bus session for a tray icon either")));
             return ExitCode::from(3);
         }
-        tell(&format!("ready tray {why}"));
+        hello(Hello::tray_only(why));
         if opts.hidden {
             // SAFETY: main thread; `hidden_check` is a GSourceFunc that ignores its NULL data.
             unsafe { (g.g_timeout_add)(2500, hidden_check, std::ptr::null_mut()) };

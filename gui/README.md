@@ -17,6 +17,7 @@ so there is one copy to fix and review instead of three.
 |---|---|
 | `mod.rs` | the server, the state, `command()`, the client helpers (`probe`, `request_show`, `request_quit`, ...). All three apps. |
 | `peer.rs`, `portdir.rs` | the per-system readers and choices that need no system call (see below). All three apps. |
+| `winmsg.rs` | what the mixer and its window say to each other: `ToWindow` and `FromWindow`, with the line each is on the wire. All three apps: the window processes read and write the lines, macOS passes the same messages through its event loop. |
 | `window.rs` | the window process (`bananasplit --window`) as seen from the mixer. Linux and Windows; macOS has its window in its own process. |
 
 ## The platform contract

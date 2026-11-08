@@ -270,12 +270,12 @@ impl Window {
             Ok(p) => {
                 self.proc = Some(p);
                 // Changed while it started (it was started with the old one).
-                self.send(&format!("close-to-tray {}", u8::from(cfg.gui.close_to_tray)));
+                self.send(gui::ToWindow::CloseToTray(cfg.gui.close_to_tray));
                 if self.recording {
-                    self.send("rec 1");
+                    self.send(gui::ToWindow::Rec(true));
                 }
                 if self.show_when_ready {
-                    self.send("show -");
+                    self.send(gui::ToWindow::Show(None));
                 }
             }
             Err(e) => {
@@ -304,7 +304,7 @@ impl Window {
         }
         let alive = self.proc.as_mut().is_some_and(gui::WindowProc::alive);
         match &mut self.proc {
-            Some(p) if alive => p.send("show -"),
+            Some(p) if alive => p.send(gui::ToWindow::Show(None)),
             _ => {
                 self.proc = None;
                 self.start(cfg, false);
@@ -312,9 +312,9 @@ impl Window {
         }
     }
 
-    fn send(&mut self, line: &str) {
+    fn send(&mut self, m: gui::ToWindow) {
         if let Some(p) = &mut self.proc {
-            p.send(line);
+            p.send(m);
         }
     }
 
@@ -432,7 +432,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                 }
                 Request::CloseToTray(b) => {
                     cfg.gui.close_to_tray = b;
-                    window.send(&format!("close-to-tray {}", u8::from(b)));
+                    window.send(gui::ToWindow::CloseToTray(b));
                 }
                 Request::Zoom(z) => {
                     cfg.gui.zoom = z;
@@ -482,10 +482,10 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             for m in p.poll() {
                 match m {
                     // Closed with "Closing the window keeps it running" off.
-                    gui::WinMsg::Quit => quit = true,
-                    gui::WinMsg::Size(w, h) => cfg.gui.window = Some((w.clamp(640, 16384), h.clamp(480, 16384))),
+                    gui::FromWindow::Quit => quit = true,
+                    gui::FromWindow::Size(w, h) => cfg.gui.window = Some((w.clamp(640, 16384), h.clamp(480, 16384))),
                     // The tray menu.
-                    gui::WinMsg::Record => {
+                    gui::FromWindow::Record => {
                         let on = if rec.is_recording() { "0" } else { "1" };
                         status = match gui::command(&hub, &format!("op=rec&v={on}")) {
                             Ok(m) => m,
@@ -493,7 +493,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                         };
                     }
                     // A browser (Linux without WebKitGTK); the reader's end.
-                    gui::WinMsg::Open | gui::WinMsg::Gone => {}
+                    gui::FromWindow::Open => {}
                 }
             }
             if !p.alive() {
@@ -605,7 +605,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
         if recording != was_recording {
             was_recording = recording;
             window.recording = recording;
-            window.send(&format!("rec {}", u8::from(recording)));
+            window.send(gui::ToWindow::Rec(recording));
             takes.kick();
         }
         if last_save.elapsed() >= Duration::from_secs(120) {
@@ -621,7 +621,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
 
     // Out of sight at once, rather than showing a disconnected page while
     // everything stops and the settings are saved.
-    window.send("hide");
+    window.send(gui::ToWindow::Hide);
     hub.close();
     takes.shutdown();
     updater.shutdown();

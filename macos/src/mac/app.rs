@@ -11,6 +11,7 @@
 //! its menu, Cmd+Q, the page's power button, or the Dock's Quit. Started
 //! in the background (`--no-open`, at login) only the icon shows.
 
+use crate::gui::{FromWindow, ToWindow};
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
@@ -54,13 +55,9 @@ pub struct StartOpts {
 pub enum ToUi {
     /// Make the window (and show it, unless hidden).
     Start(StartOpts),
-    /// Bring the window up (BananaSplit was started again).
-    Show,
-    /// Out of sight at once (the mixer is quitting).
-    Hide,
-    CloseToTray(bool),
-    /// The recorder runs: the icon and its menu show it.
-    Rec(bool),
+    /// What the mixer says to a window on every system (`gui::ToWindow`; here
+    /// the app is the window, and ends with `Exit`, so `Quit` is not used).
+    Window(ToWindow),
     /// The mixer has finished: end the app with this code.
     Exit(i32),
     /// A menu item was chosen (its id).
@@ -70,13 +67,11 @@ pub enum ToUi {
 /// The app → the mixer.
 #[derive(Debug, PartialEq)]
 pub enum FromUi {
-    /// Quit BananaSplit (the window was closed with "Closing the window
-    /// keeps it running" off, or Quit was chosen).
-    Quit,
-    /// Start or stop recording (the menu bar icon's menu).
-    Record,
-    /// The window's size the user left it at (logical pixels).
-    Size(u32, u32),
+    /// What a window says to the mixer on every system (`gui::FromWindow`):
+    /// quit (the window was closed with "Closing the window keeps it running"
+    /// off, or Quit was chosen), record (the menu bar icon's menu), the size
+    /// the user left the window at.
+    Window(FromWindow),
     /// The menu bar icon could not be made (closing the window quits).
     NoTray,
     /// The window could not be made: why.
@@ -247,7 +242,7 @@ fn report_size(tx: &mpsc::Sender<FromUi>, window: &Window, told: &mut Option<(u3
     let size = (s.width.round() as u32, s.height.round() as u32);
     if size.0 > 0 && size.1 > 0 && *told != Some(size) {
         *told = Some(size);
-        let _ = tx.send(FromUi::Size(size.0, size.1));
+        let _ = tx.send(FromUi::Window(FromWindow::Size(size.0, size.1)));
     }
 }
 
@@ -331,18 +326,18 @@ pub fn run(event_loop: EventLoop<ToUi>, tx: mpsc::Sender<FromUi>, mixer_done: Ar
                     show(s, target);
                 }
             }
-            Event::UserEvent(ToUi::Show) => {
+            Event::UserEvent(ToUi::Window(ToWindow::Show(_))) => {
                 if let Some(s) = &shown {
                     show(s, target);
                 }
             }
-            Event::UserEvent(ToUi::Hide) => {
+            Event::UserEvent(ToUi::Window(ToWindow::Hide)) => {
                 if let Some(s) = &shown {
                     hide(s, target, &mut told);
                 }
             }
-            Event::UserEvent(ToUi::CloseToTray(on)) => close_to_tray = on,
-            Event::UserEvent(ToUi::Rec(on)) => {
+            Event::UserEvent(ToUi::Window(ToWindow::CloseToTray(on))) => close_to_tray = on,
+            Event::UserEvent(ToUi::Window(ToWindow::Rec(on))) => {
                 if on != recording {
                     recording = on;
                     if let Some((t, item)) = &icon_menu {
@@ -352,6 +347,8 @@ pub fn run(event_loop: EventLoop<ToUi>, tx: mpsc::Sender<FromUi>, mixer_done: Ar
                     }
                 }
             }
+            // (The mixer ends this app with `Exit`, after it has saved.)
+            Event::UserEvent(ToUi::Window(ToWindow::Quit)) => {}
             Event::UserEvent(ToUi::Exit(code)) => *control_flow = ControlFlow::ExitWithCode(code),
             Event::UserEvent(ToUi::Menu(id)) => match id.as_str() {
                 MENU_SHOW => {
@@ -360,14 +357,14 @@ pub fn run(event_loop: EventLoop<ToUi>, tx: mpsc::Sender<FromUi>, mixer_done: Ar
                     }
                 }
                 MENU_RECORD => {
-                    let _ = tx.send(FromUi::Record);
+                    let _ = tx.send(FromUi::Window(FromWindow::Record));
                 }
                 MENU_QUIT => {
                     // The mixer saves, then ends the app.
                     if let Some(s) = &shown {
                         hide(s, target, &mut told);
                     }
-                    let _ = tx.send(FromUi::Quit);
+                    let _ = tx.send(FromUi::Window(FromWindow::Quit));
                 }
                 _ => {}
             },
@@ -382,7 +379,7 @@ pub fn run(event_loop: EventLoop<ToUi>, tx: mpsc::Sender<FromUi>, mixer_done: Ar
                     hide(s, target, &mut told);
                     if !close_to_tray || icon_menu.is_none() {
                         // Quit BananaSplit: the mixer saves, then ends the app.
-                        let _ = tx.send(FromUi::Quit);
+                        let _ = tx.send(FromUi::Window(FromWindow::Quit));
                     }
                 }
             }

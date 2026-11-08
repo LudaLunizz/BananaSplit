@@ -4,10 +4,11 @@
 //!
 //! What differs between the systems is in `gui_platform`: how the process is
 //! started (`window_command`) and where its error output goes (`window_stderr`).
-//! The protocol is the same everywhere: the window prints `ready app|tray [tray]`
-//! or `fail <why>` once, then one line per event ([`parse_win_line`]); the mixer
-//! writes `quit` or closes its input.
+//! The protocol is the same everywhere and written down in `winmsg.rs`: the
+//! window prints a [`Hello`] once, then a [`FromWindow`] line per event; the
+//! mixer writes [`ToWindow`] lines, or closes the window's input to end it.
 
+use super::{FromWindow, ToWindow};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc;
@@ -23,15 +24,55 @@ pub enum WinMode {
     Tray,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum WinMsg {
-    /// Show the page in a browser (tray mode).
-    Open,
-    /// Start or stop recording (tray menu).
-    Record,
-    Quit,
-    Size(u32, u32),
-    /// The window process ended.
+/// The first line a window process prints: what it can do, or why it cannot.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Hello {
+    /// `ready app` (a window of our own), `ready app tray` (with a tray icon
+    /// too) or `ready tray <why>` (the tray icon only: `note` says why there is
+    /// no window, and the page is shown in a browser).
+    Ready { app: bool, tray: bool, note: String },
+    /// `fail <why>`: neither a window nor a tray icon.
+    Fail(String),
+}
+
+impl Hello {
+    /// A window of our own, with a tray icon or without one.
+    pub fn app(tray: bool) -> Hello {
+        Hello::Ready { app: true, tray, note: String::new() }
+    }
+
+    /// Only the tray icon; `why` there is no window of our own.
+    #[allow(dead_code)] // the Linux window falls back to this; the Windows one fails instead
+    pub fn tray_only(why: impl Into<String>) -> Hello {
+        Hello::Ready { app: false, tray: true, note: why.into() }
+    }
+
+    /// The line for the window's stdout (without the newline).
+    pub fn line(&self) -> String {
+        match self {
+            Hello::Ready { app: true, tray: false, .. } => "ready app".into(),
+            Hello::Ready { app: true, tray: true, .. } => "ready app tray".into(),
+            // (with the space after `tray`, empty reason or not, as the window always printed it)
+            Hello::Ready { app: false, note, .. } => format!("ready tray {note}"),
+            Hello::Fail(why) => format!("fail {why}"),
+        }
+    }
+
+    /// The window's first line. Anything that is not `ready ...` is a failure
+    /// (with the text after `fail ` if it has that, else the whole line).
+    pub fn parse(line: &str) -> Hello {
+        let Some(m) = line.strip_prefix("ready ") else {
+            return Hello::Fail(line.strip_prefix("fail ").unwrap_or(line).to_string());
+        };
+        let app = m.starts_with("app");
+        let note = if app { String::new() } else { m.strip_prefix("tray").unwrap_or("").trim().to_string() };
+        Hello::Ready { app, tray: m.split_whitespace().any(|w| w == "tray"), note }
+    }
+}
+
+/// What the reader thread passes on: a message, or that the pipe ended.
+enum Event {
+    Msg(FromWindow),
     Gone,
 }
 
@@ -41,21 +82,6 @@ pub struct WinOpts<'a> {
     pub close_to_tray: bool,
     pub size: Option<(u32, u32)>,
     pub token: Option<&'a str>,
-}
-
-/// One line from the window process.
-pub fn parse_win_line(line: &str) -> Option<WinMsg> {
-    let mut w = line.split_whitespace();
-    match w.next()? {
-        "open" => Some(WinMsg::Open),
-        "record" => Some(WinMsg::Record),
-        "quit" => Some(WinMsg::Quit),
-        "size" => {
-            let (a, b) = (w.next()?.parse().ok()?, w.next()?.parse().ok()?);
-            Some(WinMsg::Size(a, b))
-        }
-        _ => None,
-    }
 }
 
 /// How long the window process may take to say it is ready.
@@ -70,7 +96,7 @@ pub struct WindowProc {
     /// It has a tray icon (`ready app tray`): closing the window hides it there.
     #[allow(dead_code)] // read by the Windows app (main.rs)
     pub tray: bool,
-    rx: mpsc::Receiver<WinMsg>,
+    rx: mpsc::Receiver<Event>,
     gone: bool,
 }
 
@@ -102,11 +128,9 @@ impl WindowProc {
             for line in BufReader::new(stdout).lines() {
                 let Ok(line) = line else { break };
                 if let Some(r) = ready.take() {
-                    let first = if let Some(m) = line.strip_prefix("ready ") {
-                        let mode = if m.starts_with("app") { WinMode::App } else { WinMode::Tray };
-                        Ok((mode, m.split_whitespace().any(|w| w == "tray")))
-                    } else {
-                        Err(line.strip_prefix("fail ").unwrap_or(&line).to_string())
+                    let first = match Hello::parse(&line) {
+                        Hello::Ready { app, tray, .. } => Ok((if app { WinMode::App } else { WinMode::Tray }, tray)),
+                        Hello::Fail(why) => Err(why),
                     };
                     let failed = first.is_err();
                     let _ = r.send(first);
@@ -115,13 +139,13 @@ impl WindowProc {
                     }
                     continue;
                 }
-                if let Some(m) = parse_win_line(&line)
-                    && tx.send(m).is_err()
+                if let Some(m) = FromWindow::parse(&line)
+                    && tx.send(Event::Msg(m)).is_err()
                 {
                     break;
                 }
             }
-            let _ = tx.send(WinMsg::Gone);
+            let _ = tx.send(Event::Gone);
         });
         if reader.is_err() {
             let _ = child.kill();
@@ -150,20 +174,25 @@ impl WindowProc {
         }
     }
 
-    pub fn send(&mut self, line: &str) {
+    pub fn send(&mut self, m: ToWindow) {
         if let Some(s) = &mut self.stdin
-            && s.write_all(line.as_bytes()).and_then(|_| s.write_all(b"\n")).and_then(|_| s.flush()).is_err()
+            && s.write_all(m.line().as_bytes()).and_then(|_| s.write_all(b"\n")).and_then(|_| s.flush()).is_err()
         {
             self.stdin = None;
         }
     }
 
-    pub fn poll(&mut self) -> Vec<WinMsg> {
-        let v: Vec<WinMsg> = self.rx.try_iter().collect();
-        if v.contains(&WinMsg::Gone) {
-            self.gone = true;
+    /// What the window has said since the last call. (That it has ended is not
+    /// a message: `alive` says it.)
+    pub fn poll(&mut self) -> Vec<FromWindow> {
+        let mut said = Vec::new();
+        for e in self.rx.try_iter() {
+            match e {
+                Event::Msg(m) => said.push(m),
+                Event::Gone => self.gone = true,
+            }
         }
-        v
+        said
     }
 
     pub fn alive(&mut self) -> bool {
@@ -173,7 +202,7 @@ impl WindowProc {
     /// Close it (it saves nothing; the mixer has the state). Dropping it
     /// waits for the process to end.
     pub fn close(mut self) {
-        self.send("quit");
+        self.send(ToWindow::Quit);
     }
 }
 
@@ -231,14 +260,42 @@ impl WindowStart {
 mod tests {
     use super::*;
 
+    /// The exact first lines on the wire, as the windows always printed them.
     #[test]
-    fn window_process_lines() {
-        assert_eq!(parse_win_line("quit"), Some(WinMsg::Quit));
-        assert_eq!(parse_win_line("record"), Some(WinMsg::Record));
-        assert_eq!(parse_win_line("open"), Some(WinMsg::Open));
-        assert_eq!(parse_win_line("size 1600 900"), Some(WinMsg::Size(1600, 900)));
-        assert_eq!(parse_win_line("size x"), None);
-        assert_eq!(parse_win_line("bogus"), None);
+    fn the_hello_lines_are_what_the_windows_always_said() {
+        let ready = |app, tray, note: &str| Hello::Ready { app, tray, note: note.into() };
+        assert_eq!(ready(true, false, "").line(), "ready app");
+        assert_eq!(ready(true, true, "").line(), "ready app tray");
+        assert_eq!(ready(false, true, "WebKitGTK is not installed").line(), "ready tray WebKitGTK is not installed");
+        assert_eq!(ready(false, true, "").line(), "ready tray ");
+        assert_eq!(Hello::app(true), ready(true, true, ""));
+        assert_eq!(Hello::tray_only("no display"), ready(false, true, "no display"));
+        assert_eq!(Hello::Fail("no D-Bus".into()).line(), "fail no D-Bus");
+    }
+
+    #[test]
+    fn what_a_window_says_first_is_read_back() {
+        for h in [
+            Hello::Ready { app: true, tray: false, note: String::new() },
+            Hello::Ready { app: true, tray: true, note: String::new() },
+            Hello::Ready { app: false, tray: true, note: "no window".into() },
+            Hello::Ready { app: false, tray: true, note: String::new() },
+            Hello::Fail("GLib: no display".into()),
+        ] {
+            assert_eq!(Hello::parse(&h.line()), h);
+        }
+    }
+
+    #[test]
+    fn the_first_line_says_what_the_window_can_do() {
+        let ready = |app, tray, note: &str| Hello::Ready { app, tray, note: note.into() };
+        assert_eq!(Hello::parse("ready app"), ready(true, false, ""));
+        assert_eq!(Hello::parse("ready app tray"), ready(true, true, ""));
+        assert_eq!(Hello::parse("ready tray WebKitGTK not found"), ready(false, true, "WebKitGTK not found"));
+        assert_eq!(Hello::parse("fail GLib: no display"), Hello::Fail("GLib: no display".into()));
+        // not "ready ..." and not "fail ...": the whole line is the reason
+        assert_eq!(Hello::parse("Segmentation fault"), Hello::Fail("Segmentation fault".into()));
+        assert_eq!(Hello::parse("ready"), Hello::Fail("ready".into()));
     }
 
     /// A window process that ended by itself (a crash) is waited for when

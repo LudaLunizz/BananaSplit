@@ -20,6 +20,7 @@
 //! window keeps it running" off in the menu, closing it quits BananaSplit.
 //! Started hidden (`--hidden`, the autostart entry), only the icon shows.
 
+use crate::gui::{FromWindow, Hello, ToWindow};
 use crate::tray::{Tray, TrayAction};
 use crate::win::ffi::{FILE_TYPE_PIPE, GetFileType, GetStdHandle, HWND, STD_INPUT_HANDLE, SetForegroundWindow};
 use std::io::{BufRead, Write};
@@ -107,6 +108,16 @@ fn tell(msg: &str) {
     let _ = out.flush();
 }
 
+/// A message to the mixer.
+fn say(m: FromWindow) {
+    tell(&m.line());
+}
+
+/// The first line, which says what this window can do.
+fn hello(h: Hello) {
+    tell(&h.line());
+}
+
 /// Started by the mixer (input is a pipe from it), not by hand.
 fn started_by_mixer() -> bool {
     // SAFETY: plain Win32 calls on this process's standard input handle.
@@ -146,7 +157,7 @@ fn report_size(window: &Window, told: &mut Option<(u32, u32)>) {
     let size = (s.width.round() as u32, s.height.round() as u32);
     if size.0 > 0 && size.1 > 0 && *told != Some(size) {
         *told = Some(size);
-        tell(&format!("size {} {}", size.0, size.1));
+        say(FromWindow::Size(size.0, size.1));
     }
 }
 
@@ -170,14 +181,14 @@ pub fn main(args: &[String]) -> ExitCode {
     let opts = match parse_args(args) {
         Ok(o) => o,
         Err(e) => {
-            tell(&format!("fail {e}"));
+            hello(Hello::Fail(e.to_string()));
             return ExitCode::from(2);
         }
     };
     match run(opts) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            tell(&format!("fail {e}"));
+            hello(Hello::Fail(e.to_string()));
             ExitCode::FAILURE
         }
     }
@@ -228,7 +239,7 @@ fn run(opts: Opts) -> Result<(), String> {
         .with_background_color(BACKGROUND)
         .build(&window)
         .map_err(|e| format!("could not start WebView2: {e}"))?;
-    tell(if has_tray { "ready app tray" } else { "ready app" });
+    hello(Hello::app(has_tray));
 
     if owned {
         let proxy = event_loop.create_proxy();
@@ -273,32 +284,29 @@ fn run(opts: Opts) -> Result<(), String> {
                     }
                 }
                 TrayAction::Show => show(&window),
-                TrayAction::Record => tell("record"),
+                TrayAction::Record => say(FromWindow::Record),
                 TrayAction::Quit => {
                     // The mixer saves, then ends this window.
                     report_size(&window, &mut told);
                     window.set_visible(false);
-                    tell("quit");
+                    say(FromWindow::Quit);
                 }
             },
-            Event::UserEvent(FromMixer::Line(line)) => {
-                let (cmd, arg) = line.split_once(' ').unwrap_or((line.as_str(), ""));
-                match cmd {
-                    "show" => show(&window),
-                    "hide" => {
-                        report_size(&window, &mut told);
-                        window.set_visible(false);
-                    }
-                    "close-to-tray" => close_to_tray = arg != "0",
-                    "rec" => {
-                        if let Some(t) = &tray {
-                            t.set_recording(arg == "1");
-                        }
-                    }
-                    "quit" => quitting = true,
-                    _ => {}
+            Event::UserEvent(FromMixer::Line(line)) => match ToWindow::parse(&line) {
+                Some(ToWindow::Show(_)) => show(&window),
+                Some(ToWindow::Hide) => {
+                    report_size(&window, &mut told);
+                    window.set_visible(false);
                 }
-            }
+                Some(ToWindow::CloseToTray(on)) => close_to_tray = on,
+                Some(ToWindow::Rec(on)) => {
+                    if let Some(t) = &tray {
+                        t.set_recording(on);
+                    }
+                }
+                Some(ToWindow::Quit) => quitting = true,
+                None => {}
+            },
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 if !owned {
                     quitting = true;
@@ -311,7 +319,7 @@ fn run(opts: Opts) -> Result<(), String> {
                     // Quit BananaSplit: the mixer saves, then ends this window.
                     report_size(&window, &mut told);
                     window.set_visible(false);
-                    tell("quit");
+                    say(FromWindow::Quit);
                 }
             }
             Event::WindowEvent { event: WindowEvent::Resized(_), .. } => resized_at = Some(Instant::now()),
