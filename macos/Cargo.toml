@@ -10,6 +10,7 @@ rust-version = "1.88"
 # (src/mac/ffi.rs, src/mac/sys.rs). The app window uses Tao/Wry and the
 # system's WKWebView, its menu bar icon and menus tray-icon (and its muda).
 [dependencies]
+bananasplit-core = { path = "../core" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tao = "0.37"

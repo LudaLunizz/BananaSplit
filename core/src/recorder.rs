@@ -254,19 +254,23 @@ pub fn stamp_day(stamp: &str) -> Option<&str> {
     ok.then_some(d)
 }
 
-/// Expand a leading `~` to the user's home folder (`%USERPROFILE%`).
+/// Expand a leading `~` to the user's home folder: `$HOME`, and on Windows
+/// `%USERPROFILE%` first (where `~\` works too).
 pub fn expand_home(v: &str) -> PathBuf {
-    let home = || {
-        std::env::var_os("USERPROFILE")
-            .filter(|h| !h.is_empty())
-            .or_else(|| std::env::var_os("HOME").filter(|h| !h.is_empty()))
-            .map(PathBuf::from)
-    };
+    let var = |k: &str| std::env::var_os(k).filter(|h| !h.is_empty());
+    #[cfg(windows)]
+    let home = || var("USERPROFILE").or_else(|| var("HOME")).map(PathBuf::from);
+    #[cfg(not(windows))]
+    let home = || var("HOME").map(PathBuf::from);
+    #[cfg(windows)]
+    let rest = v.strip_prefix("~/").or_else(|| v.strip_prefix("~\\"));
+    #[cfg(not(windows))]
+    let rest = v.strip_prefix("~/");
     if v == "~" {
         if let Some(h) = home() {
             return h;
         }
-    } else if let Some(rest) = v.strip_prefix("~/").or_else(|| v.strip_prefix("~\\"))
+    } else if let Some(rest) = rest
         && let Some(h) = home()
     {
         return h.join(rest);

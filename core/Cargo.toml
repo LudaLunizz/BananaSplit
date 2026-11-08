@@ -1,0 +1,28 @@
+[package]
+name = "bananasplit-core"
+# Not tied to the apps' version: never published, so releases leave it alone.
+version = "0.1.0"
+edition = "2024"
+description = "BananaSplit's mixer core, shared by the Linux, Windows and macOS apps: engine, EQ, dynamics, recorder, player, MP3, VBAN, scenes, config and the terminal view"
+license = "MIT"
+rust-version = "1.88"
+publish = false
+
+# Intentionally zero dependencies, and no calls into the operating system
+# beyond std: everything here is unit-tested without an audio device.
+[dependencies]
+
+[lib]
+name = "bananasplit_core"
+path = "src/lib.rs"
+
+[lints.clippy]
+# Every unsafe block says why it is sound (`// SAFETY: ...`).
+undocumented_unsafe_blocks = "warn"
+# Index loops mirror the [strip][channel] and DSP table layouts.
+needless_range_loop = "allow"
+
+# The VBAN clock-drift and EQ tests simulate minutes of audio; optimized,
+# they finish in about a minute instead of five. Debug assertions stay on.
+[profile.test]
+opt-level = 2

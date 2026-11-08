@@ -20,9 +20,7 @@ mod app_window;
 #[cfg(windows)]
 #[path = "win/tray.rs"]
 mod tray;
-#[allow(dead_code)]
-#[path = "tui.rs"]
-mod tui;
+use bananasplit::tui;
 #[path = "update.rs"]
 mod update;
 #[path = "win/mod.rs"]
