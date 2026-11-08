@@ -884,6 +884,17 @@ function toast(text, isErr) {
   setStatus(text, isErr);
   toastUntil = performance.now() + (isErr ? 6000 : 3500);
 }
+// What an answer says: a refusal is {"error": "..."}; anything else (an older BananaSplit,
+// another program on the port) is the text as it is.
+async function answerText(r) {
+  const text = await r.text();
+  if (r.ok) return text;
+  try {
+    const j = JSON.parse(text);
+    if (j && typeof j.error === "string") return j.error;
+  } catch (e) { /* not JSON */ }
+  return text;
+}
 async function send(params, quiet) {
   try {
     const r = await fetch("/api/cmd", {
@@ -891,7 +902,7 @@ async function send(params, quiet) {
       headers: { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(params).toString(),
     });
-    const text = await r.text();
+    const text = await answerText(r);
     if (!r.ok) toast(text, true); else if (!quiet) toast(text, false);
     return r.ok;
   } catch (e) {
@@ -1309,7 +1320,7 @@ async function loadChanMenu(focus) {
     const r = await fetch("/api/devices");
     if (menuCh === want && want >= 0) {
       if (r.ok) { menuData = await r.json(); menuRev = rev; buildChanMenu(focus); }
-      else $("cmenu").replaceChildren(el("div", "empty", await r.text()));
+      else $("cmenu").replaceChildren(el("div", "empty", await answerText(r)));
     }
   } catch (e) { /* the next change tries again */ }
   menuLoading = false;
@@ -2697,7 +2708,7 @@ async function loadCables() {
   try {
     const r = await fetch("/api/cables");
     if (r.ok) renderCables(await r.json());
-    else cablesError(await r.text());
+    else cablesError(await answerText(r));
   } catch (e) { /* "Check again" tries again */ }
   cabLoading = false;
 }
