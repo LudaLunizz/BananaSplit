@@ -13,6 +13,13 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.22
+
+* **Other web pages can no longer lock the window out** (#75): every `/api/` request from another site, or from a page on another localhost port, is now turned away, not only button presses. Before, any open web page could hold all 8 live-update streams and the mixer window showed "Lost connection". curl and `--quit` are not affected.
+* **No more short bursts of noise from a huge sample** (#67): a very loud but valid sample that a strip EQ pushed past the float limit could put about 0.7 ms of garbage on the buses and out of your speakers. The buses are now checked before they leave the mixer.
+* **Lighter EQ and compressor** (#68, #66): the EQ needs less CPU and the compressor skips work it doesn't need, with exactly the same sound as before.
+* **One shared mixer core** (#69): the mixer, EQ, dynamics, recorder, player, MP3, VBAN, scenes, config and terminal view now live once in `core/`, shared by the Linux, Windows and macOS apps. Nothing changes in use.
+
 ## What's new in 2.8.21
 
 * **Windows: apps keep their strip** (#63): an app you put on a strip's cable in Windows' Volume mixer is noted in `app-strips` next to the config (the same file as on Linux, e.g. `2 Discord`). Windows forgets that choice when an update installs the app into a new folder (Discord does) or the cable driver is reinstalled; BananaSplit then puts the app back on its strip's cable once and says so in the status line. Linux unchanged.
