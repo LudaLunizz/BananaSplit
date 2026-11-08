@@ -221,6 +221,15 @@ pub fn comp_curve(x: f32, t: f32, ratio: f32, knee: f32) -> f32 {
     }
 }
 
+/// Linear level at or below which [`comp_curve`] is exactly 0, so the
+/// logarithm can be skipped. It sits 0.01 dB inside the bottom of the knee:
+/// about 1000 times the rounding of `log10f`, so no sample at the edge can
+/// come out differently from working the curve out.
+#[inline]
+fn knee_floor(t: f32, knee: f32) -> f32 {
+    db_to_gain(t - knee / 2.0 - 0.01)
+}
+
 #[inline(always)]
 fn finite_or(v: f32, fallback: f32) -> f32 {
     if v.is_finite() { v } else { fallback }
@@ -314,6 +323,9 @@ impl DynRt {
         let c_rel = coef(cs[C_RELEASE] / 1000.0, sr);
         let makeup_target = if comp_on { cs[C_MAKEUP] } else { 0.0 };
         let trim = finite_or(trim, 1.0).abs();
+        let knee_floor = knee_floor(t, knee);
+        // The last gain worked out from dB, reused while the dB value stays put.
+        let (mut last_db, mut last_g) = (0.0f32, 1.0f32);
 
         let (mut gate_min, mut comp_min) = (1.0f32, 0.0f32);
         for i in 0..n {
@@ -357,7 +369,7 @@ impl DynRt {
             gate_min = gate_min.min(self.gate_g);
 
             // ---- compressor: gain change in dB, smoothed
-            let want = if comp_on { comp_curve(to_db(x), t, ratio, knee) } else { 0.0 };
+            let want = if comp_on && x > knee_floor { comp_curve(to_db(x), t, ratio, knee) } else { 0.0 };
             if self.comp_db != want {
                 let a = if !comp_on {
                     fade
@@ -380,7 +392,14 @@ impl DynRt {
             }
 
             let db = self.comp_db + self.makeup;
-            let g = if db == 0.0 { self.gate_g } else { self.gate_g * db_to_gain(db) };
+            let g = if db == 0.0 {
+                self.gate_g
+            } else {
+                if db != last_db {
+                    (last_db, last_g) = (db, db_to_gain(db));
+                }
+                self.gate_g * last_g
+            };
             l[i] *= g;
             r[i] *= g;
         }
@@ -490,6 +509,28 @@ mod tests {
             prev = y;
         }
         assert_eq!(comp_curve(0.0, -10.0, 1.0, 0.0), 0.0, "1:1 does nothing");
+    }
+
+    #[test]
+    fn the_curve_is_zero_up_to_the_knee_floor() {
+        // the compressor skips the logarithm at or below knee_floor, which is
+        // only right if the curve would have said 0 there anyway
+        let mut checked = 0;
+        for ti in 0..=60 {
+            for ki in 0..=24 {
+                let (t, knee) = (-(ti as f32), ki as f32);
+                let floor = knee_floor(t, knee);
+                let mut x = floor * 0.99;
+                while x <= floor * 1.01 {
+                    if x <= floor {
+                        assert_eq!(comp_curve(to_db(x), t, 20.0, knee), 0.0, "t {t} knee {knee} x {x}");
+                        checked += 1;
+                    }
+                    x = f32::from_bits(x.to_bits() + 97);
+                }
+            }
+        }
+        assert!(checked > 10_000, "{checked}");
     }
 
     #[test]
