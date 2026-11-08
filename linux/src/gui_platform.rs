@@ -9,8 +9,8 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// The main page.
-pub const PAGE: &str = include_str!("gui.html");
+/// The system, as the page is told it (`<html data-platform>`).
+pub const PLATFORM: &str = "linux";
 
 pub use crate::desktop::{autostart_enabled, install, menu_installed, open_folder, open_page, set_autostart};
 pub use crate::sys::{LocalIp, local_timestamp};
