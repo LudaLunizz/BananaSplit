@@ -52,9 +52,8 @@ use std::time::Duration;
 
 pub const DEFAULT_PORT: u16 = 8790;
 const PAGE: &str = include_str!("gui.html");
-/// The touch deck at `/deck`: the everyday controls (faders, mute, solo,
-/// routes, record) sized for a small touchscreen. Same API as the page.
-const DECK: &str = include_str!("deck.html");
+/// The touch deck at `/deck` (shared: `core/src/deck.html`).
+const DECK: &str = bananasplit::DECK_PAGE;
 const MAX_HEAD: usize = 16 * 1024;
 const MAX_BODY: usize = 64 * 1024;
 const MAX_CONNS: usize = 32;
