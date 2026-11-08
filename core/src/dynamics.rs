@@ -406,6 +406,12 @@ impl DynRt {
         // never let a bad value stick
         self.gate_g = finite_or(self.gate_g, 1.0).clamp(0.0, 1.0);
         self.gate_env = finite_or(self.gate_env, 0.0).min(f32::MAX);
+        // On digital silence the detector decays into the subnormal range and
+        // then rounds back to itself forever (slow maths on x86): flush it,
+        // like eq.rs clean() does.
+        if self.gate_env < 1e-20 {
+            self.gate_env = 0.0;
+        }
         self.comp_db = finite_or(self.comp_db, 0.0).min(0.0);
         self.makeup = finite_or(self.makeup, 0.0);
         p.gate_gr.store(to_db(gate_min).max(-120.0));
@@ -561,6 +567,22 @@ mod tests {
         run(&mut d, &p, db_to_gain(-20.0), 960);
         let out = run(&mut d, &p, db_to_gain(-42.0), 24_000);
         assert!(approx(to_db(*out.last().unwrap()), -42.0, 0.01));
+    }
+
+    #[test]
+    fn long_silence_flushes_the_gate_detector() {
+        let p = DynParams::default();
+        p.gate_on.store(true, Relaxed);
+        let mut d = DynRt::new(SR);
+        d.reset(&p);
+        run(&mut d, &p, db_to_gain(-20.0), 960);
+        // 3 s of digital silence: without the flush the detector stalls at
+        // a subnormal (about 6.7e-43) after about 1.6 s
+        for _ in 0..30 {
+            run(&mut d, &p, 0.0, 4800);
+            assert!(d.gate_env == 0.0 || d.gate_env.is_normal(), "subnormal detector: {:e}", d.gate_env);
+        }
+        assert_eq!(d.gate_env, 0.0);
     }
 
     #[test]
