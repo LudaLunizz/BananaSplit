@@ -697,6 +697,12 @@ fn folder_sig(folder: &Path) -> Option<Vec<(PathBuf, SystemTime)>> {
 /// no file still being written, and the last full scan less than a minute
 /// ago. `force` always scans (a recording finished, the folder changed).
 pub fn scan_changed(folder: &Path, cache: &mut ScanCache, force: bool) -> Option<Vec<TakeInfo>> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    scan_changed_at(folder, cache, force, now)
+}
+
+/// [`scan_changed`] with the time now (seconds since 1970) given.
+fn scan_changed_at(folder: &Path, cache: &mut ScanCache, force: bool, now: u64) -> Option<Vec<TakeInfo>> {
     let sig = folder_sig(folder);
     if !force
         && let (Some(sig), Some(last)) = (&sig, &cache.last)
@@ -709,7 +715,6 @@ pub fn scan_changed(folder: &Path, cache: &mut ScanCache, force: bool) -> Option
     }
     let at = Instant::now();
     let takes = scan(folder, cache);
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let live = takes.iter().any(|t| t.mtime + LIVE_SECS >= now);
     cache.last = sig.map(|sig| LastScan { folder: folder.to_path_buf(), sig, at, live });
     Some(takes)
@@ -1617,13 +1622,14 @@ mod tests {
         let d = tmpdir("scanchanged");
         let day = d.join("2026-10-21");
         std::fs::create_dir_all(&day).unwrap();
-        let old = SystemTime::now() - Duration::from_secs(3600);
         // (folder times can be as coarse as a timer tick, so changes wait)
         let w = |p: PathBuf| {
             std::thread::sleep(Duration::from_millis(50));
             write_wav(&p, Format::Wav16, 48000, 10, |_| (0.1, 0.1));
-            std::fs::File::options().write(true).open(&p).unwrap().set_modified(old).unwrap();
         };
+        // an hour from now, every file is old enough to be finished
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let scan_changed = |d: &Path, c: &mut ScanCache, force| scan_changed_at(d, c, force, now + 3600);
         w(day.join("2026-10-21_09-00-00_mix.wav"));
         w(d.join("Song.wav"));
         let mut cache = ScanCache::default();
@@ -1645,9 +1651,9 @@ mod tests {
         assert_eq!(scan_changed(&d.join("missing"), &mut cache, false), Some(Vec::new()));
         assert_eq!(scan_changed(&d, &mut cache, false).unwrap().len(), 2);
         // a file written just now may still grow: rescanned every time
-        write_wav(&day.join("2026-10-21_11-00-00_mix.wav"), Format::Wav16, 48000, 10, |_| (0.1, 0.1));
-        assert_eq!(scan_changed(&d, &mut cache, false).unwrap().len(), 3);
-        assert_eq!(scan_changed(&d, &mut cache, false).unwrap().len(), 3);
+        w(day.join("2026-10-21_11-00-00_mix.wav"));
+        assert_eq!(scan_changed_at(&d, &mut cache, false, now).unwrap().len(), 3);
+        assert_eq!(scan_changed_at(&d, &mut cache, false, now).unwrap().len(), 3);
         let _ = std::fs::remove_dir_all(d);
     }
 
