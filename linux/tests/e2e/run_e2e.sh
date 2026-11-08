@@ -450,3 +450,9 @@ echo "E2E PASS: the 2.7.1 fixes (defaults followed, cables remade, numbered name
 # cannot write to, and `bananasplit --update`
 python3 "$HERE/update.py" "$BIN" "$HERE" || fail "11: the updater"
 echo "E2E PASS: the updater checks only when asked (or when switched on), refuses a tampered file, installs, restarts"
+
+# ---- phase 12: docs/api.md says what the server does ----
+# every key of the state is in the document, its commands answer as written,
+# errors are text, or JSON for a client that asks, the refusals it lists are real
+python3 "$HERE/api_doc.py" "$BIN" "$HERE" "$HERE/../../../docs/api.md" || fail "12: docs/api.md"
+echo "E2E PASS: docs/api.md is what the server does (state fields, commands, errors as text or JSON)"

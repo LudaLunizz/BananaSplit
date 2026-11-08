@@ -40,6 +40,7 @@ mode = {'welcome': False, 'nocables': False}
 
 def state_json():
     s = copy.deepcopy(STATE)
+    s['app']['platform'] = platform
     if platform != 'linux':
         s['app']['welcome'] = mode['welcome']
     return json.dumps(s, separators=(',', ':'))

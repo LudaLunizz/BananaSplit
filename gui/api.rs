@@ -2,9 +2,12 @@
 //! ([`ApiError`]), and the one way it is written on the wire.
 //!
 //! Every refusal of the server (a bad request, a command that failed, a missing
-//! page, a request from another site) is an `ApiError`, and its body is
-//! `{"error":"<message>"}` (`application/json`). A request that works answers as
-//! it always did: plain text for a command, JSON for a state or a list.
+//! page, a request from another site) is an `ApiError`. Its body is the message
+//! as plain text, or, for a client that says `Accept: application/json`,
+//! `{"error":"<message>"}`. (Only once the request has been read: a refusal of
+//! the connection or of a request that cannot be read is always plain text.) A
+//! request that works answers as it always did: plain text for a command, JSON for
+//! a state or a list.
 
 use std::fmt;
 
@@ -20,7 +23,7 @@ impl ApiError {
         ApiError { status, msg: msg.into() }
     }
 
-    /// The body of the answer: `{"error":"..."}`.
+    /// The body of the answer for a client that asked for JSON: `{"error":"..."}`.
     pub fn json(&self) -> String {
         let mut o = String::from("{\"error\":");
         super::jstr(&mut o, &self.msg);
@@ -48,40 +51,13 @@ impl fmt::Display for ApiError {
     }
 }
 
-/// The message in the body of an answer that refused: what `ApiError::json`
-/// wrote, or, for an answer that is not that (an older BananaSplit, another
-/// program on the port), the text as it is. `bananasplit --quit` prints it.
-pub fn message_of(body: &str) -> String {
-    json_error(body.trim()).unwrap_or_else(|| body.to_string())
-}
-
-/// `{"error":"..."}` and nothing else, decoded; `None` for anything different.
-fn json_error(body: &str) -> Option<String> {
-    let rest = body.strip_prefix("{\"error\":\"")?.strip_suffix("\"}")?;
-    let mut out = String::with_capacity(rest.len());
-    let mut chars = rest.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => return None, // an unescaped quote ends the string before its end
-            '\\' => match chars.next()? {
-                '"' => out.push('"'),
-                '\\' => out.push('\\'),
-                '/' => out.push('/'),
-                'n' => out.push('\n'),
-                'r' => out.push('\r'),
-                't' => out.push('\t'),
-                'b' => out.push('\u{8}'),
-                'f' => out.push('\u{c}'),
-                'u' => {
-                    let hex: String = chars.by_ref().take(4).collect();
-                    out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok().filter(|_| hex.len() == 4)?)?);
-                }
-                _ => return None,
-            },
-            c => out.push(c),
-        }
-    }
-    Some(out)
+/// Does a request's `Accept` header ask for JSON? Only by naming `application/json`:
+/// a client that accepts anything (`*/*`, what a browser's `fetch` and `curl` send)
+/// gets the plain text.
+pub fn accepts_json(accept: Option<&str>) -> bool {
+    accept.is_some_and(|a| {
+        a.split(',').any(|t| t.split(';').next().is_some_and(|m| m.trim().eq_ignore_ascii_case("application/json")))
+    })
 }
 
 #[cfg(test)]
@@ -102,31 +78,15 @@ mod tests {
     }
 
     #[test]
-    fn what_the_server_writes_is_read_back() {
-        for msg in ["wrong Host", "", "unknown op \"cables\"", "a\\b", "tab\there\r\nand <b>é</b> & ü", "\u{1}\u{2028}"]
-        {
-            let body = ApiError::new(400, msg).json();
-            assert_eq!(message_of(&body), msg, "{body}");
-        }
-    }
-
-    #[test]
-    fn other_bodies_are_the_text_they_are() {
-        // an older BananaSplit answered with the bare message
-        assert_eq!(message_of("forbidden"), "forbidden");
-        assert_eq!(message_of("unknown op \"zzz\""), "unknown op \"zzz\"");
-        assert_eq!(message_of(""), "");
-        // not exactly one error object: left alone
-        for body in [
-            r#"{"error":"a","more":1}"#,
-            r#"{"error":"a"#,
-            r#"{"error":"a"b"}"#,
-            r#"{"error":"\x"}"#,
-            r#"{"error":"\u00zz"}"#,
-        ] {
-            assert_eq!(message_of(body), body);
-        }
-        // a trailing newline after the object does not matter
-        assert_eq!(message_of("{\"error\":\"x\"}\n"), "x");
+    fn only_a_client_that_names_json_gets_json() {
+        assert!(accepts_json(Some("application/json")));
+        assert!(accepts_json(Some("Application/JSON")));
+        assert!(accepts_json(Some("text/html, application/json;q=0.9, */*;q=0.1")));
+        assert!(accepts_json(Some("application/json; charset=utf-8")));
+        assert!(!accepts_json(None));
+        assert!(!accepts_json(Some("*/*")), "what curl and a browser's fetch send");
+        assert!(!accepts_json(Some("text/plain")));
+        assert!(!accepts_json(Some("application/jsonp")));
+        assert!(!accepts_json(Some("")));
     }
 }

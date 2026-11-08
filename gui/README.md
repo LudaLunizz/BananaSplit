@@ -18,7 +18,7 @@ so there is one copy to fix and review instead of three.
 | `mod.rs` | the server, the state, `command()`, the client helpers (`probe`, `request_show`, `request_quit`, ...). All three apps. |
 | `cmd.rs` | `POST /api/cmd` as a typed `Cmd`: `Cmd::parse` reads and checks the form (it needs no mixer, so its rules are tested alone). |
 | `apply.rs` | `apply(hub, Cmd)`: doing it on the mixer; `command(hub, body)` is parse, then apply. |
-| `api.rs` | `ApiError { status, msg }`: every refusal the server makes, and its one encoding, `{"error":"..."}` (`application/json`). A request that works answers as before: plain text for a command, JSON for a state or a list. |
+| `api.rs` | `ApiError { status, msg }`: every refusal the server makes. Its body is the message as plain text, or `{"error":"..."}` for a client that sends `Accept: application/json` (the page and the deck do). A request that works answers as before: plain text for a command, JSON for a state or a list. |
 | `peer.rs`, `portdir.rs` | the per-system readers and choices that need no system call (see below). All three apps. |
 | `winmsg.rs` | what the mixer and its window say to each other: `ToWindow` and `FromWindow`, with the line each is on the wire. All three apps: the window processes read and write the lines, macOS passes the same messages through its event loop. |
 | `window.rs` | the window process (`bananasplit --window`) as seen from the mixer. Linux and Windows; macOS has its window in its own process. |
@@ -62,6 +62,7 @@ used twice (three systems' markup now share one document).
 
 A variant of `Cmd` (what it carries, already checked), an arm of `Cmd::parse` (what it takes, in
 the order the faults should be said), an arm of `apply` (what it does), and a case in the tests of
-`cmd.rs`. What can only be known from the mixer's state (an updater, a loop in the routing, a take
+`cmd.rs`, and a row in the table of `docs/api.md` (the e2e suite checks that every field of the state
+is in that document and that its commands answer as written). What can only be known from the mixer's state (an updater, a loop in the routing, a take
 that is gone) is `apply`'s to refuse; everything else is `parse`'s. Refuse with `ApiError` (a `String`
 or `&str` is a 400): the page shows its message, `bananasplit --quit` prints it.
