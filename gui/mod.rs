@@ -84,7 +84,7 @@ pub mod portdir;
 pub mod api;
 mod apply;
 mod cmd;
-pub use api::{ApiError, message_of};
+pub use api::ApiError;
 pub use apply::command;
 pub use cmd::Form;
 
@@ -893,14 +893,15 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     let welcome = x.welcome.map(|w| format!(",\"welcome\":{w}")).unwrap_or_default();
     let _ = write!(
         o,
-        "],\"app\":{{\"theme\":\"{}\",\"closeToTray\":{},\"zoom\":{},\"autostart\":{},\"installed\":{},\"window\":\"{}\",\"tray\":{}{welcome}}}",
+        "],\"app\":{{\"theme\":\"{}\",\"closeToTray\":{},\"zoom\":{},\"autostart\":{},\"installed\":{},\"window\":\"{}\",\"tray\":{},\"platform\":\"{}\"{welcome}}}",
         g.theme.as_str(),
         g.close_to_tray,
         g.zoom,
         x.autostart,
         x.installed,
         x.window,
-        x.tray
+        x.tray,
+        crate::gui_platform::PLATFORM
     );
     o.push_str(",\"update\":");
     o.push_str(if x.update.is_empty() { "null" } else { x.update });
@@ -1076,9 +1077,14 @@ fn respond(s: &mut TcpStream, code: u16, ctype: &str, body: &[u8], extra: &str) 
     let _ = s.shutdown(Shutdown::Write);
 }
 
-/// Refuse: the status and `{"error": "..."}`.
-fn fail(s: &mut TcpStream, e: &ApiError, extra: &str) {
-    respond(s, e.status, "application/json", e.json().as_bytes(), extra)
+/// Refuse: the status and the message, as plain text; as `{"error": "..."}` if the
+/// request (when there is one yet) says `Accept: application/json`.
+fn fail(s: &mut TcpStream, req: Option<&Req>, e: &ApiError, extra: &str) {
+    if req.is_some_and(|r| api::accepts_json(r.header("accept"))) {
+        respond(s, e.status, "application/json", e.json().as_bytes(), extra)
+    } else {
+        respond(s, e.status, "text/plain; charset=utf-8", e.msg.as_bytes(), extra)
+    }
 }
 
 const PAGE_HEADERS: &str = "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; \
@@ -1110,17 +1116,17 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
     let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(5)));
     if !peer_allowed(&s) {
-        return fail(&mut s, &ApiError::new(403, "BananaSplit only answers the user it runs as"), "");
+        return fail(&mut s, None, &ApiError::new(403, "BananaSplit only answers the user it runs as"), "");
     }
     let req = match read_request(&mut s) {
         Ok(r) => r,
-        Err(e) => return fail(&mut s, &e, ""),
+        Err(e) => return fail(&mut s, None, &e, ""),
     };
     if !host_ok(&req, port) {
-        return fail(&mut s, &ApiError::new(403, "wrong Host"), "");
+        return fail(&mut s, Some(&req), &ApiError::new(403, "wrong Host"), "");
     }
     if req.path.starts_with("/api/") && !same_origin(&req, port) {
-        return fail(&mut s, &ApiError::new(403, "forbidden"), "");
+        return fail(&mut s, Some(&req), &ApiError::new(403, "forbidden"), "");
     }
     let text = "text/plain; charset=utf-8";
     match (req.method.as_str(), req.path.as_str()) {
@@ -1136,12 +1142,12 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
         }
         ("GET", "/api/update") => match hub.updater() {
             Ok(u) => respond(&mut s, 200, "application/json", u.details_json().as_bytes(), ""),
-            Err(e) => fail(&mut s, &ApiError::new(404, e), ""),
+            Err(e) => fail(&mut s, Some(&req), &ApiError::new(404, e), ""),
         },
         ("GET", "/api/takes") => respond(&mut s, 200, "application/json", hub.takes.list_json().as_bytes(), ""),
         ("GET", "/api/devices") => match hub.ask(DevOp::List) {
             Ok(j) => respond(&mut s, 200, "application/json", j.as_bytes(), ""),
-            Err(e) => fail(&mut s, &ApiError::new(503, e), ""),
+            Err(e) => fail(&mut s, Some(&req), &ApiError::new(503, e), ""),
         },
         ("GET", "/api/wave") => {
             let q = Form::parse(&req.query);
@@ -1152,7 +1158,7 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
             });
             match r {
                 Ok(j) => respond(&mut s, 200, "application/json", j.as_bytes(), ""),
-                Err(e) => fail(&mut s, &ApiError::new(404, e), ""),
+                Err(e) => fail(&mut s, Some(&req), &ApiError::new(404, e), ""),
             }
         }
         ("GET", "/api/state") => {
@@ -1162,23 +1168,23 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
         ("GET", "/api/events") => stream(s, hub),
         ("POST", "/api/cmd") => {
             if !csrf_ok(&req, port) {
-                return fail(&mut s, &ApiError::new(403, "forbidden"), "");
+                return fail(&mut s, Some(&req), &ApiError::new(403, "forbidden"), "");
             }
             let Ok(body) = std::str::from_utf8(&req.body) else {
-                return fail(&mut s, &ApiError::new(400, "body is not UTF-8"), "");
+                return fail(&mut s, Some(&req), &ApiError::new(400, "body is not UTF-8"), "");
             };
             match command(hub, body) {
                 Ok(m) => respond(&mut s, 200, text, m.as_bytes(), ""),
-                Err(e) => fail(&mut s, &e, ""),
+                Err(e) => fail(&mut s, Some(&req), &e, ""),
             }
         }
         ("GET", path) => match crate::gui_platform::get(path) {
             Some(Ok(json)) => respond(&mut s, 200, "application/json", json.as_bytes(), ""),
-            Some(Err(e)) => fail(&mut s, &ApiError::new(503, e), ""),
-            None => fail(&mut s, &ApiError::new(404, "not found"), ""),
+            Some(Err(e)) => fail(&mut s, Some(&req), &ApiError::new(503, e), ""),
+            None => fail(&mut s, Some(&req), &ApiError::new(404, "not found"), ""),
         },
-        ("POST", _) => fail(&mut s, &ApiError::new(404, "not found"), ""),
-        _ => fail(&mut s, &ApiError::new(405, "method not allowed"), "Allow: GET, POST\r\n"),
+        ("POST", _) => fail(&mut s, Some(&req), &ApiError::new(404, "not found"), ""),
+        _ => fail(&mut s, Some(&req), &ApiError::new(405, "method not allowed"), "Allow: GET, POST\r\n"),
     }
 }
 
@@ -1192,7 +1198,7 @@ impl Drop for Count<'_> {
 fn stream(mut s: TcpStream, hub: &Hub) {
     if hub.streams.fetch_add(1, SeqCst) >= MAX_STREAMS {
         hub.streams.fetch_sub(1, SeqCst);
-        return fail(&mut s, &ApiError::new(503, "too many windows open"), "");
+        return fail(&mut s, None, &ApiError::new(503, "too many windows open"), "");
     }
     let _count = Count(&hub.streams);
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\
@@ -1254,7 +1260,7 @@ fn accept_loop(l: &TcpListener, hub: &Arc<Hub>, port: u16) {
         };
         if hub.conns.fetch_add(1, SeqCst) >= MAX_CONNS {
             hub.conns.fetch_sub(1, SeqCst);
-            fail(&mut s, &ApiError::new(503, "busy"), "");
+            fail(&mut s, None, &ApiError::new(503, "busy"), "");
             continue;
         }
         let h = hub.clone();
@@ -1383,9 +1389,8 @@ fn post_cmd(port: u16, body: &str) -> Option<(u16, String)> {
     let _ = s.take(64 * 1024).read_to_end(&mut buf);
     let text = String::from_utf8_lossy(&buf);
     let code = text.strip_prefix("HTTP/1.1 ")?.get(..3)?.parse().ok()?;
-    let body = text.split_once("\r\n\r\n").map_or("", |(_, b)| b);
-    // what a refusal says is its message, however the other BananaSplit wrote it
-    Some((code, if code == 200 { body.to_string() } else { message_of(body) }))
+    let body = text.split_once("\r\n\r\n").map_or("", |(_, b)| b).to_string();
+    Some((code, body))
 }
 
 // The page hard-codes the fader range and the channel layout.
@@ -1760,10 +1765,14 @@ mod tests {
             "{json}"
         );
         assert!(json.contains(r#","player":{"state":"stopped","take":null,"pos":0.00,"dur":0.00,"underruns":0,"error":null},"playTo":1,"takes":{"rev":3,"count":2,"newest":"2026-10-21_14-03-05"},"disk":{"total":64000000000,"free":52000000000},"#), "{json}");
-        assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","closeToTray":true,"zoom":1,"autostart":false,"installed":true,"window":"app","tray":true}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
+        let os = crate::gui_platform::PLATFORM;
+        assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","closeToTray":true,"zoom":1,"autostart":false,"installed":true,"window":"app","tray":true,"platform":"{os}"}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
         // Windows and macOS add whether the cables welcome is still to come, and nothing else.
         let welcome = render(&Extra { welcome: Some(false), ..extra(&ps, &scene_list) });
-        assert!(welcome.contains(r#""window":"app","tray":true,"welcome":false},"update":"#), "{welcome}");
+        assert!(
+            welcome.contains(&format!(r#""tray":true,"platform":"{os}","welcome":false}},"update":"#)),
+            "{welcome}"
+        );
         assert_eq!(welcome.replace(r#","welcome":false"#, ""), json);
         // balanced brackets outside strings
         let (mut depth, mut in_str, mut esc) = (0i32, false, false);
@@ -2151,34 +2160,59 @@ mod tests {
         assert!(!h.shared.strips[0].mute.load(Relaxed));
         assert!(post("op=mute&ch=0&v=1", "X-BananaSplit: 1\r\n").starts_with("HTTP/1.1 200"));
         assert!(h.shared.strips[0].mute.load(Relaxed));
-        let bad = post("op=bogus", "X-BananaSplit: 1\r\n");
-        assert!(bad.starts_with("HTTP/1.1 400"));
-        // a refusal is {"error": "..."} whichever step refused it; a success is still the plain text
+        // a refusal is the message as plain text, whichever step refused it ...
+        let out = post("op=bogus", "X-BananaSplit: 1\r\n");
+        let (head, body) = out.split_once("\r\n\r\n").unwrap();
         assert!(
-            bad.contains("Content-Type: application/json\r\n") && bad.ends_with(r#"{"error":"unknown op \"bogus\""}"#),
-            "{bad}"
+            head.starts_with("HTTP/1.1 400") && head.contains("Content-Type: text/plain; charset=utf-8\r\n"),
+            "{head}"
         );
+        assert_eq!(body, "unknown op \"bogus\"");
         let refused = |body: &str, hdr: &str| post(body, hdr).rsplit("\r\n\r\n").next().unwrap().to_string();
-        assert_eq!(refused("op=gain&ch=0&v=x", "X-BananaSplit: 1\r\n"), r#"{"error":"gain must be a number"}"#);
-        assert_eq!(refused("op=mute&ch=0&v=1", ""), r#"{"error":"forbidden"}"#);
-        let (code, body) = {
+        assert_eq!(refused("op=gain&ch=0&v=x", "X-BananaSplit: 1\r\n"), "gain must be a number");
+        assert_eq!(refused("op=mute&ch=0&v=1", ""), "forbidden");
+        // ... and {"error": "..."} for a client that says it wants JSON
+        let json = |body: &str| {
+            let out = post(body, "X-BananaSplit: 1\r\nAccept: application/json\r\n");
+            assert!(out.contains("Content-Type: application/json\r\n"), "{out}");
+            out.rsplit("\r\n\r\n").next().unwrap().to_string()
+        };
+        assert_eq!(json("op=bogus"), r#"{"error":"unknown op \"bogus\""}"#);
+        assert_eq!(json("op=gain&ch=0&v=x"), r#"{"error":"gain must be a number"}"#);
+        assert_eq!(refused("op=mute&ch=0&v=1", "Accept: application/json\r\n"), r#"{"error":"forbidden"}"#);
+        let any = |path: &str, hdr: &str| {
             let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
-            write!(s, "GET /nope HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
+            write!(s, "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{hdr}\r\n").unwrap();
             let mut out = String::new();
             let _ = s.read_to_string(&mut out);
             (out[9..12].to_string(), out.rsplit("\r\n\r\n").next().unwrap().to_string())
         };
-        assert_eq!((code.as_str(), body.as_str()), ("404", r#"{"error":"not found"}"#));
+        assert_eq!(any("/nope", ""), ("404".to_string(), "not found".to_string()));
+        assert_eq!(
+            any("/nope", "Accept: */*\r\n"),
+            ("404".to_string(), "not found".to_string()),
+            "*/* is not asking for JSON"
+        );
+        assert_eq!(
+            any("/nope", "Accept: application/json\r\n"),
+            ("404".to_string(), r#"{"error":"not found"}"#.to_string())
+        );
         let mut wrong_host = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
         write!(wrong_host, "GET /api/state HTTP/1.1\r\nHost: evil.example\r\n\r\n").unwrap();
         let mut out = String::new();
         let _ = wrong_host.read_to_string(&mut out);
-        assert!(out.starts_with("HTTP/1.1 403") && out.ends_with(r#"{"error":"wrong Host"}"#), "{out}");
+        assert!(out.starts_with("HTTP/1.1 403") && out.ends_with("\r\n\r\nwrong Host"), "{out}");
+        // a request that cannot be read has no Accept to look at: plain text
+        let mut broken = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        write!(broken, "GARBAGE\r\nAccept: application/json\r\n\r\n").unwrap();
+        let mut out = String::new();
+        let _ = broken.read_to_string(&mut out);
+        assert!(out.starts_with("HTTP/1.1 400") && out.ends_with("\r\n\r\nbad request line"), "{out}");
         assert!(
             post("op=gain&ch=0&v=-3", "X-BananaSplit: 1\r\n").ends_with("\r\n\r\n-3.0 dB"),
             "a success is plain text"
         );
-        // the program that talks to a running one (`--quit`, `--update`) gets the plain message back
+        // the program that talks to a running one (`--quit`, `--update`) asks for nothing special: the plain message
         assert_eq!(post_cmd(port, "op=gain&ch=0&v=x"), Some((400, "gain must be a number".to_string())));
         assert_eq!(post_cmd(port, "op=gain&ch=0&v=-3"), Some((200, "-3.0 dB".to_string())));
         // event stream delivers published state

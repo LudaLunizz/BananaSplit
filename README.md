@@ -90,6 +90,10 @@ Closing the window keeps the mixer running in the tray. Quit it from the tray ic
 
 The full Linux manual covering configuration, latency tuning, VBAN and the recorder lives in [`linux/README.md`](linux/README.md).
 
+### Control it from other programs
+
+Every BananaSplit serves a small local HTTP API on `127.0.0.1:8790`, the one its own window uses: read the state and the meters, set faders, start a recording. It is described in [`docs/api.md`](docs/api.md).
+
 ### Windows
 
 1. Install the [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) if it is not already present.
@@ -135,6 +139,7 @@ sh packaging/bundle.sh       # dist/BananaSplit.app, for Apple silicon and Intel
 ├── windows/          Windows app (Rust crate, WASAPI / WebView2)
 ├── macos/            macOS app (Rust crate, Core Audio / WKWebView)
 ├── docs/
+│   ├── api.md        the local HTTP API (checked against the real server by the e2e tests)
 │   └── screenshots/
 └── .github/          CI, release automation, templates
 ```
