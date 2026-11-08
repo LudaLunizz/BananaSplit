@@ -655,10 +655,13 @@ impl Engine {
             let mono = p.mono.load(Relaxed);
             {
                 let [bl, br] = &mut out[b];
+                // The sum is sanitized again: a huge but finite strip sample
+                // that a strip EQ pushed past f32::MAX (or two that add up
+                // past it) must not reach the bus EQ, its sends or the device.
                 let (mut in_l, mut in_r) = (0.0f32, 0.0f32);
                 if mono {
                     for i in 0..n {
-                        let m = 0.5 * (bl[i] + br[i]);
+                        let m = sanitize(0.5 * (bl[i] + br[i]));
                         bl[i] = m;
                         br[i] = m;
                         in_l = in_l.max(m.abs());
@@ -666,8 +669,11 @@ impl Engine {
                     in_r = in_l;
                 } else {
                     for i in 0..n {
-                        in_l = in_l.max(bl[i].abs());
-                        in_r = in_r.max(br[i].abs());
+                        let (a, c) = (sanitize(bl[i]), sanitize(br[i]));
+                        bl[i] = a;
+                        br[i] = c;
+                        in_l = in_l.max(a.abs());
+                        in_r = in_r.max(c.abs());
                     }
                 }
                 p.input_peak[0].push(in_l * trim);
@@ -675,8 +681,10 @@ impl Engine {
                 self.eq[NUM_STRIPS + b].process(&p.eq, bl, br);
                 let mut pk_l = 0.0f32;
                 let mut pk_r = 0.0f32;
+                // (and once more after the bus EQ and fader, which can push it over too)
                 for i in 0..n {
-                    let (a, c) = (bl[i] * ramp(g0[0], target[0], i, n), br[i] * ramp(g0[1], target[1], i, n));
+                    let a = sanitize(bl[i] * ramp(g0[0], target[0], i, n));
+                    let c = sanitize(br[i] * ramp(g0[1], target[1], i, n));
                     bl[i] = a;
                     br[i] = c;
                     pk_l = pk_l.max(a.abs());
@@ -946,6 +954,41 @@ mod tests {
             _ => 0.0,
         });
         assert!(rig.bus(0, 0).iter().all(|&x| approx(x, 0.3)));
+    }
+
+    #[test]
+    fn a_huge_finite_sample_pushed_over_by_eq_stays_off_the_buses() {
+        // sanitize() lets a huge but finite sample through; a +24 dB shelf
+        // then pushes it past f32::MAX (issue #67)
+        let (mut rig, sh) = Rig::new();
+        sh.strips[0].routes.store(1, Relaxed); // A1
+        sh.buses[0].routes.store(1 << 3, Relaxed); // A1 sends to B1
+        let mut bands = crate::eq::DEFAULT_BANDS;
+        bands[0].gain_db = crate::eq::MAX_GAIN_DB; // low shelf: +24 dB down to DC
+        for ch in [0, NUM_STRIPS] {
+            sh.eq(ch).store_bands(&bands);
+            sh.eq(ch).on.store(true, Relaxed);
+        }
+        rig.run(N, |_, _, _| 0.0);
+        for cycle in 0..8 {
+            rig.run(N, |s, _, _| if s == 0 { 3e37 } else { 0.0 });
+            for b in 0..NUM_BUSES {
+                for ch in 0..2 {
+                    assert!(rig.bus(b, ch).iter().all(|x| x.is_finite()), "cycle {cycle} bus {b} ch {ch}");
+                }
+            }
+        }
+        // and normal audio comes straight back
+        for _ in 0..200 {
+            rig.run(N, |s, _, _| if s == 0 { 0.01 } else { 0.0 });
+        }
+        for b in [0, 3] {
+            assert!(
+                rig.bus(b, 0).iter().all(|x| x.is_finite() && x.abs() > 0.05),
+                "bus {b}: {:?}",
+                &rig.bus(b, 0)[..4]
+            );
+        }
     }
 
     #[test]
