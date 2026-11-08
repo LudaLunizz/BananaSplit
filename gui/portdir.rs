@@ -19,7 +19,7 @@ pub fn file(dir: &Path, client: &str) -> PathBuf {
 /// Linux: `$XDG_RUNTIME_DIR` if it is an absolute path (in a Flatpak only
 /// `$XDG_RUNTIME_DIR/app/<app ID>` is shared by its instances), else
 /// `~/.cache`.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", all(unix, test)))]
 pub fn linux(
     xdg_runtime_dir: Option<std::ffi::OsString>,
     home: Option<std::ffi::OsString>,
@@ -74,6 +74,9 @@ mod tests {
         assert_eq!(file(Path::new("/d"), "é").file_name().unwrap(), "_.port");
     }
 
+    /// (On a Windows host `/run/user/1000` is not an absolute path, which is what
+    /// the function asks: Unix paths are only meaningful on a Unix host.)
+    #[cfg(unix)]
     #[test]
     fn linux_prefers_the_runtime_dir() {
         assert_eq!(linux(os("/run/user/1000"), os("/home/u"), None), Some(PathBuf::from("/run/user/1000")));
