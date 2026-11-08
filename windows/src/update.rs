@@ -1873,10 +1873,20 @@ static RENAMING: Mutex<()> = Mutex::new(());
 /// new program runs here. A later target (the app menu's copy) that cannot
 /// be replaced is a warning: the running program is new by then.
 /// `stop`: BananaSplit is quitting (nothing more is renamed).
-pub fn replace(new: &Path, targets: &[PathBuf], version: &str, stop: &AtomicBool) -> Result<Vec<String>, String> {
+///
+/// `expect`: the checked hash of `new` itself (Windows, where `new` is the
+/// downloaded file). Each copy is hashed again before it is run or put in
+/// place, which also catches a virus scanner that changed it.
+pub fn replace(
+    new: &Path,
+    targets: &[PathBuf],
+    version: &str,
+    stop: &AtomicBool,
+    expect: Option<&[u8; 32]>,
+) -> Result<Vec<String>, String> {
     let mut warnings = Vec::new();
     for (k, target) in targets.iter().enumerate() {
-        let result = replace_one(new, target, version, k == 0, stop);
+        let result = replace_one(new, target, version, k == 0, stop, expect);
         match result {
             Ok(()) => {}
             Err(e) if k == 0 => return Err(e),
@@ -1886,7 +1896,14 @@ pub fn replace(new: &Path, targets: &[PathBuf], version: &str, stop: &AtomicBool
     Ok(warnings)
 }
 
-fn replace_one(new: &Path, target: &Path, version: &str, first: bool, stop: &AtomicBool) -> Result<(), String> {
+fn replace_one(
+    new: &Path,
+    target: &Path,
+    version: &str,
+    first: bool,
+    stop: &AtomicBool,
+    expect: Option<&[u8; 32]>,
+) -> Result<(), String> {
     {
         let k = usize::from(!first);
         let stage = staging_name(target);
@@ -1907,6 +1924,11 @@ fn replace_one(new: &Path, target: &Path, version: &str, first: bool, stop: &Ato
                 .open(&stage)
                 .and_then(|f| f.sync_all())
                 .map_err(|e| format!("{}: {e}", stage.display()))?;
+            if let Some(want) = expect
+                && sha256_file(&stage)? != *want
+            {
+                return Err("the program changed after it was checked; nothing was installed".into());
+            }
             if k == 0 {
                 check_program(&stage, version)?;
             }
@@ -2076,7 +2098,7 @@ pub fn install(
     stop: &AtomicBool,
     interactive: bool,
 ) -> Result<(String, Vec<String>), String> {
-    let _ = (hash, stop, interactive);
+    let _ = (stop, interactive);
     match method {
         Method::Manual(why) => Err(why.clone()),
         Method::Deb => {
@@ -2093,7 +2115,9 @@ pub fn install(
             let program = unpack(file, &offer.version)?;
             #[cfg(windows)]
             let program = file.to_path_buf();
-            let r = replace(&program, targets, &offer.version, stop);
+            // (the unpacked Linux program is not the file the hash is of)
+            let expect = if cfg!(windows) { Some(hash) } else { None };
+            let r = replace(&program, targets, &offer.version, stop, expect);
             #[cfg(unix)]
             if let Some(d) = program.parent().and_then(Path::parent) {
                 let _ = std::fs::remove_dir_all(d); // the unpacked folder
@@ -3431,6 +3455,23 @@ mod tests {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    /// Review #7: the copy is hashed again before it is run or put in place.
+    #[test]
+    fn a_copy_that_differs_from_the_checked_hash_is_not_used() {
+        let d = temp("rehash");
+        std::fs::create_dir_all(&d).unwrap();
+        let t = d.join("bananasplit.exe");
+        std::fs::write(&t, b"old").unwrap();
+        let new = d.join("new.exe");
+        std::fs::write(&new, b"changed after the check").unwrap();
+        let checked = sha256(b"what was downloaded and checked");
+        let e = replace(&new, std::slice::from_ref(&t), "9.9.9", &AtomicBool::new(false), Some(&checked)).unwrap_err();
+        assert!(e.contains("changed after it was checked"), "{e}");
+        assert_eq!(std::fs::read(&t).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 2, "the staged copy is removed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[cfg(unix)]
     #[test]
     fn the_program_is_replaced_only_by_one_that_runs_and_has_the_version() {
@@ -3448,7 +3489,7 @@ mod tests {
         let new = d.join("new");
         script(&new, "#!/bin/sh\necho 'BananaSplit 9.9.9'\n");
         // the wrong version: nothing changes, nothing is left behind
-        let e = replace(&new, &[t1.clone(), t2.clone()], "9.9.8", &AtomicBool::new(false)).unwrap_err();
+        let e = replace(&new, &[t1.clone(), t2.clone()], "9.9.8", &AtomicBool::new(false), None).unwrap_err();
         assert!(e.contains("says it is BananaSplit 9.9.9, not 9.9.8"), "{e}");
         assert_eq!(std::fs::read(&t1).unwrap(), b"old one");
         assert_eq!(std::fs::read_dir(&a).unwrap().count(), 1, "the staged file is removed");
@@ -3456,13 +3497,13 @@ mod tests {
         let broken = d.join("broken");
         script(&broken, "#!/bin/sh\nexit 3\n");
         assert!(
-            replace(&broken, std::slice::from_ref(&t1), "9.9.9", &AtomicBool::new(false))
+            replace(&broken, std::slice::from_ref(&t1), "9.9.9", &AtomicBool::new(false), None)
                 .unwrap_err()
                 .contains("does not run on this computer")
         );
         assert_eq!(std::fs::read(&t1).unwrap(), b"old one");
         // the right one: both copies, executable
-        replace(&new, &[t1.clone(), t2.clone()], "9.9.9", &AtomicBool::new(false)).unwrap();
+        replace(&new, &[t1.clone(), t2.clone()], "9.9.9", &AtomicBool::new(false), None).unwrap();
         for t in [&t1, &t2] {
             assert_eq!(std::fs::read(t).unwrap(), std::fs::read(&new).unwrap());
             assert_eq!(std::fs::metadata(t).unwrap().permissions().mode() & 0o777, 0o755);
@@ -3488,15 +3529,15 @@ mod tests {
         script(&new, "#!/bin/sh\necho 'BananaSplit 9.9.9'\n");
         // a second "copy" whose folder is gone: it cannot be written
         let gone = d.join("gone").join("bananasplit");
-        let w = replace(&new, &[t1.clone(), gone.clone()], "9.9.9", &AtomicBool::new(false)).unwrap();
+        let w = replace(&new, &[t1.clone(), gone.clone()], "9.9.9", &AtomicBool::new(false), None).unwrap();
         assert_eq!(std::fs::read(&t1).unwrap(), std::fs::read(&new).unwrap(), "the running program is new");
         assert_eq!(w.len(), 1, "{w:?}");
         assert!(w[0].contains("was not updated"), "{w:?}");
         // the first one failing is an error
-        assert!(replace(&new, &[gone, t2.clone()], "9.9.9", &AtomicBool::new(false)).is_err());
+        assert!(replace(&new, &[gone, t2.clone()], "9.9.9", &AtomicBool::new(false), None).is_err());
         assert_eq!(std::fs::read(&t2).unwrap(), b"old");
         // quitting: nothing is renamed any more, and nothing is left behind
-        let e = replace(&new, std::slice::from_ref(&t2), "9.9.9", &AtomicBool::new(true)).unwrap_err();
+        let e = replace(&new, std::slice::from_ref(&t2), "9.9.9", &AtomicBool::new(true), None).unwrap_err();
         assert!(e.contains("quitting"), "{e}");
         assert_eq!(std::fs::read(&t2).unwrap(), b"old");
         assert_eq!(std::fs::read_dir(&b).unwrap().count(), 1, "the staged file is removed");

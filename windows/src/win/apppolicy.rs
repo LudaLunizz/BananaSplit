@@ -199,8 +199,9 @@ impl AppRestore {
             .into_iter()
             .map(|name| name.and_then(|n| ren_info.iter().find(|d| d.name == n)).map(|d| d.id.clone()))
             .collect();
-        let present = |id: &str| ren_info.iter().any(|d| d.id == id);
-        let cable = |id: &str| ren_info.iter().any(|d| d.id == id && route::is_virtual(&d.name));
+        // (endpoint IDs hold GUIDs: Windows may print them in either case)
+        let present = |id: &str| ren_info.iter().any(|d| d.id.eq_ignore_ascii_case(id));
+        let cable = |id: &str| ren_info.iter().any(|d| d.id.eq_ignore_ascii_case(id) && route::is_virtual(&d.name));
         self.homes.poll(&apps, &cables, present, cable, names, |pid, id| policy.set(pid, id))
     }
 }
