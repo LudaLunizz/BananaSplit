@@ -1,5 +1,6 @@
 //! Windows helpers used by the GUI and main loop.
 
+use crate::gui::peer::win_table::owner_pid;
 use crate::win::ffi::*;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
@@ -126,49 +127,6 @@ fn tcp_table(af: u32) -> Option<Vec<u8>> {
     None
 }
 
-/// The process that owns the connection from `peer` to `us`, found in a
-/// table from `tcp_table`: its row has `peer` as the local and `us` as the
-/// remote end. Addresses are stored as their bytes; ports in network order
-/// in the low two bytes of a DWORD.
-pub fn owner_pid(table: &[u8], v6: bool, peer: SocketAddr, us: SocketAddr) -> Option<u32> {
-    let u32_at = |i: usize| table.get(i..i + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
-    let port_at = |i: usize| table.get(i..i + 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
-    let v6_of = |a: SocketAddr| match a {
-        SocketAddr::V4(v) => v.ip().to_ipv6_mapped().octets(),
-        SocketAddr::V6(v) => v.ip().octets(),
-    };
-    let n = u32_at(0)? as usize;
-    let row = if v6 { 56 } else { 24 };
-    (0..n).find_map(|k| {
-        let r = 4 + k * row;
-        let (local, lport, remote, rport, pid) = if v6 {
-            (
-                table.get(r..r + 16)?.to_vec(),
-                port_at(r + 20)?,
-                table.get(r + 24..r + 40)?.to_vec(),
-                port_at(r + 44)?,
-                u32_at(r + 52)?,
-            )
-        } else {
-            (
-                table.get(r + 4..r + 8)?.to_vec(),
-                port_at(r + 8)?,
-                table.get(r + 12..r + 16)?.to_vec(),
-                port_at(r + 16)?,
-                u32_at(r + 20)?,
-            )
-        };
-        let addr = |a: SocketAddr| -> Vec<u8> {
-            match (v6, a) {
-                (false, SocketAddr::V4(v)) => v.ip().octets().to_vec(),
-                (false, SocketAddr::V6(v)) => v.ip().to_ipv4_mapped().map(|i| i.octets().to_vec()).unwrap_or_default(),
-                (true, a) => v6_of(a).to_vec(),
-            }
-        };
-        (local == addr(peer) && lport == peer.port() && remote == addr(us) && rport == us.port()).then_some(pid)
-    })
-}
-
 /// The SID of the user a process runs as (`None` if it cannot be read).
 fn process_user(process: HANDLE) -> Option<Vec<u8>> {
     // SAFETY: plain Win32 calls; the token handle is closed before return,
@@ -285,47 +243,6 @@ mod tests {
         assert_eq!(std::mem::offset_of!(IpAdapterUnicastAddress, on_link_prefix_length), 56);
         #[cfg(target_pointer_width = "64")]
         assert_eq!(std::mem::offset_of!(IpAdapterAddresses, oper_status), 104);
-    }
-
-    /// One row: local address and port, remote address and port, owner pid.
-    type V4Row = ([u8; 4], u16, [u8; 4], u16, u32);
-
-    /// A table as `GetExtendedTcpTable` writes it: the count, then rows.
-    fn v4_table(rows: &[V4Row]) -> Vec<u8> {
-        let mut t = (rows.len() as u32).to_le_bytes().to_vec();
-        for (la, lp, ra, rp, pid) in rows {
-            t.extend_from_slice(&5u32.to_le_bytes()); // ESTABLISHED
-            t.extend_from_slice(la);
-            t.extend_from_slice(&[(lp >> 8) as u8, *lp as u8, 0, 0]);
-            t.extend_from_slice(ra);
-            t.extend_from_slice(&[(rp >> 8) as u8, *rp as u8, 0, 0]);
-            t.extend_from_slice(&pid.to_le_bytes());
-        }
-        t
-    }
-
-    #[test]
-    fn connection_owner_from_the_table() {
-        let lo = [127, 0, 0, 1];
-        let at = |p: u16| SocketAddr::from((Ipv4Addr::LOCALHOST, p));
-        // the server's own end (pid 10) and the client's (pid 42)
-        let t = v4_table(&[(lo, 8790, lo, 51000, 10), (lo, 51000, lo, 8790, 42), (lo, 51001, lo, 8790, 43)]);
-        assert_eq!(owner_pid(&t, false, at(51000), at(8790)), Some(42));
-        assert_eq!(owner_pid(&t, false, at(51001), at(8790)), Some(43));
-        assert_eq!(owner_pid(&t, false, at(51002), at(8790)), None);
-        assert_eq!(owner_pid(&t[..10], false, at(51000), at(8790)), None, "a cut-off table");
-        // a dual-stack client (::ffff:127.0.0.1) in the IPv6 table
-        let mapped = Ipv4Addr::LOCALHOST.to_ipv6_mapped().octets();
-        let mut t6 = 1u32.to_le_bytes().to_vec();
-        t6.extend_from_slice(&mapped);
-        t6.extend_from_slice(&0u32.to_le_bytes());
-        t6.extend_from_slice(&[0xC7, 0x38, 0, 0]); // 51000
-        t6.extend_from_slice(&mapped);
-        t6.extend_from_slice(&0u32.to_le_bytes());
-        t6.extend_from_slice(&[0x22, 0x56, 0, 0]); // 8790
-        t6.extend_from_slice(&5u32.to_le_bytes());
-        t6.extend_from_slice(&77u32.to_le_bytes());
-        assert_eq!(owner_pid(&t6, true, at(51000), at(8790)), Some(77));
     }
 
     #[cfg(windows)]

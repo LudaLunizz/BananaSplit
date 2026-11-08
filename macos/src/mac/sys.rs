@@ -67,7 +67,7 @@ pub fn process_exists(pid: u32) -> bool {
 }
 
 /// The kernel's list of TCP sockets (`net.inet.tcp.pcblist_n`, see
-/// `mac::pcblist`), or None if it can't be read.
+/// `gui::peer::pcblist`), or None if it can't be read.
 fn tcp_list() -> Option<Vec<u8>> {
     let name = c"net.inet.tcp.pcblist_n";
     // sockets come and go between asking for the size and reading: retry
@@ -102,7 +102,7 @@ pub fn same_user(peer: std::net::SocketAddr, us: std::net::SocketAddr) -> bool {
     let Some(list) = tcp_list() else { return true };
     let (V4(peer), V4(us)) = (peer, us) else { return false };
     // its end of the connection: local = peer, remote = us
-    crate::mac::pcblist::owner(&list, peer, us) == Some(uid())
+    crate::gui::peer::pcblist::owner(&list, peer, us) == Some(uid())
 }
 
 /// Mark every file descriptor above stderr close-on-exec, before starting
@@ -398,12 +398,12 @@ mod tests {
         let list = tcp_list().expect("the kernel's TCP list");
         let (SocketAddr::V4(p4), SocketAddr::V4(u4)) = (peer, us) else { panic!("IPv4") };
         // both ends are found, each with this user: the struct offsets are right
-        assert_eq!(crate::mac::pcblist::owner(&list, p4, u4), Some(uid()));
-        assert_eq!(crate::mac::pcblist::owner(&list, u4, p4), Some(uid()));
+        assert_eq!(crate::gui::peer::pcblist::owner(&list, p4, u4), Some(uid()));
+        assert_eq!(crate::gui::peer::pcblist::owner(&list, u4, p4), Some(uid()));
         assert!(same_user(peer, us));
         // a port nobody uses is no one's
         let gone = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1);
-        assert_eq!(crate::mac::pcblist::owner(&list, gone, u4), None);
+        assert_eq!(crate::gui::peer::pcblist::owner(&list, gone, u4), None);
         drop(c);
     }
 

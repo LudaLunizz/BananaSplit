@@ -80,6 +80,11 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering::
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
 use std::time::Duration;
 
+// Pure helpers whose answer depends on the system, compiled for it and under
+// `cargo test` everywhere (see each file).
+pub mod peer;
+pub mod portdir;
+
 // The window process: Linux and Windows. macOS has its window in this process.
 #[cfg(not(target_os = "macos"))]
 mod window;
@@ -1811,10 +1816,7 @@ pub fn url(port: u16) -> String {
 /// system's per-user folder, `gui_platform::port_dir`), so that launching it
 /// again and `--quit` find it when 8790 was busy.
 fn port_file(client: &str) -> Option<PathBuf> {
-    let base = crate::gui_platform::port_dir()?;
-    let name: String =
-        client.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
-    Some(base.join("bananasplit").join(format!("{name}.port")))
+    Some(portdir::file(&crate::gui_platform::port_dir()?, client))
 }
 
 /// Note the port this GUI listens on.
