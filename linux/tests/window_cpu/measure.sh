@@ -4,7 +4,7 @@
 #
 #   linux/tests/window_cpu/measure.sh [PAGE.html] [SECONDS]
 #
-# PAGE.html (default: linux/src/gui.html of this checkout) is served on port
+# PAGE.html (default: gui/gui.html of this checkout) is served on port
 # 8793 by serve_page.py, which passes everything else (/api/events, ...) on
 # to the running BananaSplit, so a new page can be measured without
 # installing it. A second port keeps the window from handing over to the
@@ -17,7 +17,7 @@
 # 2.8.6 page on a recording mixer: about 96% of one core; 2.8.7: about 35%.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
-page=${1:-$here/../../src/gui.html}
+page=${1:-$here/../../../gui/gui.html}
 secs=${2:-20}
 port=8793
 python3 -I "$here/serve_page.py" "$port" "$page" &
