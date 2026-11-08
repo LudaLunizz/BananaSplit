@@ -190,8 +190,8 @@ function toast(text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("show"), 5000);
 }
-// What an answer says: a refusal is {"error": "..."}; anything else (an older BananaSplit,
-// another program on the port) is the text as it is.
+// What an answer says. The deck asks for JSON (Accept), so a refusal is {"error": "..."};
+// anything else (an older BananaSplit, another program on the port) is the text as it is.
 async function answerText(r) {
   const text = await r.text();
   if (r.ok) return text;
@@ -205,7 +205,7 @@ async function send(params) {
   try {
     const r = await fetch("/api/cmd", {
       method: "POST",
-      headers: { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
       body: new URLSearchParams(params).toString(),
     });
     if (!r.ok) toast(await answerText(r));
