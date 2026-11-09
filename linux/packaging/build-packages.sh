@@ -65,10 +65,21 @@ install -D -m 0644 "$WORK/bananasplit.service" "$DOC/examples/bananasplit.servic
   echo
   echo "Files: *"
   echo "Copyright: 2026 the BananaSplit authors"
-  echo "License: MIT"
+  echo "License: GPL-3+"
   echo
-  echo "License: MIT"
-  sed 's/^$/./; s/^/ /' LICENSE | sed '1,4d'
+  echo "License: GPL-3+"
+  echo " This program is free software: you can redistribute it and/or modify"
+  echo " it under the terms of the GNU General Public License as published by"
+  echo " the Free Software Foundation, either version 3 of the License, or"
+  echo " (at your option) any later version."
+  echo " ."
+  echo " This program is distributed in the hope that it will be useful,"
+  echo " but WITHOUT ANY WARRANTY; without even the implied warranty of"
+  echo " MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the"
+  echo " GNU General Public License for more details."
+  echo " ."
+  echo " On Debian systems, the full text of the GNU General Public License"
+  echo " version 3 can be found in /usr/share/common-licenses/GPL-3."
 } > "$DOC/copyright"
 chmod 0644 "$DOC/copyright"
 {

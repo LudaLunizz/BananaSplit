@@ -4,7 +4,7 @@ name = "bananasplit-core"
 version = "0.1.0"
 edition = "2024"
 description = "BananaSplit's mixer core, shared by the Linux, Windows and macOS apps: engine, EQ, dynamics, recorder, player, MP3, VBAN, scenes, config and the terminal view"
-license = "MIT"
+license = "GPL-3.0-or-later"
 rust-version = "1.88"
 publish = false
 
