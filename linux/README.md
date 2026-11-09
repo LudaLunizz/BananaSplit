@@ -13,6 +13,18 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.23
+
+* **New licence: GPL-3.0-or-later** (#100): BananaSplit is now free software under the GNU General Public License, version 3 or later. You can still use, share and change it freely; anyone who shares a changed version must share its source code under the same licence. Releases up to 2.8.22 stay under MIT.
+* **A documented local API** (#97): every command and every field of `/api/state` is described in [`docs/api.md`](../docs/api.md), and the tests check the real server against it. `/api/state` now also says which system it runs on (`app.platform`). An error is plain text; a client that sends `Accept: application/json` gets `{"error": "…"}` instead.
+* **One window page for all three systems** (#87–#95): Linux, Windows and macOS now share one page, server and command code instead of three copies. Nothing changes in use.
+* **Fixes from the 2.8.21 review** (#81, #83):
+  * the gate no longer gets stuck on tiny leftover values in digital silence, which can cost CPU;
+  * Windows and macOS: starting BananaSplit, `--quit` and `--update` now check that the BananaSplit already running belongs to you, as Linux has done since 2.7.3, so another account on the same computer can't answer in its place;
+  * Windows: the updater checks the downloaded file again right before it runs it or puts it in place;
+  * Windows: restoring an app to its strip no longer misses a device whose ID only differs in upper/lower case;
+  * a window process that crashed is cleaned up instead of staying behind, and long recordings no longer copy their whole file list 30 times a second.
+
 ## What's new in 2.8.22
 
 * **Other web pages can no longer lock the window out** (#75): every `/api/` request from another site, or from a page on another localhost port, is now turned away, not only button presses. Before, any open web page could hold all 8 live-update streams and the mixer window showed "Lost connection". curl and `--quit` are not affected.
