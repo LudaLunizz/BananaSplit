@@ -4,7 +4,7 @@
   <name>BananaSplit</name>
   <summary>Virtual audio mixer with cables, buses and a recorder</summary>
   <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>GPL-3.0-or-later</project_license>
   <developer id="io.github.ludalunizz">
     <name>LudaLunizz</name>
   </developer>

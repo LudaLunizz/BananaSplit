@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/LudaLunizz/BananaSplit/actions/workflows/ci.yml/badge.svg)](https://github.com/LudaLunizz/BananaSplit/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/LudaLunizz/BananaSplit?include_prereleases&sort=semver)](https://github.com/LudaLunizz/BananaSplit/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
 <img src="docs/screenshots/dark.png" alt="BananaSplit mixer window" width="900">
 
@@ -245,4 +245,8 @@ Issues and pull requests are welcome. Please run the tests for the platform you 
 
 ## License
 
-[MIT](LICENSE)
+Copyright © 2026 the BananaSplit authors.
+
+BananaSplit is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License](LICENSE) as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; see the license for details.
+
+Releases up to and including 2.8.22 were published under the MIT License and stay available under it.

@@ -167,7 +167,7 @@ fn version_info(version: &str, description: &str) -> Vec<u8> {
         ("FileDescription", "BananaSplit"),
         ("FileVersion", file_version.as_str()),
         ("InternalName", "bananasplit"),
-        ("LegalCopyright", "MIT License"),
+        ("LegalCopyright", "Copyright (C) 2026 the BananaSplit authors. GPL-3.0-or-later"),
         ("OriginalFilename", "bananasplit.exe"),
         ("ProductName", "BananaSplit"),
         ("ProductVersion", version),

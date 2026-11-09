@@ -35,6 +35,6 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>BananaSplit sends and receives VBAN network audio (the format of Voicemeeter) to and from other computers on your network.</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>MIT License</string>
+	<string>Copyright © 2026 the BananaSplit authors. GPL-3.0-or-later.</string>
 </dict>
 </plist>

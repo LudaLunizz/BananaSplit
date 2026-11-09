@@ -385,7 +385,8 @@ impl Gr {
     }
 }
 
-/// Region 0 and 1 band counts for `big` lines of big values (LAME's table).
+/// Region 0 and 1 band counts for `big` lines of big values (LAME's table;
+/// LAME is LGPL-2.0-or-later, which this GPL-3.0-or-later code may include).
 fn subdivide(sfb: &[u16; 23], big: usize) -> (usize, usize) {
     const SUBDV: [(usize, usize); 23] = [
         (0, 0),
@@ -754,7 +755,8 @@ pub struct Encoder {
     finished: bool,
 }
 
-/// Lowpass corner by bitrate (LAME's table for stereo).
+/// Lowpass corner by bitrate (LAME's table for stereo; LAME is
+/// LGPL-2.0-or-later, which this GPL-3.0-or-later code may include).
 fn lowpass_hz(kbps: u32) -> f64 {
     const MAP: [(u32, f64); 11] = [
         (64, 11000.0),

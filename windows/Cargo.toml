@@ -3,7 +3,7 @@ name = "bananasplit"
 version = "2.8.22"
 edition = "2024"
 description = "6-strip, 5-bus low-latency virtual audio mixer for Windows (WASAPI), with EQ, a recorder and player, scenes and Voicemeeter-compatible VBAN"
-license = "MIT"
+license = "GPL-3.0-or-later"
 rust-version = "1.88"
 
 # WASAPI and most Win32 APIs use hand-declared FFI (src/win/ffi.rs). The native
