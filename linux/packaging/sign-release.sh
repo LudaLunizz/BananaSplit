@@ -1,7 +1,7 @@
 #!/bin/sh
 # Signs a release's SHA256SUMS.txt for the in-app updater, which installs a
 # release only when SHA256SUMS.txt.sig is the Ed25519 signature of it made
-# with the release key (its public half is SIGNING_KEY in src/update.rs).
+# with the release key (its public half is SIGNING_KEY in core/src/release.rs).
 #
 #   packaging/sign-release.sh --release v2.8.3   make the release (gh): take the files
 #                                                the release workflow left for the tag,
@@ -33,7 +33,7 @@ if [ "${1:-}" = --new-key ]; then
   [ -e "$KEY" ] && fail "$KEY already exists (a new key would make every installed BananaSplit refuse new releases)"
   mkdir -p "$(dirname "$KEY")"
   openssl genpkey -algorithm ed25519 -out "$KEY"
-  echo "made $KEY; back it up. Its public key, for SIGNING_KEY in src/update.rs:"
+  echo "made $KEY; back it up. Its public key, for SIGNING_KEY in core/src/release.rs:"
   public_key
   echo
   exit 0
@@ -42,8 +42,8 @@ fi
 [ -f "$KEY" ] || fail "no release key at $KEY (set BANANASPLIT_SIGNING_KEY)"
 PUB=$(public_key)
 # the key the updater checks against, in this checkout
-WANT=$(sed -n 's/^pub const SIGNING_KEY: &str = "\([0-9a-f]*\)";$/\1/p' "$HERE/../src/update.rs")
-[ "$PUB" = "$WANT" ] || fail "$KEY is not the release key in src/update.rs ($PUB, the updater wants $WANT)"
+WANT=$(sed -n 's/^pub const SIGNING_KEY: &str = "\([0-9a-f]*\)";$/\1/p' "$HERE/../../core/src/release.rs")
+[ "$PUB" = "$WANT" ] || fail "$KEY is not the release key in core/src/release.rs ($PUB, the updater wants $WANT)"
 
 sign() {
   sums=$1
