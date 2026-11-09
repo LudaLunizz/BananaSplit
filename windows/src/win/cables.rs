@@ -51,11 +51,11 @@ pub fn report() -> Result<String, String> {
 fn report_json(caps: &[DevInfo], rens: &[DevInfo], def_cap: Option<&str>, def_ren: Option<&str>) -> String {
     use crate::gui::jstr;
     // Splitter: whether any of its endpoints is there, and which channels'
-    // cables are complete (both halves; one may be switched off in Windows)
+    // cables are complete (both halves on one device; one may be switched
+    // off in Windows)
     let (mut cables, mut missing) = (Vec::new(), Vec::new());
     for ch in 0..NUM_STRIPS + NUM_BUSES {
-        let complete = route::splitter_endpoint(rens, ch, route::SplitterEnd::Input).is_some()
-            && route::splitter_endpoint(caps, ch, route::SplitterEnd::Output).is_some();
+        let complete = route::splitter_pair(caps, rens, ch).is_some();
         if complete { &mut cables } else { &mut missing }.push(route::splitter_name(ch));
     }
     let found = caps.iter().chain(rens).any(|d| route::is_splitter(&d.name));

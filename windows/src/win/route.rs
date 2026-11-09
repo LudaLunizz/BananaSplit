@@ -61,15 +61,20 @@ pub enum SplitterEnd {
 /// second Splitter device left behind by a reinstall: "Splitter 1 (2-
 /// Splitter Cables)".
 pub fn is_splitter(name: &str) -> bool {
+    splitter_device(name).is_some()
+}
+
+/// Which Splitter device an endpoint belongs to: 1 for "(Splitter
+/// Cables)", n for Windows' "(n- Splitter Cables)"; `None` for any other
+/// device. The two halves of a cable are only connected inside one device.
+fn splitter_device(name: &str) -> Option<u32> {
     let n = name.to_ascii_lowercase();
-    let Some(device) = n.rfind('(').and_then(|open| n[open + 1..].strip_suffix(')')) else {
-        return false;
+    let device = n.rfind('(').and_then(|open| n[open + 1..].strip_suffix(')'))?;
+    let (number, device) = match device.split_once("- ") {
+        Some((num, rest)) if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) => (num.parse().ok()?, rest),
+        _ => (1, device),
     };
-    let device = match device.split_once("- ") {
-        Some((num, rest)) if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) => rest,
-        _ => device,
-    };
-    device == SPLITTER_DEVICE.to_ascii_lowercase()
+    (device == SPLITTER_DEVICE.to_ascii_lowercase()).then_some(number)
 }
 
 /// The name of the half of channel `ch`'s Splitter cable that other apps
@@ -90,7 +95,13 @@ pub fn splitter_cable(name: &str) -> Option<(usize, SplitterEnd)> {
     if !is_splitter(name) {
         return None;
     }
-    let endpoint = short_name(name).trim().to_ascii_lowercase();
+    endpoint_cable(short_name(name))
+}
+
+/// `splitter_cable` for an endpoint name without its device: "Splitter 2
+/// Output", "Splitter B1".
+fn endpoint_cable(endpoint: &str) -> Option<(usize, SplitterEnd)> {
+    let endpoint = endpoint.trim().to_ascii_lowercase();
     let rest = endpoint.strip_prefix("splitter ")?;
     let (id, suffix) = match rest.split_once(' ') {
         Some((id, suffix)) => (id, Some(suffix)),
@@ -115,11 +126,26 @@ pub fn splitter_cable(name: &str) -> Option<(usize, SplitterEnd)> {
     }
 }
 
-/// The endpoint of channel `ch`'s Splitter cable that is half `end`, in
-/// `devs` (the playback devices for `Input`, the recording ones for
-/// `Output`).
-pub fn splitter_endpoint(devs: &[DevInfo], ch: usize, end: SplitterEnd) -> Option<&DevInfo> {
-    devs.iter().find(|d| splitter_cable(&d.name) == Some((ch, end)))
+/// Channel `ch`'s Splitter cable: its input (in `rens`, the playback
+/// devices) and its output (in `caps`, the recording ones), as indices.
+/// Both halves must belong to the same Splitter device: halves of two
+/// devices are not connected. The first complete cable, if there are more.
+pub fn splitter_pair(caps: &[DevInfo], rens: &[DevInfo], ch: usize) -> Option<(usize, usize)> {
+    splitter_pairs(caps, rens).find(|&(c, _, _)| c == ch).map(|(_, i, o)| (i, o))
+}
+
+/// Every complete Splitter cable: (channel, input index in `rens`, output
+/// index in `caps`), the two halves on one device.
+fn splitter_pairs<'a>(caps: &'a [DevInfo], rens: &'a [DevInfo]) -> impl Iterator<Item = (usize, usize, usize)> + 'a {
+    rens.iter().enumerate().flat_map(move |(i, inp)| {
+        let cable = splitter_cable(&inp.name).filter(|&(_, end)| end == SplitterEnd::Input);
+        let device = splitter_device(&inp.name);
+        caps.iter().enumerate().filter_map(move |(o, out)| {
+            let (ch, _) = cable?;
+            (splitter_cable(&out.name) == Some((ch, SplitterEnd::Output)) && splitter_device(&out.name) == device)
+                .then_some((ch, i, o))
+        })
+    })
 }
 
 /// A Splitter cable that a bus plays into and a strip records feeds the
@@ -133,12 +159,7 @@ pub fn splitter_feedback(
     bus_devs: &[Vec<usize>],
 ) -> Vec<String> {
     let mut warnings = Vec::new();
-    for ch in 0..NUM_STRIPS + NUM_BUSES {
-        let at =
-            |devs: &[DevInfo], end: SplitterEnd| devs.iter().position(|d| splitter_cable(&d.name) == Some((ch, end)));
-        let (Some(input), Some(output)) = (at(rens, SplitterEnd::Input), at(caps, SplitterEnd::Output)) else {
-            continue;
-        };
+    for (_, input, output) in splitter_pairs(caps, rens) {
         for (b, played) in bus_devs.iter().enumerate() {
             if !played.contains(&input) {
                 continue;
@@ -164,11 +185,12 @@ pub fn is_cable(name: &str) -> bool {
     is_vb_cable(name) || is_splitter(name)
 }
 
-/// A pattern that names a virtual cable. Missing cables are reported as
-/// "not installed" rather than as errors (most people only have some).
+/// A pattern that names a virtual cable: VB-Audio's, or one of Splitter's
+/// endpoints ("Splitter 3", "Splitter B1 Input"). Missing cables are
+/// reported as "not installed" rather than as errors (most people only have
+/// some); another device that happens to start with "Splitter" is an error.
 pub fn names_cable(pattern: &str) -> bool {
-    let p = pattern.trim().to_ascii_lowercase();
-    p.contains("cable") || p.starts_with("splitter")
+    pattern.to_ascii_lowercase().contains("cable") || endpoint_cable(short_name(pattern.trim())).is_some()
 }
 
 /// The Windows default device, when it is a virtual cable (VB-Audio's or
@@ -361,6 +383,13 @@ mod tests {
         assert!(!is_vb_cable("Splitter 2 Output (Splitter Cables)"));
         assert!(names_cable("Splitter 4"));
         assert!(names_cable("splitter b1"));
+        assert!(names_cable("Splitter B1 Input"));
+        assert!(names_cable("Splitter 2 Output (Splitter Cables)"));
+        // a device that is only called Splitter is not a cable: a missing
+        // one is an error, not "not installed"
+        assert!(!names_cable("Splitter"));
+        assert!(!names_cable("Splitter 7"));
+        assert!(!names_cable("Splitter Box Headphones"));
         assert_eq!(short_name("Splitter B1 Input (Splitter Cables)"), "Splitter B1 Input");
         // every channel's name parses back to that channel's output half
         // (strips) or names the microphone half (buses)
@@ -376,20 +405,46 @@ mod tests {
     }
 
     #[test]
-    fn splitter_endpoints_are_found_by_channel() {
-        use SplitterEnd::{Input, Output};
+    fn splitter_cables_are_found_by_channel() {
         let caps =
             devs(&["Microphone (USB Mic)", "Splitter 1 Output (Splitter Cables)", "Splitter B1 (Splitter Cables)"]);
         let rens = devs(&["Splitter 1 (Splitter Cables)", "Splitter B1 Input (Splitter Cables)"]);
-        assert_eq!(splitter_endpoint(&caps, 0, Output).unwrap().id, "id1");
-        assert_eq!(splitter_endpoint(&rens, 0, Input).unwrap().id, "id0");
-        assert_eq!(splitter_endpoint(&caps, 9, Output).unwrap().id, "id2");
-        assert_eq!(splitter_endpoint(&rens, 9, Input).unwrap().id, "id1");
-        // a half looked for in the wrong list isn't there
-        assert!(splitter_endpoint(&caps, 0, Input).is_none());
-        assert!(splitter_endpoint(&rens, 9, Output).is_none());
-        // a missing cable
-        assert!(splitter_endpoint(&caps, 1, Output).is_none());
+        // (input in rens, output in caps)
+        assert_eq!(splitter_pair(&caps, &rens, 0), Some((0, 1)));
+        assert_eq!(splitter_pair(&caps, &rens, 9), Some((1, 2)));
+        // the lists swapped: no half is where it belongs
+        assert_eq!(splitter_pair(&rens, &caps, 0), None);
+        // a missing cable, and a cable with one half switched off
+        assert_eq!(splitter_pair(&caps, &rens, 1), None);
+        assert_eq!(splitter_pair(&caps[..2], &rens, 9), None);
+    }
+
+    #[test]
+    fn halves_of_two_splitter_devices_are_no_cable() {
+        // a second device's playback half and the first's recording half
+        let caps = devs(&["Splitter 1 Output (Splitter Cables)"]);
+        let rens = devs(&["Splitter 1 (2- Splitter Cables)"]);
+        assert_eq!(splitter_pair(&caps, &rens, 0), None);
+        let mut strips: Vec<Vec<usize>> = vec![vec![]; NUM_STRIPS];
+        let mut buses: Vec<Vec<usize>> = vec![vec![]; NUM_BUSES];
+        strips[0] = vec![0];
+        buses[0] = vec![0];
+        assert!(splitter_feedback(&caps, &rens, &strips, &buses).is_empty());
+        // both devices complete: the second one's cable is found, and so is
+        // its loop
+        let caps = devs(&["Splitter 1 Output (Splitter Cables)", "Splitter 1 Output (2- Splitter Cables)"]);
+        let rens = devs(&["Splitter 1 (2- Splitter Cables)", "Splitter 1 (Splitter Cables)"]);
+        assert_eq!(splitter_pair(&caps, &rens, 0), Some((0, 1)));
+        strips[0] = vec![1];
+        buses[0] = vec![0];
+        assert_eq!(splitter_feedback(&caps, &rens, &strips, &buses).len(), 1);
+        // A1 plays into device 2, strip 1 records device 1: not connected
+        strips[0] = vec![0];
+        assert!(splitter_feedback(&caps, &rens, &strips, &buses).is_empty());
+        // "1-" is the same device as no number
+        assert_eq!(splitter_device("Splitter 1 (1- Splitter Cables)"), splitter_device("Splitter 1 (Splitter Cables)"));
+        assert_eq!(splitter_device("Splitter 1 (13- Splitter Cables)"), Some(13));
+        assert_eq!(splitter_device("Splitter 1 (USB Audio Splitter)"), None);
     }
 
     #[test]
