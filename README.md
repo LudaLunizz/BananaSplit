@@ -4,6 +4,8 @@
 
 **A low-latency virtual audio mixer for Linux, Windows and macOS, in the spirit of Voicemeeter Banana.**
 
+**[bananasplit.tech](https://bananasplit.tech)**
+
 [![CI](https://github.com/LudaLunizz/BananaSplit/actions/workflows/ci.yml/badge.svg)](https://github.com/LudaLunizz/BananaSplit/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/LudaLunizz/BananaSplit?include_prereleases&sort=semver)](https://github.com/LudaLunizz/BananaSplit/releases)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
