@@ -213,18 +213,24 @@ fn scope(input: bool) -> u32 {
 
 /// The device's input (or output) channels, all streams together.
 pub fn channel_count(device: AudioObjectID, input: bool) -> u32 {
+    stream_layout(device, input).map_or(0, |v| v.iter().sum())
+}
+
+/// The channels in each of the device's input (or output) buffers, as its
+/// IOProc gets them (its stream configuration). None if it can't be read.
+pub fn stream_layout(device: AudioObjectID, input: bool) -> Option<Vec<u32>> {
     let a = address(kAudioDevicePropertyStreamConfiguration, scope(input));
     let mut size = 0u32;
     // SAFETY: only the size is written.
     if unsafe { AudioObjectGetPropertyDataSize(device, &a, 0, null(), &mut size) } != 0 || size == 0 {
-        return 0;
+        return None;
     }
     // u64s: the list holds pointers, so it needs their alignment
     let mut buf = vec![0u64; (size as usize).div_ceil(8)];
     let mut got = size;
     // SAFETY: `buf` has room for `size` bytes.
     if unsafe { AudioObjectGetPropertyData(device, &a, 0, null(), &mut got, buf.as_mut_ptr().cast()) } != 0 {
-        return 0;
+        return None;
     }
     let list = buf.as_ptr().cast::<AudioBufferList>();
     // SAFETY: the count is read from what was written, and the buffers it
@@ -234,9 +240,9 @@ pub fn channel_count(device: AudioObjectID, input: bool) -> u32 {
         if got as usize >= size_of::<u32>()
             && std::mem::offset_of!(AudioBufferList, mBuffers) + n * size_of::<AudioBuffer>() <= got as usize
         {
-            channels(list)
+            Some(buffers(list).iter().map(|b| b.mNumberChannels).collect())
         } else {
-            0
+            None
         }
     }
 }
