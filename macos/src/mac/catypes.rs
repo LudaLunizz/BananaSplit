@@ -226,15 +226,6 @@ pub unsafe fn channel(list: *const AudioBufferList, ch: usize) -> Option<Chan> {
     None
 }
 
-/// All channels of a list.
-///
-/// # Safety
-/// As for [`buffers`].
-pub unsafe fn channels(list: *const AudioBufferList) -> u32 {
-    // SAFETY: the caller's promise.
-    unsafe { buffers(list) }.iter().map(|b| b.mNumberChannels).sum()
-}
-
 /// Frames in a device's output buffers this cycle (0 if it has none).
 ///
 /// # Safety
@@ -299,10 +290,75 @@ pub unsafe fn put_output(list: *mut AudioBufferList, pair: (usize, usize), at: u
     }
 }
 
+/// Silence every buffer of a list that has data (all `mDataByteSize`
+/// bytes). A null list is left alone.
+///
+/// # Safety
+/// As for [`buffers`]; each buffer's data, when there is any, has room for
+/// `mDataByteSize` bytes.
+pub unsafe fn zero_all(list: *mut AudioBufferList) {
+    // SAFETY: the caller's promise.
+    for b in unsafe { buffers(list) } {
+        if !b.mData.is_null() {
+            // SAFETY: the caller's promise: the buffer holds that many bytes.
+            unsafe { std::ptr::write_bytes(b.mData.cast::<u8>(), 0, b.mDataByteSize as usize) };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bananasplit::ring::ring;
+
+    #[test]
+    fn zero_all_silences_every_buffer_with_data() {
+        let mut a = [1.0f32; 4];
+        let mut b = [2.0f32; 2];
+        let mut list = List2 { n: 2, b: [buf(2, &mut a), buf(1, &mut b)] };
+        // SAFETY: a list of two buffers over `a` and `b`.
+        unsafe { zero_all((&mut list as *mut List2).cast()) };
+        assert_eq!(a, [0.0; 4]);
+        assert_eq!(b, [0.0; 2]);
+        // a buffer without data and a null list are skipped
+        let mut c = [3.0f32; 2];
+        let mut list = List2 {
+            n: 2,
+            b: [buf(2, &mut c), AudioBuffer { mNumberChannels: 1, mDataByteSize: 8, mData: std::ptr::null_mut() }],
+        };
+        // SAFETY: as above; the second buffer has no data.
+        unsafe { zero_all((&mut list as *mut List2).cast()) };
+        assert_eq!(c, [0.0; 2]);
+        // SAFETY: null is allowed.
+        unsafe { zero_all(std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn encoded_and_other_pcm_formats_are_refused() {
+        let float = AudioStreamBasicDescription {
+            mSampleRate: 48_000.0,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | 8, // packed
+            mBytesPerPacket: 8,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 8,
+            mChannelsPerFrame: 2,
+            mBitsPerChannel: 32,
+            mReserved: 0,
+        };
+        // an encoded stream (a passthrough format, not linear PCM)
+        let encoded = AudioStreamBasicDescription { mFormatID: u32::from_be_bytes(*b"ac-3"), ..float };
+        assert!(!is_float32(&encoded));
+        // 64-bit floats and 16-bit integers are linear PCM, not ours
+        assert!(!is_float32(&AudioStreamBasicDescription { mBitsPerChannel: 64, ..float }));
+        assert!(!is_float32(&AudioStreamBasicDescription { mFormatFlags: 4 | 8, mBitsPerChannel: 16, ..float }));
+        // floats in the other byte order
+        let other = if cfg!(target_endian = "big") { 0 } else { kAudioFormatFlagIsBigEndian };
+        assert!(!is_float32(&AudioStreamBasicDescription {
+            mFormatFlags: kAudioFormatFlagIsFloat | 8 | other,
+            ..float
+        }));
+    }
 
     /// A list of two buffers, as a device with two streams hands it over.
     #[repr(C)]
@@ -401,7 +457,7 @@ mod tests {
         let list = AudioBufferList { mNumberBuffers: 1, mBuffers: [buf(3, &mut d)] };
         let (mut p, mut c) = ring(16);
         // SAFETY: the list and its buffers are live locals of the sizes it states.
-        assert_eq!(unsafe { channels(&list) }, 3);
+        assert_eq!(unsafe { buffers(&list) }.iter().map(|b| b.mNumberChannels).sum::<u32>(), 3);
         // SAFETY: the list and its buffers are live locals of the sizes it states.
         assert_eq!(unsafe { take_input(&list, (0, 1), &mut p) }, 4);
         for i in 0..4 {
@@ -445,7 +501,7 @@ mod tests {
         // SAFETY: a null list is allowed: it has no buffers.
         assert_eq!(unsafe { take_input(std::ptr::null(), (0, 1), &mut p) }, 0);
         // SAFETY: a null list is allowed: it has no buffers.
-        assert_eq!(unsafe { channels(std::ptr::null()) }, 0);
+        assert!(unsafe { buffers(std::ptr::null()) }.is_empty());
     }
 
     #[test]

@@ -189,9 +189,95 @@ pub fn status_report(devs: &[StatusDevice], def_out: Option<&str>, def_in: Optio
     s
 }
 
+/// The shape of a device's buffer list in the direction an IOProc uses,
+/// recorded when the IOProc starts: the channels in each buffer, and which
+/// buffers hold the stereo pair it reads or writes (those must have data).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layout {
+    chans: Box<[u32]>,
+    used: Box<[bool]>,
+}
+
+impl Layout {
+    /// From the channels per buffer (the device's stream configuration)
+    /// and the stereo pair (zero-based channels across all buffers; a
+    /// channel the device doesn't have marks nothing, as a mono device's
+    /// second channel).
+    pub fn new(chans: &[u32], pair: (usize, usize)) -> Layout {
+        let mut used = vec![false; chans.len()];
+        let mut first = 0usize;
+        for (k, &n) in chans.iter().enumerate() {
+            let range = first..first + n as usize;
+            used[k] = range.contains(&pair.0) || range.contains(&pair.1);
+            first = range.end;
+        }
+        Layout { chans: chans.into(), used: used.into_boxed_slice() }
+    }
+}
+
+/// Does this cycle's buffer list look as it did at start? `got` gives each
+/// buffer's channel count and whether it has data. The same number of
+/// buffers, the same channels in each, and data in every buffer that holds
+/// the stereo pair. Called in the IOProc: does not allocate.
+pub fn layout_matches(want: &Layout, got: impl ExactSizeIterator<Item = (u32, bool)>) -> bool {
+    got.len() == want.chans.len()
+        && got.zip(want.chans.iter().zip(want.used.iter())).all(|((n, data), (&w, &used))| n == w && (data || !used))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- layout_matches
+    fn check(want: &Layout, got: &[(u32, bool)]) -> bool {
+        layout_matches(want, got.iter().copied())
+    }
+
+    #[test]
+    fn layout_matching_list_passes() {
+        let want = Layout::new(&[2, 2], (0, 1));
+        assert!(check(&want, &[(2, true), (2, true)]));
+    }
+
+    #[test]
+    fn layout_fewer_or_more_buffers_fail() {
+        let want = Layout::new(&[2, 2], (0, 1));
+        assert!(!check(&want, &[(2, true)]));
+        assert!(!check(&want, &[]));
+        assert!(!check(&want, &[(2, true), (2, true), (2, true)]));
+    }
+
+    #[test]
+    fn layout_wrong_channel_count_fails() {
+        let want = Layout::new(&[2, 2], (0, 1));
+        assert!(!check(&want, &[(2, true), (1, true)]));
+        assert!(!check(&want, &[(8, true), (2, true)]));
+    }
+
+    #[test]
+    fn layout_null_data_fails_only_where_the_pair_is() {
+        // the pair is in the first buffer: the second may be switched off
+        let want = Layout::new(&[2, 2], (0, 1));
+        assert!(!check(&want, &[(2, false), (2, true)]));
+        assert!(check(&want, &[(2, true), (2, false)]));
+        // a pair across two mono buffers needs both
+        let split = Layout::new(&[1, 1, 1], (1, 2));
+        assert!(!check(&split, &[(1, true), (1, true), (1, false)]));
+        assert!(!check(&split, &[(1, true), (1, false), (1, true)]));
+        assert!(check(&split, &[(1, false), (1, true), (1, true)]));
+    }
+
+    #[test]
+    fn layout_mono_device_and_empty_list() {
+        // a mono device: the pair's second channel doesn't exist
+        let mono = Layout::new(&[1], (0, 1));
+        assert!(check(&mono, &[(1, true)]));
+        assert!(!check(&mono, &[(1, false)]));
+        // nothing recorded at start: only an empty list matches
+        let none = Layout::new(&[], (0, 1));
+        assert!(check(&none, &[]));
+        assert!(!check(&none, &[(2, true)]));
+    }
 
     // ---- to_mixer
     #[test]

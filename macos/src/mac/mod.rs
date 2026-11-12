@@ -146,6 +146,13 @@ pub struct Session {
     /// Otherwise everything would wait for it: every other output, the
     /// recorder, VBAN.
     bench: Option<String>,
+    /// When the devices were reconnected because an IOProc panicked or
+    /// silenced cycles (`Stats::poisoned`, `Stats::bad_cycles`): not again
+    /// for STALL_REARM, so a fault that comes back at once can't cut
+    /// everyone's audio every few seconds.
+    guard_retried: Option<Instant>,
+    /// `Stats::bad_cycles` when it was last reported.
+    bad_seen: u64,
     /// Said once with the next connection's errors.
     note: Option<String>,
     rec_tap: Arc<RecTap>,
@@ -183,6 +190,8 @@ impl Session {
             dirty: false,
             stall_retried: None,
             bench: None,
+            guard_retried: None,
+            bad_seen: 0,
             note: None,
             rec_tap,
             vban_tap,
@@ -211,11 +220,34 @@ impl Session {
             self.dirty = true;
             self.stall_retried = None;
             self.bench = None;
+            self.guard_retried = None;
             return true;
         }
         if self.graph.is_none() || self.dirty {
             self.dirty = true; // retry a failed build now and then
             return true;
+        }
+        if self.guard_retried.is_none_or(|t| t.elapsed() >= STALL_REARM) {
+            let bad = self.stats.bad_cycles.load(Relaxed);
+            let note = if self.stats.poisoned.swap(false, SeqCst) {
+                Some(
+                    "the audio stopped on a device because of an error in BananaSplit: reconnecting the devices".into(),
+                )
+            } else if bad != self.bad_seen {
+                Some(format!(
+                    "{} audio cycles were silenced: a device's buffers changed shape while it ran; reconnecting the devices",
+                    bad.wrapping_sub(self.bad_seen)
+                ))
+            } else {
+                None
+            };
+            if note.is_some() {
+                self.bad_seen = bad;
+                self.guard_retried = Some(Instant::now());
+                self.dirty = true;
+                self.note = note;
+                return true;
+            }
         }
         match self.graph.as_mut().and_then(Graph::stalled) {
             Some(s) if self.stall_retried.is_none() => {
