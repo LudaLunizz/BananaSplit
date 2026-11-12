@@ -33,24 +33,21 @@ use super::route::{self, DevInfo};
 use bananasplit::config::{Config, DEFAULT_DEVICE};
 use bananasplit::engine::{AtomicF32, BUS_IDS, Engine, NUM_BUSES, NUM_STRIPS, Shared};
 use bananasplit::player::PlayTap;
+use bananasplit::pure::{self, SigDevice, to_mixer};
 use bananasplit::recorder::RecTap;
 use bananasplit::ring::{MAX_RATIO, Producer, RateReader, Reader, ring};
 use bananasplit::vban::VbanTap;
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::c_void;
-use std::fmt::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// The mixer's rate.
-pub const RATE: u32 = 48_000;
+pub const RATE: u32 = pure::RATE;
 /// Largest block the mixer processes at once.
 const MAX_BLOCK: usize = 8192;
-/// Extra frames of safety margin in each ring on top of the two periods
-/// (at 48 kHz).
-const RING_MARGIN: usize = 96;
 
 // ------------------------------------------------------------------ devices
 
@@ -98,38 +95,21 @@ pub fn default_uid(input: bool) -> Option<String> {
 /// is opened again, and refused if it can't be used), or a default device
 /// changes. Cheap enough to poll every few seconds.
 pub fn signature() -> String {
-    let mut s = String::new();
-    for d in devices().unwrap_or_default() {
-        let float = |input: bool, n: u32| {
-            if n == 0 {
-                '-'
-            } else if ffi::float32(d.id, input) {
-                'f'
-            } else {
-                'x'
-            }
-        };
-        let _ = writeln!(
-            s,
-            "{}#{}={} {}/{} {} {}{}",
-            d.info.id,
-            d.id,
-            d.info.name,
-            d.inputs,
-            d.outputs,
-            d.rate,
-            float(true, d.inputs),
-            float(false, d.outputs)
-        );
-    }
-    let _ = writeln!(s, "in {}", default_uid(true).unwrap_or_default());
-    let _ = writeln!(s, "out {}", default_uid(false).unwrap_or_default());
-    s
-}
-
-/// `frames` at `rate`, in frames of the mixer.
-fn to_mixer(frames: u32, rate: f64) -> u32 {
-    if rate > 0.0 { (f64::from(frames) * f64::from(RATE) / rate).ceil() as u32 } else { frames }
+    let all = devices().unwrap_or_default();
+    let sig: Vec<SigDevice<'_>> = all
+        .iter()
+        .map(|d| SigDevice {
+            uid: &d.info.id,
+            id: d.id,
+            name: &d.info.name,
+            inputs: d.inputs,
+            outputs: d.outputs,
+            rate: d.rate,
+            in_mark: pure::format_mark(d.inputs, || ffi::float32(d.id, true)),
+            out_mark: pure::format_mark(d.outputs, || ffi::float32(d.id, false)),
+        })
+        .collect();
+    pure::signature_text(&sig, default_uid(true).as_deref(), default_uid(false).as_deref())
 }
 
 fn zeros(n: usize) -> Box<[f32]> {
@@ -571,13 +551,7 @@ impl Drop for Graph {
 
 /// Can BananaSplit use this device in this direction? Why not, if it can't.
 fn usable(d: &Device, input: bool) -> Result<(), String> {
-    if d.rate <= 0.0 {
-        return Err("its sample rate is unknown".into());
-    }
-    let ratio = d.rate / f64::from(RATE);
-    if !(1.0 / MAX_RATIO..=MAX_RATIO).contains(&ratio) {
-        return Err(format!("it runs at {} kHz: set it to 48 kHz in Audio MIDI Setup", d.rate / 1000.0));
-    }
+    pure::check_rate(d.rate)?;
     if !ffi::float32(d.id, input) {
         return Err("its audio format is not one BananaSplit can use (32-bit float)".into());
     }
@@ -685,7 +659,7 @@ impl Graph {
                 }
             }
         }
-        let master_out = outs.iter().position(|(_, d)| bench != Some(d.info.id.as_str()));
+        let master_out = pure::pick_master(outs.iter().map(|(_, d)| d.info.id.as_str()), bench);
         let master = master_out.map(|k| outs[k]);
         // The mixer's period, in its own frames.
         let period = master.map_or(RATE as usize / 100, |(_, d)| to_mixer(frames(d), d.rate) as usize);
@@ -705,7 +679,7 @@ impl Graph {
                 continue;
             }
             let dev_frames = frames(d);
-            let target = period + to_mixer(dev_frames, d.rate) as usize + RING_MARGIN;
+            let target = pure::sink_target(period, dev_frames, d.rate);
             let (prod, cons) = ring(RATE as usize);
             let beat = Arc::new(Beat::default());
             let state = Box::new(Sink {
@@ -739,12 +713,9 @@ impl Graph {
                     continue;
                 }
                 // in the device's frames
-                let scale = d.rate / f64::from(RATE);
-                let target = (period as f64 * scale).ceil() as usize
-                    + frames(d) as usize
-                    + (RING_MARGIN as f64 * scale).ceil() as usize;
+                let (target, len) = pure::capture_ring(period, frames(d), d.rate);
                 let rate = d.rate.round() as u32;
-                let (prod, cons) = ring((rate as usize).max(RATE as usize).max(4 * target));
+                let (prod, cons) = ring(len);
                 let beat = Arc::new(Beat::default());
                 readers[s].push(Reader::new(cons, target, rate, RATE));
                 let state = Box::new(Capture { beat: beat.clone(), prod, pair: ffi::stereo_pair(d.id, true) });
@@ -835,27 +806,8 @@ impl Graph {
     /// checks in a row; the master first, if it is one of them. Called
     /// every few seconds.
     pub fn stalled(&mut self) -> Option<Stall> {
-        if self.last.len() != self.procs.len() {
-            self.last = vec![(u64::MAX, 0); self.procs.len()];
-        }
-        let (mut master, mut other) = (None, None);
-        for (k, (p, (seen, still))) in self.procs.iter().zip(self.last.iter_mut()).enumerate() {
-            let calls = p.calls();
-            if calls == *seen {
-                *still += 1;
-                if *still >= 2 {
-                    let is_master = self.master_at == Some(k);
-                    let found = if is_master { &mut master } else { &mut other };
-                    if found.is_none() {
-                        *found =
-                            Some(Stall { name: p.name().to_string(), uid: p.uid().to_string(), master: is_master });
-                    }
-                }
-            } else {
-                *seen = calls;
-                *still = 0;
-            }
-        }
-        master.or(other)
+        let k = pure::stall_check(&mut self.last, self.procs.iter().map(|p| p.calls()), self.master_at)?;
+        let p = &self.procs[k];
+        Some(Stall { name: p.name().to_string(), uid: p.uid().to_string(), master: self.master_at == Some(k) })
     }
 }

@@ -109,6 +109,25 @@ pub fn list_devices() -> Result<String, String> {
     Ok(o)
 }
 
+/// `bananasplit --status`: every device (name, UID, rate, channels) and
+/// the defaults, read only: no stream starts and nothing asks for a
+/// permission. Err only when Core Audio itself fails.
+pub fn status() -> Result<String, String> {
+    let all = coreaudio::devices()?;
+    let devs: Vec<bananasplit::pure::StatusDevice> = all
+        .iter()
+        .map(|d| bananasplit::pure::StatusDevice {
+            name: d.info.name.clone(),
+            uid: d.info.id.clone(),
+            rate: d.rate,
+            inputs: d.inputs,
+            outputs: d.outputs,
+        })
+        .collect();
+    let (def_out, def_in) = (coreaudio::default_uid(false), coreaudio::default_uid(true));
+    Ok(bananasplit::pure::status_report(&devs, def_out.as_deref(), def_in.as_deref()))
+}
+
 pub struct Session {
     shared: Arc<Shared>,
     stats: Arc<Stats>,

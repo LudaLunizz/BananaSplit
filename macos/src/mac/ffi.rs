@@ -272,9 +272,8 @@ pub fn buffer_frames(device: AudioObjectID, frames: u32) -> u32 {
         // (a range that makes no sense is not used: clamp would panic)
         let range =
             get::<AudioValueRange>(device, kAudioDevicePropertyBufferFrameSizeRange, kAudioObjectPropertyScopeGlobal)
-                .filter(|r| r.mMinimum.is_finite() && r.mMaximum.is_finite() && r.mMinimum <= r.mMaximum);
-        if let Some(r) = range {
-            let want = f64::from(frames).clamp(r.mMinimum.max(1.0), r.mMaximum.max(1.0)).round() as u32;
+                .map(|r| (r.mMinimum, r.mMaximum));
+        if let Some(want) = bananasplit::pure::buffer_request(frames, range) {
             let _ = set(device, kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeGlobal, want);
         }
     }
@@ -341,11 +340,7 @@ pub fn mic_access() -> Option<bool> {
         let pool = objc_autoreleasePoolPush();
         let status = send(class, sel, AVMediaTypeAudio);
         objc_autoreleasePoolPop(pool);
-        match status {
-            3 => Some(true),      // AVAuthorizationStatusAuthorized
-            1 | 2 => Some(false), // Restricted, Denied
-            _ => None,            // NotDetermined
-        }
+        bananasplit::pure::mic_status(status)
     }
 }
 
