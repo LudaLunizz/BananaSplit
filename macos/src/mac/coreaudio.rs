@@ -33,12 +33,13 @@ use super::route::{self, DevInfo};
 use bananasplit::config::{Config, DEFAULT_DEVICE};
 use bananasplit::engine::{AtomicF32, BUS_IDS, Engine, NUM_BUSES, NUM_STRIPS, Shared};
 use bananasplit::player::PlayTap;
-use bananasplit::pure::{self, SigDevice, to_mixer};
+use bananasplit::pure::{self, Layout, SigDevice, to_mixer};
 use bananasplit::recorder::RecTap;
 use bananasplit::ring::{MAX_RATIO, Producer, RateReader, Reader, ring};
 use bananasplit::vban::VbanTap;
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::c_void;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
 use std::thread::JoinHandle;
@@ -125,6 +126,12 @@ pub struct Stats {
     pub cpu: AtomicF32,
     pub lat_in: AtomicU32,
     pub lat_out: AtomicU32,
+    /// An IOProc panicked: it plays silence from then on. Read and cleared
+    /// by the main thread, which reconnects the devices.
+    pub poisoned: AtomicBool,
+    /// IO cycles silenced because a buffer list did not look as it did
+    /// when its IOProc started (`pure::layout_matches`). Only grows.
+    pub bad_cycles: AtomicU64,
 }
 
 /// An IOProc's pulse: kept apart from its state, so the main thread can
@@ -152,6 +159,23 @@ impl Beat {
 
 /// One IOProc registered and started on one device, with its state.
 /// Dropping it stops and removes the IOProc, then frees the state.
+///
+/// Teardown rules (Drop follows them; keep them when changing it):
+/// 1. Stop the IOProc (`AudioDeviceStop`), from outside the IOProc.
+/// 2. Destroy its registration (`AudioDeviceDestroyIOProcID`), so the HAL
+///    never calls it again.
+/// 3. Wait until the callback has left (its `Beat` says so).
+/// 4. Only then free the state. If any of this cannot be proved (the
+///    registration was not removed and the device is still there, or the
+///    callback is still inside after a second), leak the state on purpose:
+///    a leak is harmless, freeing memory the HAL may still use is not.
+///
+/// Never take a lock in a callback that the control thread can hold while
+/// it stops the IOProc: `AudioDeviceStop` waits for the callback, the
+/// callback would wait for the lock, and neither returns.
+///
+/// The callback itself runs behind [`guarded`]: a panic or a buffer list
+/// that does not look as it did at start gives silence, never a crash.
 struct Proc<S> {
     device: AudioObjectID,
     id: IoProcId,
@@ -231,6 +255,93 @@ impl<S> Drop for Proc<S> {
     }
 }
 
+/// What one IOProc does in each IO cycle. [`guarded`] calls it, only for a
+/// buffer list that matches the one at start.
+trait Cycle: Send {
+    /// # Safety
+    /// `input` and `output` are this cycle's buffer lists from the HAL
+    /// (null, or lists of 32-bit floats as the device was opened with).
+    unsafe fn cycle(&mut self, input: *const AudioBufferList, output: *mut AudioBufferList);
+}
+
+/// An IOProc's state behind its guard.
+struct Guarded<S> {
+    beat: Arc<Beat>,
+    stats: Arc<Stats>,
+    /// The direction the IOProc uses: its layout is checked on this list.
+    input: bool,
+    /// The layout at start (None: it could not be read, nothing is checked,
+    /// as before the check existed).
+    layout: Option<Layout>,
+    /// It panicked: silence until the devices are reconnected.
+    poisoned: bool,
+    inner: S,
+}
+
+/// The one IOProc the HAL calls, for every kind of state: checks the
+/// buffer list against the layout at start, runs the cycle under
+/// `catch_unwind`, and writes silence when either goes wrong. On the normal
+/// path it neither allocates nor locks.
+unsafe extern "C" fn guarded<S: Cycle>(
+    _: AudioObjectID,
+    _: *const AudioTimeStamp,
+    input: *const AudioBufferList,
+    _: *const AudioTimeStamp,
+    output: *mut AudioBufferList,
+    _: *const AudioTimeStamp,
+    client: *mut c_void,
+) -> OSStatus {
+    // SAFETY: `client` is the Guarded<S> this IOProc was registered with;
+    // only this IOProc uses it while it is registered.
+    let g = unsafe { &mut *client.cast::<Guarded<S>>() };
+    g.beat.enter();
+    let list: *const AudioBufferList = if g.input { input } else { output };
+    let fits = g.layout.as_ref().is_none_or(|want| {
+        // SAFETY: this cycle's list from the HAL (or null: no buffers).
+        let bufs = unsafe { catypes::buffers(list) };
+        pure::layout_matches(want, bufs.iter().map(|b| (b.mNumberChannels, !b.mData.is_null())))
+    });
+    if !fits {
+        g.stats.bad_cycles.fetch_add(1, Relaxed);
+    }
+    let mut silent = g.poisoned || !fits;
+    if !silent {
+        let inner = &mut g.inner;
+        // SAFETY: the HAL's lists, checked above.
+        let ran = catch_unwind(AssertUnwindSafe(|| unsafe { inner.cycle(input, output) }));
+        if let Err(payload) = ran {
+            // Dropping the payload would free memory here; the state stays
+            // too (Proc's Drop decides about it, on another thread).
+            std::mem::forget(payload);
+            g.poisoned = true;
+            g.stats.poisoned.store(true, SeqCst);
+            silent = true;
+        }
+    }
+    if silent {
+        // SAFETY: this cycle's output list from the HAL (or null).
+        unsafe { catypes::zero_all(output) };
+    }
+    g.beat.leave();
+    0
+}
+
+/// Start `inner` on the device behind a guard, recording its buffer layout
+/// in the direction it uses (`pair`: the stereo pair it reads or writes).
+/// On failure `inner` comes back.
+fn launch<S: Cycle>(
+    dev: &Device,
+    inner: S,
+    pair: (usize, usize),
+    input: bool,
+    stats: &Arc<Stats>,
+) -> Result<Proc<Guarded<S>>, (String, S)> {
+    let beat = Arc::new(Beat::default());
+    let layout = ffi::stream_layout(dev.id, input).map(|chans| Layout::new(&chans, pair));
+    let state = Box::new(Guarded { beat: beat.clone(), stats: stats.clone(), input, layout, poisoned: false, inner });
+    Proc::start(dev, guarded::<S>, state, beat, input).map_err(|(e, st)| (e, st.inner))
+}
+
 /// A started IOProc, whatever its state.
 trait Running: Send {
     fn calls(&self) -> u64;
@@ -254,35 +365,21 @@ impl<S: Send> Running for Proc<S> {
 
 /// An input device feeding a strip.
 struct Capture {
-    beat: Arc<Beat>,
     prod: Producer,
     /// Its stereo pair (`catypes::stereo_pair`).
     pair: (usize, usize),
 }
 
-unsafe extern "C" fn capture_proc(
-    _: AudioObjectID,
-    _: *const AudioTimeStamp,
-    input: *const AudioBufferList,
-    _: *const AudioTimeStamp,
-    _: *mut AudioBufferList,
-    _: *const AudioTimeStamp,
-    client: *mut c_void,
-) -> OSStatus {
-    // SAFETY: `client` is the Capture this IOProc was registered with; only
-    // this IOProc uses it while it is registered.
-    let st = unsafe { &mut *client.cast::<Capture>() };
-    st.beat.enter();
-    // SAFETY: this cycle's input from the HAL, 32-bit floats (checked when
-    // the device was opened).
-    unsafe { catypes::take_input(input, st.pair, &mut st.prod) };
-    st.beat.leave();
-    0
+impl Cycle for Capture {
+    unsafe fn cycle(&mut self, input: *const AudioBufferList, _: *mut AudioBufferList) {
+        // SAFETY: this cycle's input from the HAL, 32-bit floats (checked
+        // when the device was opened).
+        unsafe { catypes::take_input(input, self.pair, &mut self.prod) };
+    }
 }
 
 /// An output device other than the master, fed through a ring.
 struct Sink {
-    beat: Arc<Beat>,
     reader: Reader,
     pair: (usize, usize),
     l: Box<[f32]>,
@@ -291,39 +388,29 @@ struct Sink {
     shared: Arc<Shared>,
 }
 
-unsafe extern "C" fn sink_proc(
-    _: AudioObjectID,
-    _: *const AudioTimeStamp,
-    _: *const AudioBufferList,
-    _: *const AudioTimeStamp,
-    output: *mut AudioBufferList,
-    _: *const AudioTimeStamp,
-    client: *mut c_void,
-) -> OSStatus {
-    // SAFETY: as in `capture_proc`.
-    let st = unsafe { &mut *client.cast::<Sink>() };
-    st.beat.enter();
-    // SAFETY: this cycle's output from the HAL (zeroed, 32-bit floats).
-    let n = unsafe { catypes::output_frames(output) };
-    if n > 0 {
-        // in MAX_BLOCK chunks: a device left at a bigger buffer size
-        // (buffer_size = 0) still gets its whole cycle
-        let mut at = 0;
-        while at < n {
-            let k = (n - at).min(MAX_BLOCK);
-            st.reader.read(&mut st.l[..k], &mut st.r[..k], false);
-            // SAFETY: as above; frames at..at + k are there.
-            unsafe { catypes::put_output(output, st.pair, at, &st.l[..k], &st.r[..k]) };
-            at += k;
-        }
-        let g = st.reader.glitches();
-        if g != st.seen {
-            st.shared.xruns.fetch_add(g.wrapping_sub(st.seen), Relaxed);
-            st.seen = g;
+impl Cycle for Sink {
+    unsafe fn cycle(&mut self, _: *const AudioBufferList, output: *mut AudioBufferList) {
+        let st = self;
+        // SAFETY: this cycle's output from the HAL (zeroed, 32-bit floats).
+        let n = unsafe { catypes::output_frames(output) };
+        if n > 0 {
+            // in MAX_BLOCK chunks: a device left at a bigger buffer size
+            // (buffer_size = 0) still gets its whole cycle
+            let mut at = 0;
+            while at < n {
+                let k = (n - at).min(MAX_BLOCK);
+                st.reader.read(&mut st.l[..k], &mut st.r[..k], false);
+                // SAFETY: as above; frames at..at + k are there.
+                unsafe { catypes::put_output(output, st.pair, at, &st.l[..k], &st.r[..k]) };
+                at += k;
+            }
+            let g = st.reader.glitches();
+            if g != st.seen {
+                st.shared.xruns.fetch_add(g.wrapping_sub(st.seen), Relaxed);
+                st.seen = g;
+            }
         }
     }
-    st.beat.leave();
-    0
 }
 
 /// The mixer: pulls the strips' rings, mixes, and fills the other output
@@ -404,7 +491,6 @@ struct Convert {
 
 /// The device that clocks the mixer.
 struct Master {
-    beat: Arc<Beat>,
     mix: Mixer,
     /// The bus it plays.
     bus: usize,
@@ -415,18 +501,16 @@ struct Master {
     stats: Arc<Stats>,
 }
 
-unsafe extern "C" fn master_proc(
-    _: AudioObjectID,
-    _: *const AudioTimeStamp,
-    _: *const AudioBufferList,
-    _: *const AudioTimeStamp,
-    output: *mut AudioBufferList,
-    _: *const AudioTimeStamp,
-    client: *mut c_void,
-) -> OSStatus {
-    // SAFETY: as in `capture_proc`.
-    let st = unsafe { &mut *client.cast::<Master>() };
-    st.beat.enter();
+impl Cycle for Master {
+    unsafe fn cycle(&mut self, _: *const AudioBufferList, output: *mut AudioBufferList) {
+        // SAFETY: the HAL's output list, as the trait promises.
+        unsafe { master_cycle(self, output) }
+    }
+}
+
+/// # Safety
+/// `output` is this cycle's output list from the HAL.
+unsafe fn master_cycle(st: &mut Master, output: *mut AudioBufferList) {
     // SAFETY: this cycle's output from the HAL (zeroed, 32-bit floats).
     let n = unsafe { catypes::output_frames(output) };
     if n > 0 {
@@ -476,8 +560,6 @@ unsafe extern "C" fn master_proc(
             st.stats.block.store(mixed as u32, Relaxed);
         }
     }
-    st.beat.leave();
-    0
 }
 
 /// Without an output device: run the mixer every 10 ms, so the meters,
@@ -681,17 +763,16 @@ impl Graph {
             let dev_frames = frames(d);
             let target = pure::sink_target(period, dev_frames, d.rate);
             let (prod, cons) = ring(RATE as usize);
-            let beat = Arc::new(Beat::default());
-            let state = Box::new(Sink {
-                beat: beat.clone(),
+            let pair = ffi::stereo_pair(d.id, false);
+            let state = Sink {
                 reader: Reader::new(cons, target, RATE, d.rate.round() as u32),
-                pair: ffi::stereo_pair(d.id, false),
+                pair,
                 l: zeros(MAX_BLOCK),
                 r: zeros(MAX_BLOCK),
                 seen: 0,
                 shared: shared.clone(),
-            });
-            match Proc::start(d, sink_proc, state, beat, false) {
+            };
+            match launch(d, state, pair, false, stats) {
                 Ok(p) => {
                     procs.push(Box::new(p));
                     sinks.push((b, prod));
@@ -716,10 +797,9 @@ impl Graph {
                 let (target, len) = pure::capture_ring(period, frames(d), d.rate);
                 let rate = d.rate.round() as u32;
                 let (prod, cons) = ring(len);
-                let beat = Arc::new(Beat::default());
                 readers[s].push(Reader::new(cons, target, rate, RATE));
-                let state = Box::new(Capture { beat: beat.clone(), prod, pair: ffi::stereo_pair(d.id, true) });
-                captures.push((s, d, target, state, beat));
+                let state = Capture { prod, pair: ffi::stereo_pair(d.id, true) };
+                captures.push((s, d, target, state));
             }
         }
         stats.lat_out.store(max_out_lat, Relaxed);
@@ -742,19 +822,9 @@ impl Graph {
                     let (prod, cons) = ring(MAX_BLOCK * (MAX_RATIO as usize + 1));
                     Convert { prod, rr: RateReader::fixed(cons, RATE, rate), l: zeros(MAX_BLOCK), r: zeros(MAX_BLOCK) }
                 });
-                let beat = Arc::new(Beat::default());
                 let pair = ffi::stereo_pair(d.id, false);
-                let state = Box::new(Master {
-                    beat: beat.clone(),
-                    mix,
-                    bus: b,
-                    pair,
-                    convert,
-                    rate: d.rate as f32,
-                    cpu: 0.0,
-                    stats: stats.clone(),
-                });
-                match Proc::start(d, master_proc, state, beat, false) {
+                let state = Master { mix, bus: b, pair, convert, rate: d.rate as f32, cpu: 0.0, stats: stats.clone() };
+                match launch(d, state, pair, false, stats) {
                     Ok(p) => {
                         master_at = Some(procs.len());
                         procs.push(Box::new(p));
@@ -763,7 +833,7 @@ impl Graph {
                     Err((e, state)) => {
                         // The other devices go on without it.
                         errs.push(format!("bus {}: {}: {e}", BUS_IDS[b], d.info.name));
-                        let Master { mix, .. } = *state;
+                        let Master { mix, .. } = state;
                         Some(mix)
                     }
                 }
@@ -785,8 +855,9 @@ impl Graph {
         let first_input = procs.len();
         let mut max_in_lat = 0u32;
         let mut inputs = 0;
-        for (s, d, target, state, beat) in captures {
-            match Proc::start(d, capture_proc, state, beat, true) {
+        for (s, d, target, state) in captures {
+            let pair = state.pair;
+            match launch(d, state, pair, true, stats) {
                 Ok(p) => {
                     procs.push(Box::new(p));
                     inputs += 1;
