@@ -51,6 +51,7 @@ const HELP: &str = concat!(
 USAGE:
     bananasplit [--config FILE] [--gui] [--headless] [--no-open]
     bananasplit --list-devices
+    bananasplit --status
     bananasplit --print-default-config
     bananasplit --update
     bananasplit --quit
@@ -61,6 +62,8 @@ OPTIONS:
     --no-open, --hidden  Start in the background: only the menu bar icon shows
     --headless           Run the audio engine without a UI
     --list-devices       List the audio devices
+    --status             Show every device (UID, rate, channels) and the
+                         defaults, without starting any audio
     --print-default-config
                          Print the default configuration and exit
     --update             Look for a new version on GitHub (the app has this in
@@ -79,6 +82,7 @@ struct Args {
     port: u16,
     explicit_port: bool,
     list: bool,
+    status: bool,
     quit: bool,
     print_default: bool,
     update: bool,
@@ -93,6 +97,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         port: gui::DEFAULT_PORT,
         explicit_port: false,
         list: false,
+        status: false,
         quit: false,
         print_default: false,
         update: false,
@@ -114,6 +119,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
                 a.explicit_port = true;
             }
             "--list-devices" => a.list = true,
+            "--status" => a.status = true,
             "--quit" => a.quit = true,
             "--print-default-config" => a.print_default = true,
             "--update" => a.update = true,
@@ -645,6 +651,18 @@ fn main() -> ExitCode {
             }
         };
     }
+    if args.status {
+        return match mac::status() {
+            Ok(s) => {
+                print!("{s}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if args.quit {
         let defq = Config::default();
         if let Some(p) = gui::find_running(&defq.client_name, args.explicit_port.then_some(args.port))
@@ -788,5 +806,9 @@ mod tests {
         assert!(args(&["--bogus"]).is_err());
         assert!(args(&["-V"]).unwrap_err().starts_with("BananaSplit 2."));
         assert_eq!(args(&["--help"]).unwrap_err(), HELP);
+        // read-only device report
+        assert!(args(&["--status"]).is_ok_and(|a| a.status && !a.list && !a.headless));
+        assert!(!args(&[]).unwrap().status);
+        assert!(HELP.contains("--status"));
     }
 }

@@ -9,3 +9,7 @@
 pub use bananasplit_core::{
     DECK_PAGE, config, dynamics, engine, eq, mp3, player, recorder, release, ring, scenes, tui, vban,
 };
+
+/// The Core Audio backend's decisions as plain functions (tested on every
+/// platform).
+pub mod pure;

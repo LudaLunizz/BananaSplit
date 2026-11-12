@@ -32,6 +32,10 @@ fail() {
 "$exe" --print-default-config | grep -q '^\[global\]' || fail "--print-default-config"
 "$exe" --list-devices > "$work/devices.txt" 2>&1 || fail "--list-devices: $(cat "$work/devices.txt")"
 cat "$work/devices.txt"
+# Read only: every device and the defaults, no audio started.
+"$exe" --status > "$work/status.txt" 2>&1 || fail "--status: $(cat "$work/status.txt")"
+grep -q -e '^default output:' -e 'no devices' "$work/status.txt" || fail "--status: $(cat "$work/status.txt")"
+cat "$work/status.txt"
 
 # Started in the background (as at login): the menu bar icon only.
 "$exe" --no-open --gui-port "$port" > "$log" 2>&1 &
