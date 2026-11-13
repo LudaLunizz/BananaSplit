@@ -1123,7 +1123,7 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
     let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(5)));
     if !peer_allowed(&s) {
-        return fail(&mut s, None, &ApiError::new(403, "BananaSplit only answers the user it runs as"), "");
+        return fail(&mut s, None, &ApiError::new(403, peer::refused_message(peer::unreadable())), "");
     }
     let req = match read_request(&mut s) {
         Ok(r) => r,

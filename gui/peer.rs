@@ -6,15 +6,42 @@
 //! Each reader is compiled for the system that uses it, and under `cargo test`
 //! on every system: the Linux build tests the Windows and macOS readers too.
 
+/// What the system's list of connections is called, once it could not be
+/// read (see [`list_unreadable`]).
+static UNREADABLE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 /// The system's list of connections could not be read, so whose program is
 /// at the other end of a connection is unknown. That answer is "not ours":
 /// the page and the API are refused rather than opened to every user of this
-/// computer. Said once on stderr, so the reason can be found.
+/// computer. Said once on stderr, and from then on in every refusal
+/// ([`refused_message`]), so the user sees why in the window (issue #128).
 pub fn list_unreadable(what: &str) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static SAID: AtomicBool = AtomicBool::new(false);
-    if !SAID.swap(true, Ordering::Relaxed) {
+    if remember(&UNREADABLE, what) {
         eprintln!("bananasplit: can't read {what}, so the page and the API refuse every connection");
+    }
+}
+
+/// Keep the first list named; true the first time only.
+fn remember(cell: &std::sync::OnceLock<String>, what: &str) -> bool {
+    cell.set(what.to_string()).is_ok()
+}
+
+/// The list that could not be read, if one could not.
+pub fn unreadable() -> Option<&'static str> {
+    UNREADABLE.get().map(String::as_str)
+}
+
+/// The text of a refused connection: another user's, or anyone's while the
+/// list of connections can't be read (`unreadable`, which names that list).
+pub fn refused_message(unreadable: Option<&str>) -> String {
+    match unreadable {
+        None => "BananaSplit only answers the user it runs as".into(),
+        Some(what) => format!(
+            "BananaSplit can't read {what}, so it can't tell which user this connection comes from. \
+             For safety the page and the API are closed to everyone, you included.\n\n\
+             This happens when the system hides that list, for example in a sandbox or with a \
+             hardened /proc. The mixer keeps running; restart BananaSplit once the list can be read."
+        ),
     }
 }
 
@@ -339,5 +366,24 @@ pub mod win_table {
             t6.extend_from_slice(&77u32.to_le_bytes());
             assert_eq!(owner_pid(&t6, true, at(51000), at(8790)), Some(77));
         }
+    }
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+
+    /// Issue #128: a refusal says why, so the window is not just empty.
+    #[test]
+    fn a_refusal_says_why() {
+        assert_eq!(refused_message(None), "BananaSplit only answers the user it runs as");
+        let m = refused_message(Some("/proc/net/tcp"));
+        assert!(m.starts_with("BananaSplit can't read /proc/net/tcp, so"), "{m}");
+        assert!(m.contains("closed to everyone, you included") && m.contains("restart BananaSplit"), "{m}");
+        // the first list named is the one kept
+        let cell = std::sync::OnceLock::new();
+        assert!(remember(&cell, "list one"));
+        assert!(!remember(&cell, "list two"), "said once");
+        assert_eq!(cell.get().map(String::as_str), Some("list one"));
     }
 }
