@@ -18,8 +18,8 @@
 //! routes = B1
 //! connect = @default
 //!
-//! [bus.A1]
-//! name = Speakers
+//! [bus.V1]           # V1-V3, B1 (mic out), B2 (system out); up to 2.8.24 V1-V3 were
+//! name = Speakers     # called A1-A3, and those names are still read everywhere
 //! gain_db = 0.0
 //! trim_db = 0.0
 //! pan = 0.0           # balance
@@ -34,8 +34,8 @@
 //! format = mp3       # mp3 | wav16 | wav24 | wav32f
 //! bitrate = 320       # kbit/s of MP3 takes: 128 | 160 | 192 | 224 | 256 | 320
 //! mode = mix          # mix (one stereo file) | multi (one file per channel)
-//! links = 1,A1        # channels feeding the recorder: 1-6, A1-A3, B1-B2 or none
-//! play_to = A1        # buses the player plays recordings into
+//! links = 1,V1        # channels feeding the recorder: 1-6, V1-V3, B1-B2 or none
+//! play_to = V1        # buses the player plays recordings into
 //! split = 60          # minutes per file; longer takes go on in _part2, _part3, ... (0 = off)
 //!
 //! [vban]
@@ -54,7 +54,7 @@
 //! name = Stream1
 //! to = 192.168.1.20   # the receiver (a .255 address broadcasts)
 //! port = 6980
-//! source = B1         # 1-6 (a strip, after its fader) or A1-B2 (a bus)
+//! source = B1         # 1-6 (a strip, after its fader) or V1-B2 (a bus)
 //! format = int16      # int16 | int24 | int32 | float32
 //! channels = 2        # 1 = mono (L+R)/2, 2 = stereo
 //!
@@ -96,7 +96,7 @@
 //! loads with their defaults.
 
 use crate::dynamics::{COMP, DynSettings, GATE};
-use crate::engine::{BUS_IDS, NUM_BUSES, NUM_STRIPS, Shared, clamp_db, clamp_pan, clamp_trim};
+use crate::engine::{BUS_IDS, NUM_BUSES, NUM_STRIPS, Shared, bus_index, clamp_db, clamp_pan, clamp_trim};
 use crate::eq::{BANDS, Band, DEFAULT_BANDS, EqSettings};
 use crate::recorder::{self, ALL_LINKS, Format, Mode, Settings};
 use crate::vban::{self, FromAddr, NUM_IN, NUM_OUT, SampleFormat, VbanConfig};
@@ -157,7 +157,7 @@ impl Default for RecorderConfig {
             mode: s.mode,
             split_minutes: s.split_minutes,
             links: 1 << NUM_STRIPS,
-            play_to: 1, // A1
+            play_to: 1, // V1
         }
     }
 }
@@ -218,7 +218,8 @@ pub struct BusConfig {
 }
 
 impl BusConfig {
-    /// Buses A1-A3 start as hardware outputs, B1-B2 as virtual microphones.
+    /// B1 (mic out) and B2 (system out) have a virtual cable by default,
+    /// V1-V3 not.
     pub fn default_cable(bus: usize) -> bool {
         bus >= crate::engine::NUM_PHYSICAL_BUSES
     }
@@ -361,9 +362,8 @@ impl Default for Config {
             cable,
             eq: EqSettings::default(),
         };
-        const A1: u8 = 1;
-        const A2: u8 = 2;
         const B1: u8 = 8;
+        const B2: u8 = 16;
         Config {
             client_name: "BananaSplit".into(),
             buffer_size: 128,
@@ -371,18 +371,29 @@ impl Default for Config {
             create_cables: true,
             strips: [
                 strip("Mic", B1, true, &[DEFAULT_DEVICE]),
-                strip("Discord", A1 | A2, false, &[]),
-                strip("Desktop", A1, false, &[]),
-                strip("Game", A1, false, &[]),
-                strip("Music", A1, false, &[]),
-                strip("Aux", A1, false, &[]),
+                strip("Discord", B2, false, &[]),
+                strip("Desktop", B2, false, &[]),
+                strip("Game", B2, false, &[]),
+                strip("Music", B2, false, &[]),
+                strip("Aux", B2, false, &[]),
             ],
+            // From 2.8.25, for new configs only: the inputs go to B2, the
+            // system out on the default output device, and the mic to B1,
+            // the mic out other apps record from. V1-V3 have no device and
+            // no sends: they are for mixes in between (an input into V1, V1
+            // into B2 and not B1: heard here, not on the stream).
+            //
+            // A saved file keeps what it had: strips always write `routes`
+            // and every channel writes `connect`, so only these lines of a
+            // file decide. Bus sends are written only when there are some,
+            // so a default send here would turn up in every older file:
+            // there is none. The cable defaults are as before (B1, B2 on).
             buses: [
-                bus("Speakers", &[DEFAULT_DEVICE], false),
-                bus("Headphones", &[], false),
-                bus("A3", &[], false),
-                bus("Virtual B1", &[], true),
-                bus("Virtual B2", &[], true),
+                bus("Monitor", &[], false),
+                bus("V2", &[], false),
+                bus("V3", &[], false),
+                bus("Mic out", &[], true),
+                bus("System out", &[DEFAULT_DEVICE], true),
             ],
             recorder: RecorderConfig::default(),
             vban: VbanConfig::default(),
@@ -520,9 +531,9 @@ pub fn parse_routes(v: &str) -> Result<u8, String> {
         if tok.eq_ignore_ascii_case("none") {
             continue;
         }
-        match BUS_IDS.iter().position(|b| b.eq_ignore_ascii_case(tok)) {
+        match bus_index(tok) {
             Some(i) => mask |= 1 << i,
-            None => return Err(format!("unknown bus {tok:?} (expected A1, A2, A3, B1, B2)")),
+            None => return Err(format!("unknown bus {tok:?} (expected V1, V2, V3, B1, B2)")),
         }
     }
     Ok(mask)
@@ -591,9 +602,9 @@ impl Config {
                         _ => return Err(err(format!("unknown section [{h}] (strips are strip1..strip{NUM_STRIPS})"))),
                     }
                 } else if let Some(id) = h.strip_prefix("bus.") {
-                    match BUS_IDS.iter().position(|b| b.eq_ignore_ascii_case(id)) {
+                    match bus_index(id) {
                         Some(i) => Section::Bus(i),
-                        None => return Err(err(format!("unknown section [{h}] (buses are bus.A1..bus.B2)"))),
+                        None => return Err(err(format!("unknown section [{h}] (buses are bus.V1..bus.B2)"))),
                     }
                 } else {
                     return Err(err(format!("unknown section [{h}]")));
@@ -665,6 +676,11 @@ impl Config {
                 Section::Bus(i) => {
                     let b = &mut cfg.buses[i];
                     match k {
+                        // A bus still named by its old ID (2.8.24 named A3 "A3"
+                        // by default) takes the new one; real names stay.
+                        "name" if v.eq_ignore_ascii_case(crate::engine::LEGACY_BUS_IDS[i]) && i < 3 => {
+                            b.name = BUS_IDS[i].into()
+                        }
                         "name" => b.name = v.into(),
                         "gain_db" => b.gain_db = parse_gain(v).map_err(err)?,
                         "trim_db" => b.trim_db = parse_trim(v).map_err(err)?,
@@ -780,7 +796,7 @@ impl Config {
         let _ = writeln!(o, "#           highshelf | lowcut | highcut | notch. A band not written here is flat:");
         let _ = writeln!(o, "#           lowshelf 100, bell 250 / 600 / 1500 / 4000, highshelf 10000, all +0 dB");
         let _ = writeln!(o, "# cable = on | off: the channel's virtual cable (written when it differs from the");
-        let _ = writeln!(o, "#           default: on for the strips and B1, B2, off for A1-A3)");
+        let _ = writeln!(o, "#           default: on for the strips and B1, B2, off for V1-V3)");
         let _ = writeln!(o, "# routes on a bus = the other buses it feeds after its fader (never in a loop)");
         let _ = writeln!(o, "# gate = on | off;  gate_threshold (dB, -50), gate_range (dB, -80), gate_attack (ms, 1),");
         let _ = writeln!(o, "#           gate_hold (ms, 100), gate_release (ms, 200)");
@@ -849,7 +865,7 @@ impl Config {
         }
         let r = &self.recorder;
         let _ = writeln!(o, "\n[recorder]");
-        let _ = writeln!(o, "# links: 1-6 = strips, A1-A3 / B1-B2 = buses; mode = mix | multi");
+        let _ = writeln!(o, "# links: 1-6 = strips, V1-V3 / B1-B2 = buses; mode = mix | multi");
         let _ = writeln!(
             o,
             "# format = mp3 | wav16 | wav24 | wav32f; bitrate = kbit/s of MP3: 128 | 160 | 192 | 224 | 256 | 320"
@@ -868,7 +884,7 @@ impl Config {
         let _ =
             writeln!(o, "#   [vban.in1] .. [vban.in8]:   on, name, from = <sender IPv4> | any, strip = 1-6, buffer_ms");
         let _ =
-            writeln!(o, "#   [vban.out1] .. [vban.out8]: on, name, to = <receiver IPv4>, port, source = 1-6 | A1-B2,");
+            writeln!(o, "#   [vban.out1] .. [vban.out8]: on, name, to = <receiver IPv4>, port, source = 1-6 | V1-B2,");
         let _ =
             writeln!(o, "#                               format = int16 | int24 | int32 | float32, channels = 1 | 2");
         let _ = writeln!(o, "enabled = {}", v.enabled);
@@ -1233,7 +1249,7 @@ mod tests {
         assert!(!text.contains("auto_update"), "off (the default) is not written: an older BananaSplit reads the file");
         assert_eq!(Config::parse("[gui]\nwindow =\n").unwrap().gui.window, None);
         assert!(Config::parse("[gui]\nwindow = 10x10\n").is_err());
-        assert!(text.contains("play_to = A1,B1\n"));
+        assert!(text.contains("play_to = V1,B1\n"));
         // clamped and rounded like the GUI does it
         let c = Config::parse("[strip1]\ntrim_db = 99\npan = -3\n[bus.A2]\ntrim_db = 3.04\npan = 0.123\n").unwrap();
         assert_eq!((c.strips[0].trim_db, c.strips[0].pan), (crate::engine::MAX_TRIM_DB, -1.0));
@@ -1407,10 +1423,63 @@ mod tests {
             .unwrap();
         assert_eq!(c.strips[0].connect, [PHYSICAL, DEFAULT_DEVICE]);
         assert_eq!(c.buses[0].connect, [PHYSICAL]);
-        // the default config picks the desktop's default devices
+        // the default config picks the desktop's default devices: the mic
+        // on strip 1, the output on B2 (system out); V1-V3 have none
         let d = Config::default();
         assert_eq!(d.strips[0].connect, [DEFAULT_DEVICE]);
-        assert_eq!(d.buses[0].connect, [DEFAULT_DEVICE]);
+        assert_eq!(d.buses[4].connect, [DEFAULT_DEVICE]);
+        assert!(d.buses[..3].iter().all(|b| b.connect.is_empty() && b.routes == 0));
+    }
+
+    /// A file written by 2.8.24 (bus sections and every bus name in the old
+    /// A1-A3 form) loads to exactly what the same file says with V1-V3, and
+    /// keeps its own devices, sends and cables: the new defaults (B2 on the
+    /// default output, no device on V1) change nothing in it.
+    #[test]
+    fn a_bus_named_by_its_old_id_takes_the_new_one() {
+        let c =
+            Config::parse("[bus.A3]\nname = A3\n[bus.A1]\nname = Speakers\n[bus.A2]\nname = a2\n[bus.B1]\nname = B1\n")
+                .unwrap();
+        assert_eq!(c.buses[2].name, "V3");
+        assert_eq!(c.buses[1].name, "V2", "any case");
+        assert_eq!(c.buses[0].name, "Speakers", "a real name stays");
+        assert_eq!(c.buses[3].name, "B1", "B buses keep their IDs");
+    }
+
+    #[test]
+    fn a_2_8_24_file_loads_unchanged() {
+        let old = "[strip1]\nname = Mic\nroutes = B1\nconnect = @default\n\
+                   [strip2]\nname = Discord\nroutes = A1\nconnect =\n\
+                   [strip5]\nname = Music\nroutes = A1,A3\nconnect =\n\
+                   [bus.A1]\nname = Speakers\nconnect = @default\ncable = on\n\
+                   [bus.A2]\nname = Headphones\nroutes = B1\nconnect =\n\
+                   [bus.A3]\nname = Spare\nconnect =\n\
+                   [bus.B1]\nname = Virtual B1\nroutes = A3\nconnect =\n\
+                   [bus.B2]\nname = Virtual B2\nconnect =\n\
+                   [recorder]\nlinks = 1,A1,B2\nplay_to = A2\n\
+                   [vban.out1]\nsource = A3\n";
+        let new = old.replace("A1", "V1").replace("A2", "V2").replace("A3", "V3");
+        let (a, b) = (Config::parse(old).unwrap(), Config::parse(&new).unwrap());
+        assert_eq!(a, b);
+        assert_eq!(a.strips[1].routes, 0b00001);
+        assert_eq!(a.strips[4].routes, 0b00101);
+        assert_eq!(a.buses.each_ref().map(|b| b.routes), [0, 0b01000, 0, 0b00100, 0]);
+        assert_eq!(
+            a.buses.each_ref().map(|b| b.cable),
+            [true, false, false, true, true],
+            "B2 keeps its cable by default"
+        );
+        assert_eq!(a.buses[0].connect, [DEFAULT_DEVICE]);
+        assert!(a.buses[4].connect.is_empty(), "B2 keeps no device: the file says so");
+        assert_eq!((a.recorder.links, a.recorder.play_to), (0b100_0100_0001, 0b00010));
+        assert_eq!(a.vban.outs[0].source, NUM_STRIPS + 2);
+        // and it is saved with the new names, which load back the same
+        let text = a.to_ini();
+        assert!(
+            text.contains("[bus.V1]\n") && !text.contains("[bus.A1]") && text.contains("routes = V1,V3\n"),
+            "{text}"
+        );
+        assert_eq!(Config::parse(&text).unwrap(), a);
     }
 
     #[test]
@@ -1431,7 +1500,7 @@ mod tests {
         assert!(
             !text.contains("\ncable =")
                 && !text.contains(
-                    "[bus.A1]\nname = Speakers\ngain_db = 0\ntrim_db = 0\npan = 0\nmute = false\nmono = false\nroutes"
+                    "[bus.V1]\nname = Monitor\ngain_db = 0\ntrim_db = 0\npan = 0\nmute = false\nmono = false\nroutes"
                 ),
             "defaults are not written (2.6 can read the file)"
         );
@@ -1441,7 +1510,7 @@ mod tests {
         c.buses[4].cable = false;
         c.strips[2].cable = false;
         let text = c.to_ini();
-        assert!(text.contains("routes = A1\nconnect =\n") && text.contains("cable = off"), "{text}");
+        assert!(text.contains("routes = V1\nconnect =\n") && text.contains("cable = off"), "{text}");
         assert_eq!(Config::parse(&text).unwrap(), c);
         // apply / capture
         let sh = Shared::new();

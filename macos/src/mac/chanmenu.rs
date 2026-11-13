@@ -26,12 +26,12 @@ const NUM_CHANNELS: usize = NUM_STRIPS + NUM_BUSES;
 /// The cable each channel uses (by channel: strips, then buses).
 pub type Cables = [Option<String>; NUM_CHANNELS];
 
-/// Channel `ch`'s id in the page and in `cables.txt`: "1" .. "6", "A1" .. "B2".
+/// Channel `ch`'s id in the page and in `cables.txt`: "1" .. "6", "V1" .. "B2".
 fn id_of(ch: usize) -> String {
     if ch < NUM_STRIPS { (ch + 1).to_string() } else { BUS_IDS[ch - NUM_STRIPS].to_string() }
 }
 
-/// "strip 3", "A1": for messages.
+/// "strip 3", "V1": for messages.
 fn name_of(ch: usize) -> String {
     if ch < NUM_STRIPS { format!("strip {}", ch + 1) } else { BUS_IDS[ch - NUM_STRIPS].to_string() }
 }
@@ -145,7 +145,11 @@ pub fn parse_held(text: &str) -> Cables {
         }
         let Some((id, name)) = line.split_once('=') else { continue };
         let (id, name) = (id.trim(), name.trim());
-        if let Some(ch) = (0..NUM_CHANNELS).find(|&ch| id_of(ch).eq_ignore_ascii_case(id))
+        // (A1..A3: the names of V1..V3 in files written up to 2.8.24)
+        let ch = (0..NUM_STRIPS)
+            .find(|&ch| id_of(ch) == id)
+            .or_else(|| bananasplit::engine::bus_index(id).map(|b| NUM_STRIPS + b));
+        if let Some(ch) = ch
             && !name.is_empty()
         {
             c[ch] = Some(name.to_string());
@@ -457,6 +461,11 @@ mod tests {
         // and after a restart (the file read back) it stays so
         let back = parse_held(&held_text(&held));
         assert_eq!(back, held);
+        // a file written up to 2.8.24 names V1..V3 A1..A3
+        let old = parse_held("# x\n2 = BlackHole 2ch\nA1 = BlackHole 64ch\nv3 = Loopback\nB2 = BH\n");
+        assert_eq!(old, parse_held("2 = BlackHole 2ch\nV1 = BlackHole 64ch\nV3 = Loopback\nB2 = BH\n"));
+        assert_eq!(old[NUM_STRIPS].as_deref(), Some("BlackHole 64ch"));
+        assert!(held_text(&old).contains("\nV1 = BlackHole 64ch\n"));
         assert_eq!(plan(&cfg, &s.caps, &s.rens, &back), c);
         // switching strip 1 on again takes nobody's cable
         cfg.strips[0].cable = true;
@@ -565,7 +574,7 @@ mod tests {
                 &mut held
             )
             .unwrap(),
-            "A1 plays on External Headphones"
+            "V1 plays on External Headphones"
         );
         // the default
         assert_eq!(
@@ -582,7 +591,7 @@ mod tests {
         assert!(apply(DevOp::Unpattern { ch: 0, pattern: "USB Mic".into() }, &mut cfg, &s, &mut held).is_ok());
         assert_eq!(
             apply(DevOp::Nothing { ch: NUM_STRIPS }, &mut cfg, &s, &mut held).unwrap(),
-            "A1 is not connected to anything"
+            "V1 is not connected to anything"
         );
         assert!(cfg.buses[0].connect.is_empty());
         assert!(apply(DevOp::Stream { rec: false, id: 1, ch: Some(0) }, &mut cfg, &s, &mut held).is_err());

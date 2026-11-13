@@ -1,16 +1,16 @@
 # BananaSplit: a 6-strip virtual audio mixer for Linux
 
-A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **5 buses** (A1–A3 play on your speakers and headphones, B1–B2 are virtual microphones for other apps; any bus can be either or both, and buses can feed each other). Every channel has a **menu to pick its devices and apps**, a **virtual cable** (from the start on the strips and B1–B2), input gain, pan and a **6-band EQ** (and on every strip a **gate and compressor**), **VBAN network audio** that works with Voicemeeter, a **multitrack recorder and player**, and **scenes**. It runs as a single real-time JACK client, natively on JACK2 or on PipeWire's JACK layer. It is a desktop app: its own window, an icon in the app menu and in the system tray, and it can start with the system (`bananasplit --gui`). It also runs in a terminal or as a background service.
+A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **5 buses** (V1–V3 are mixes in between that feed B1 and B2, and can play on a device of their own; B1 is the mic out other apps record from, B2 the system out on your default output; any bus can have a device, a virtual microphone or both, and buses can feed each other. Up to 2.8.24 V1–V3 were called A1–A3, and those names are still read everywhere). Every channel has a **menu to pick its devices and apps**, a **virtual cable** (from the start on the strips and B1–B2), input gain, pan and a **6-band EQ** (and on every strip a **gate and compressor**), **VBAN network audio** that works with Voicemeeter, a **multitrack recorder and player**, and **scenes**. It runs as a single real-time JACK client, natively on JACK2 or on PipeWire's JACK layer. It is a desktop app: its own window, an icon in the app menu and in the system tray, and it can start with the system (`bananasplit --gui`). It also runs in a terminal or as a background service.
 
 ```
  BananaSplit  6 strips · 5 buses · JACK client "BananaSplit" · 8 cables
  48000 Hz · 128 fr · 2.67 ms/period · RTT 6.10 ms [OK <10ms] · DSP 1% · xruns 0
  VBAN 192.168.1.23:6980 · in: 1 of 1 receiving · out: 1 of 1 sending
-  #  NAME              GAIN  L         R         PEAK M S O E D  A1 A2 A3 B1 B2
-> 1  Mic               +0.0  █████···· █████····  -24 · · O E D  A1 A2 A3 B1 B2
-  2  Discord           -7.4  ████····· ████·····  -31 · · · · ·  A1 A2 A3 B1 B2
+  #  NAME              GAIN  L         R         PEAK M S O E D  V1 V2 V3 B1 B2
+> 1  Mic               +0.0  █████···· █████····  -24 · · O E D  V1 V2 V3 B1 B2
+  2  Discord           -7.4  ████····· ████·····  -31 · · · · ·  V1 V2 V3 B1 B2
   ...
- A2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    A1 ── A3 B1 B2
+ V2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    V1 ── V3 B1 B2
 ```
 
 ## What's new in 2.8.24
@@ -334,9 +334,9 @@ bananasplit --low-latency               # optional but recommended for < 10 ms (
 
 ## Using it
 
-1. Start BananaSplit from the app menu (or `bananasplit --gui`; `bananasplit` alone runs it in the terminal). Eight devices appear in your sound settings: `BananaSplit-In1-Mic` … `BananaSplit-In6-Aux` (outputs) and `BananaSplit-Out-B1`, `BananaSplit-Out-B2` (microphones). Strip 1 takes your default microphone and A1 plays on your default output (`@default`). Each channel's menu (the button under its name) shows what else you can connect; so does `bananasplit --list-ports`.
+1. Start BananaSplit from the app menu (or `bananasplit --gui`; `bananasplit` alone runs it in the terminal). Eight devices appear in your sound settings: `BananaSplit-In1-Mic` … `BananaSplit-In6-Aux` (outputs) and `BananaSplit-Out-B1`, `BananaSplit-Out-B2` (microphones). Strip 1 takes your default microphone and B2, the system out, plays on your default output (`@default`); the other strips go to B2 and the mic to B1, the mic out. Each channel's menu (the button under its name) shows what else you can connect; so does `bananasplit --list-ports`.
 2. Point applications at a strip: pick the app in the strip's menu, or set the app's output device (pavucontrol, GNOME/KDE settings, or the app itself), for example Discord to `BananaSplit-In2-Discord`. To send the whole desktop through BananaSplit, make `BananaSplit-In3-Desktop` the default output.
-3. Choose where each strip goes with its A1 A2 A3 B1 B2 chips (keys `1`–`5` in the terminal UI). Buses have the same chips, to feed other buses.
+3. Choose where each strip goes with its V1 V2 V3 B1 B2 chips (keys `1`–`5` in the terminal UI). Buses have the same chips, to feed other buses.
 4. In Discord or OBS, select **`BananaSplit-Out-B1`** as the microphone to receive the B1 mix (or tick the app in B1's menu).
 5. The mixer state is saved automatically on quit; "Save settings" in the app's menu (`w` in the terminal UI) saves it at once.
 
@@ -348,7 +348,7 @@ A `●` after a row's number means that channel is linked to the recorder, an `E
 
 ## The app (`bananasplit --gui`)
 
-Start **BananaSplit** from the app menu, or run `bananasplit --gui`. The window shows, from left to right, the six **input strips** (green), the buses A1–A3 (blue: speakers, headphones), the buses B1–B2 (purple: the virtual microphones other apps record from) and the **recorder**; underneath, the quick-mix bar with every input, the five outputs, and the session panel. (Colours and places stay as they are when you give a bus another role: an A bus can be a virtual microphone too, a B bus can play on a device.)
+Start **BananaSplit** from the app menu, or run `bananasplit --gui`. The window shows, from left to right, the six **input strips** (green), the buses V1–V3 (blue: mixes in between, each can play on a device too), the buses B1–B2 (purple: B1 the mic out other apps record from, B2 the system out on your default output) and the **recorder**; underneath, the quick-mix bar with every input, the five outputs, and the session panel. (Colours and places stay as they are when you give a bus another role: an A bus can be a virtual microphone too, a B bus can play on a device.)
 
 **A strip, top to bottom:**
 
@@ -357,11 +357,11 @@ Start **BananaSplit** from the app menu, or run `bananasplit --gui`. The window 
 * **LEVEL**: the meter (left and right, after the fader; while the channel is muted or soloed out, the level coming in, in grey) and the **fader**, −60 to +12 dB: drag it, scroll over it, use the arrow keys or Page Up/Down, double-click for 0 dB, or type a value into the box under it. **PK** is the highest level of the last 3 seconds (red after clipping);
 * **PAN** (on buses **BALANCE**): the side it turns away from fades out, the other side stays at full level; double-click for centre. **MONO** sums left and right;
 * **MUTE** and **SOLO** (strips only; while any strip is soloed, only soloed strips are heard), with their lamps;
-* **TO**: where the strip goes, A1 A2 A3 B1 B2. On a bus, the other buses it feeds after its fader (its own chip is left out; one that would make a loop is greyed out).
+* **TO**: where the strip goes, V1 V2 V3 B1 B2. On a bus, the other buses it feeds after its fader (its own chip is left out; one that would make a loop is greyed out).
 
 Click a strip to select it (green outline); then **M** mutes it, **S** solos it, **O** switches mono, **E** opens its EQ, **D** its gate and compressor (strips), **1**–**5** route it (on a bus: its sends), **[** and **]** select the previous or next strip. **Space** plays or pauses. **Ctrl +**, **Ctrl −** and **Ctrl 0** zoom.
 
-**The recorder:** the **state** (ready, recording, playing, with the free disk space), the **waveform** of the selected recording (‹ › go through your takes; click into it to play from there; while recording it shows the armed channels' level), the **time code**, and **PLAY** (PAUSE while playing), **REC** and **STOP** (stops playback and recording). **PLAY BACK ON** chooses the buses recordings play on (A1 by default; it does not change what is recorded): playback joins those buses before their EQ and fader, so it is heard, recorded and sent like anything else on them. **ARMED TRACKS · RECORDED** are the channels that are recorded: MIX puts them into one stereo file, MULTI writes one file per channel. **FORMAT** is MP3 (the default), or 16-bit, 24-bit or 32-bit float WAV. **OPEN** opens the recordings folder; the bar at the bottom is the disk.
+**The recorder:** the **state** (ready, recording, playing, with the free disk space), the **waveform** of the selected recording (‹ › go through your takes; click into it to play from there; while recording it shows the armed channels' level), the **time code**, and **PLAY** (PAUSE while playing), **REC** and **STOP** (stops playback and recording). **PLAY BACK ON** chooses the buses recordings play on (V1 by default; it does not change what is recorded): playback joins those buses before their EQ and fader, so it is heard, recorded and sent like anything else on them. **ARMED TRACKS · RECORDED** are the channels that are recorded: MIX puts them into one stereo file, MULTI writes one file per channel. **FORMAT** is MP3 (the default), or 16-bit, 24-bit or 32-bit float WAV. **OPEN** opens the recordings folder; the bar at the bottom is the disk.
 
 **Scenes:** the **SCENE** menu saves the whole mix under a name ("Save the mix as a new scene…") and loads it back with one click; "Update" saves over the current scene, "Delete" (click twice) removes it. A scene holds every fader, gain, pan, mute, solo, mono, routing, EQ, gate and compressor, and the armed tracks; it never changes names, devices, VBAN or recorder settings, and everything changes with the usual click-free ramps. Scenes are small files in `~/.config/bananasplit/scenes/`.
 
@@ -377,7 +377,7 @@ Every strip and every bus has a menu: the button under its name. It lists what t
 
 | Group | On a strip (what comes in) | On a bus (where it goes) |
 |---|---|---|
-| Virtual cable | `BananaSplit-In1-Mic` …: an output device for apps; it lists the apps that play into it | `BananaSplit-Out-A1` … `-B2`: a microphone for apps; it lists the apps that record it |
+| Virtual cable | `BananaSplit-In1-Mic` …: an output device for apps; it lists the apps that play into it | `BananaSplit-Out-V1` … `-B2`: a microphone for apps; it lists the apps that record it |
 | Apps | the apps that play sound: tick one to move it into this strip's cable (the cable is switched on if needed); untick it to send it back to the default output | the apps that record: tick one to make it record this bus (the virtual microphone is switched on if needed); untick it to give it the default microphone back |
 | Devices | microphones and sound cards | speakers and headphones |
 | Programs (JACK) | other JACK programs that send audio | other JACK programs that take audio |
@@ -421,11 +421,11 @@ Every strip and every bus has a menu: the button under its name. It lists what t
 
 ## Recorder
 
-The recorder can take any combination of the 11 channels, numbered the same way everywhere: strips `1`–`6` and buses `A1`–`B2`. Arm a channel under ARMED TRACKS · RECORDED in the app's recorder panel, or link it with `c` in the terminal UI. Then press record (REC, or `R`).
+The recorder can take any combination of the 11 channels, numbered the same way everywhere: strips `1`–`6` and buses `V1`–`B2`. Arm a channel under ARMED TRACKS · RECORDED in the app's recorder panel, or link it with `c` in the terminal UI. Then press record (REC, or `R`).
 
 * **What is recorded:** strips after their fader (gain, mute, solo and mono applied, exactly what the strip sends to the buses), and buses as they leave the mixer.
 * **One mix file** (`mode = mix`): all linked channels are added into one stereo file. Links can change while recording; each change is ramped like a routing change, so it doesn't click. A strip linked together with a bus it feeds counts twice.
-* **A file per source** (`mode = multi`): one stereo file per linked channel, for example `…_1-Mic.mp3`, `…_A1-Speakers.mp3`. They are taken from the same audio cycle, so they start on the same sample and always have the same length; drop them into a DAW and they line up. The set of tracks is fixed when recording starts.
+* **A file per source** (`mode = multi`): one stereo file per linked channel, for example `…_1-Mic.mp3`, `…_V1-Speakers.mp3` (`…_A1-…` in takes made up to 2.8.24). They are taken from the same audio cycle, so they start on the same sample and always have the same length; drop them into a DAW and they line up. The set of tracks is fixed when recording starts.
 * **Formats:** MP3 (default), at 320 kbit/s unless `bitrate =` says 128, 160, 192, 224 or 256; or 16-bit, 24-bit or 32-bit float WAV. MP3 and 16- and 24-bit files clip anything above full scale, and the GUI and terminal UI warn you when that happens; 32-bit float keeps it. BananaSplit's MP3 encoder is its own (MPEG-1 Layer III, constant bitrate, joint stereo, short blocks on attacks).
 * **Files** go to `~/Music/BananaSplit/` by default, in a folder per day (`YYYY-MM-DD/`), named `YYYY-MM-DD_HH-MM-SS_<label>.mp3` (or `.wav`) in local time. Each file goes into the folder of the day it starts on, so a take that runs past midnight continues in the next day's folder. An existing file is never overwritten. The WAV header, or the MP3's Info frame, is rewritten every 2 seconds, so a recording is still playable if BananaSplit is killed. Takes continue in `_part2`, `_part3` … files every hour (`split =` in `[recorder]`, in minutes; `0` = off) and always before 4 GB, split at the same sample for every track. An MP3 part also holds a few milliseconds of its neighbours, which its LAME tag hides, so the parts join without a seam.
 * **Sample rate:** files have the rate the audio server runs at (the top bar shows it), so they play at their real speed. MP3 holds 32, 44.1 and 48 kHz: at another server rate the take is converted (96 and 192 kHz to 48 kHz, 88.2 kHz to 44.1 kHz) with the windowed-sinc resampler VBAN uses, and the recorder panel says so. If the server changes its rate during a take, the take continues in new files at the new rate, `YYYY-MM-DD_HH-MM-SS-2_<label>.mp3`, starting on the same sample for every track, and the recorder panel says so.
@@ -434,7 +434,7 @@ The recorder can take any combination of the 11 channels, numbered the same way 
 
 ### Playing recordings back
 
-The app's recorder panel also plays: it lists the MP3 and WAV files in the recordings folder (newest last; ‹ › step through them), draws the selected one's waveform, and plays it with PLAY, PAUSE and STOP; clicking into the waveform plays from there. A multitrack take (the `_1-Mic.mp3`, `_A1-Speakers.mp3` … files of one recording) plays as one take, its tracks mixed. Files at another sample rate, from 8 kHz up to four times the mixer's (192 kHz at 48 kHz), are converted with the same windowed-sinc resampler VBAN uses. MP3 (MPEG-1, 2 and 2.5 Layer III, constant or variable bitrate, after an ID3v2 tag and before ID3v1 or APE tags; not the rare free-format streams) and 8-, 16-, 24- and 32-bit PCM and 32/64-bit float WAV play. An MP3 with a LAME tag (BananaSplit's, LAME's, ffmpeg's) plays exactly its own samples, so the parts of a take join and its tracks stay together. Stopping, seeking and changing takes fade out over one period, so they do not click. **PLAY BACK ON** chooses the buses it plays on (`play_to` in `[recorder]`, A1 by default): playback joins those buses before their EQ and fader, so it is heard, recorded and sent over VBAN like anything else on them. The file is read by a separate thread; the audio callback only reads a preallocated lock-free buffer (see `tests/player_no_alloc.rs`). Recording and playing at the same time works; a take that is still being recorded plays up to where it was when the list was last refreshed (every 3 seconds).
+The app's recorder panel also plays: it lists the MP3 and WAV files in the recordings folder (newest last; ‹ › step through them), draws the selected one's waveform, and plays it with PLAY, PAUSE and STOP; clicking into the waveform plays from there. A multitrack take (the `_1-Mic.mp3`, `_A1-Speakers.mp3` … files of one recording) plays as one take, its tracks mixed. Files at another sample rate, from 8 kHz up to four times the mixer's (192 kHz at 48 kHz), are converted with the same windowed-sinc resampler VBAN uses. MP3 (MPEG-1, 2 and 2.5 Layer III, constant or variable bitrate, after an ID3v2 tag and before ID3v1 or APE tags; not the rare free-format streams) and 8-, 16-, 24- and 32-bit PCM and 32/64-bit float WAV play. An MP3 with a LAME tag (BananaSplit's, LAME's, ffmpeg's) plays exactly its own samples, so the parts of a take join and its tracks stay together. Stopping, seeking and changing takes fade out over one period, so they do not click. **PLAY BACK ON** chooses the buses it plays on (`play_to` in `[recorder]`, V1 by default): playback joins those buses before their EQ and fader, so it is heard, recorded and sent over VBAN like anything else on them. The file is read by a separate thread; the audio callback only reads a preallocated lock-free buffer (see `tests/player_no_alloc.rs`). Recording and playing at the same time works; a take that is still being recorded plays up to where it was when the list was last refreshed (every 3 seconds).
 
 ## EQ
 
@@ -540,7 +540,7 @@ trim_db = 0.0
 # -1 (left) .. 1 (right); on a bus, the balance
 pan = 0.0
 mono = true
-# any of A1,A2,A3,B1,B2 or none
+# any of V1,V2,V3,B1,B2 or none
 routes = B1
 # the default microphone; may be repeated
 connect = @default
@@ -549,18 +549,18 @@ connect = @default
 # any JACK port regex works too
 connect = ^Firefox:output_F[LR]$
 
-[bus.A1]
+[bus.V1]
 name = Speakers
 # the default output device
 connect = @default
-# also a virtual microphone, BananaSplit-Out-A1 (A1-A3: default off)
+# also a virtual microphone, BananaSplit-Out-V1 (V1-V3: default off)
 cable = on
-[bus.A2]
+[bus.V2]
 # from `bananasplit --list-ports`
 connect = ^Yeti Stereo Microphone Analog Stereo-63:
 [bus.B1]
 # buses this bus feeds after its fader (never itself, never a loop)
-routes = A2
+routes = V2
 
 [strip6]
 # no virtual cable for this strip (strips, B1, B2: default on)
@@ -589,10 +589,10 @@ format = mp3
 bitrate = 320
 # mix (one stereo file) | multi (one file per linked channel)
 mode = mix
-# 1-6 = strips, A1-A3 / B1-B2 = buses, or none
-links = 1,A1
-# the buses recordings play on (any of A1..B2, or none)
-play_to = A1
+# 1-6 = strips, V1-V3 / B1-B2 = buses, or none
+links = 1,V1
+# the buses recordings play on (any of V1..B2, or none)
+play_to = V1
 # minutes per file: a longer take goes on in _part2, _part3, ... (0 = off)
 split = 60
 
@@ -621,7 +621,7 @@ name = Linux
 # the receiver's IPv4 address (x.x.x.255 = broadcast)
 to = 192.168.1.20
 port = 6980
-# 1-6 = a strip after its fader, A1-A3 / B1-B2 = a bus
+# 1-6 = a strip after its fader, V1-V3 / B1-B2 = a bus
 source = B1
 # int16 | int24 | int32 | float32
 format = int16
@@ -631,7 +631,7 @@ channels = 2
 
 EQ types are `bell`, `lowshelf`, `highshelf`, `lowcut`, `highcut` and `notch`; the frequency is 20–20000 Hz, the gain −24 to +24 dB (ignored by the cuts and the notch) and Q 0.1–30. BananaSplit writes only the bands and streams that differ from the defaults. Gate and compressor keys (strips only) are written only for a strip whose gate or compressor is on or not at its defaults, so 2.8.15 can still read a file that does not use them.
 
-A config file from an earlier BananaSplit (without `[gui]`, `trim_db`, `pan`, `play_to`, `[recorder]`, EQ, `[vban]`, `cable` or bus `routes`) still loads; what is missing starts with its default: 0 dB input gain, centre, the dark theme, closing to the tray, the recorder linked to A1 only and playing to A1, every EQ off, VBAN off, a virtual cable for every strip and for B1 and B2, and no bus sends. `cable` and bus `routes` are written only when they differ from the default, so 2.6 can read a file that does not use them.
+A config file from an earlier BananaSplit (written with the bus names A1–A3 for V1–V3, which are still read everywhere and saved as V1–V3; without `[gui]`, `trim_db`, `pan`, `play_to`, `[recorder]`, EQ, `[vban]`, `cable` or bus `routes`) still loads; what is missing starts with its default: 0 dB input gain, centre, the dark theme, closing to the tray, the recorder linked to V1 only and playing to V1, every EQ off, VBAN off, a virtual cable for every strip and for B1 and B2, and no bus sends. `cable` and bus `routes` are written only when they differ from the default, so 2.6 can read a file that does not use them.
 
 **Scenes** are saved next to the config, in `~/.config/bananasplit/scenes/<name>.ini`, in the same format (the `[stripN]`, `[bus.XX]` and `[recorder]` keys a scene holds, bus sends included; a key left out takes its default value). You can copy them between computers. Only files that start with BananaSplit's `# BananaSplit scene` line are listed, and only those are ever replaced or deleted.
 
@@ -645,7 +645,7 @@ The channels' menus in the app write these lines for you (see [Channel menus](#c
 | `@physical`  | a physical capture device: the default if it is one, else the one it had while that is there, else the first JACK lists | a physical playback device, same rule |
 | a regex      | the first two matching JACK ports → L, R       | same                              |
 
-`@default` needs PipeWire and `pactl`. It follows the sound settings: pick another default device there and the channel moves to it at once, letting go of the one it had (`@physical` moves with the default too, when the default is a physical device). Without PipeWire and `pactl` it falls back to `@physical` and says so. When the default device is one of BananaSplit's own cables (for example if you made `BananaSplit-In3-Desktop` the default output), a channel that already follows a device stays with it and says so (while that device is unplugged it falls back to `@physical`, and returns when the device does); one that has none yet (at start) falls back to `@physical`. To be sure what A1 plays on, give it an explicit pattern.
+`@default` needs PipeWire and `pactl`. It follows the sound settings: pick another default device there and the channel moves to it at once, letting go of the one it had (`@physical` moves with the default too, when the default is a physical device). Without PipeWire and `pactl` it falls back to `@physical` and says so. When the default device is one of BananaSplit's own cables (for example if you made `BananaSplit-In3-Desktop` the default output), a channel that already follows a device stays with it and says so (while that device is unplugged it falls back to `@physical`, and returns when the device does); one that has none yet (at start) falls back to `@physical`. To be sure what V1 plays on, give it an explicit pattern.
 
 **Patterns match JACK names, not PipeWire node names.** PipeWire calls a device something like `alsa_input.usb-Blue_Microphones_Yeti-00.analog-stereo`, but its JACK layer names the ports after the description: `Yeti Stereo Microphone Analog Stereo:capture_FL`. When two JACK clients would get the same name (a device's microphone and headphone sides can share a description), one of them gets `-NN` appended, PipeWire's number for it. That number can change when the device comes back or the computer restarts: a `^Name-NN:` line (as the menus write it) that no longer matches still connects the client now called `Name` or `Name-<other number>` on that side, if exactly one fits. A client that another `^Name:` line names is left to that line. `bananasplit --list-ports` prints every name with a ready-made line:
 
@@ -706,7 +706,7 @@ node tests/gui/fixes_check.js    # the 2.7.1 fixes that show in the page, in Chr
 tests/window/run_window_test.sh  # the app window and the tray icon on Xvfb (needs GTK 3, Xvfb, dbus-python)
 ```
 
-The end-to-end test drives BananaSplit's real process callback through a mock JACK server. It checks that impulses fed to two different strips come out on A1 and B1 at the **exact same frame and cycle** they went in, with the correct mix values. It also checks that every output buffer is fully written each cycle, that 8 cables are created, wired and removed, that a stale cable from a crash is cleaned up, and that SIGINT/SIGTERM shut down cleanly. A third phase starts `bananasplit --gui`, drives it over HTTP exactly like the page does (including the security checks and a second `--gui` launch), records strip 1 and A1 in multi mode, and checks that both WAV files hold the impulse on the **same sample** with the correct values.
+The end-to-end test drives BananaSplit's real process callback through a mock JACK server. It checks that impulses fed to two different strips come out on V1 and B1 at the **exact same frame and cycle** they went in, with the correct mix values. It also checks that every output buffer is fully written each cycle, that 8 cables are created, wired and removed, that a stale cable from a crash is cleaned up, and that SIGINT/SIGTERM shut down cleanly. A third phase starts `bananasplit --gui`, drives it over HTTP exactly like the page does (including the security checks and a second `--gui` launch), records strip 1 and V1 in multi mode, and checks that both WAV files hold the impulse on the **same sample** with the correct values.
 
 New in 2.8.4: MP3. Unit tests encode and decode every MP3 rate at 128 and 320 kbit/s (the same length, level and timing come back), check the LAME tag field by field and the standard frame lengths, seek to the exact sample anywhere, read files after ID3v2 and before ID3v1 and APE tags or without an Info frame, survive damaged files, give attacks short blocks (with as little pre-echo as LAME 3.100), and check that the Huffman tables are complete prefix codes. Recorder tests split MP3 takes into parts that play back to back as cleanly as anywhere else, convert a 96 kHz take to 48 kHz, follow a rate change, and record the engine's impulses to the same sample of every MP3 track; config tests cover the old `format = wav24` becoming MP3. `tests/mp3_libmpg123.rs` plays BananaSplit's files with libmpg123 (when it is installed) and needs the same length and samples. The eighth end-to-end phase runs its three cases in MP3 too. While it was written, the encoder was also checked against ffmpeg's decoder and against LAME 3.100 on recordings, and the decoder against the ISO/IEC 11172-4 conformance streams (within half an LSB of their reference output, intensity stereo and mixed blocks included).
 
@@ -733,14 +733,14 @@ New in 2.7.3: every fix has a check that fails on 2.7.1. Unit tests: the recordi
 
 New in 2.7.1:
 
-* A tenth end-to-end phase (`tests/e2e/fixes.py`) has a check for each fix, and each check fails on 2.7.0. It changes the default output and input with the fake `pactl` and checks that A1 and strip 1 move at once and let go of the old devices, that a device ticked in the menu stays, and that A1 stays put while the default is strip 3's cable. It checks that apps are listed once, that a headset's mono mic reaches both sides of a strip, and that `pactl subscribe` inherits no descriptor libjack left open. It unloads a cable's module behind BananaSplit's back (and gives its number to another module, as pipewire-pulse does), unloads it twice, restarts pipewire-pulse twice within a minute (all modules gone, `pactl subscribe` ended), and once more while it cannot make cables yet. It unplugs the device a channel stays with and plugs it in again, unticks it, and checks `@physical` too. It runs `--headless` with a `pactl` that reaches no server and with one whose `subscribe` keeps ending, and checks that nothing piles up. It starts a second BananaSplit named `bananasplit` next to `BananaSplit`, loads `^Name-71:` lines while PipeWire calls the device `Name-63` (also with two microphones of the same model), swaps which side of the Yeti gets the number, switches on Default input with a broken `pactl`, renames strips and buses, records two tracks across a change of sample rate, and shuts the audio server down with unsaved changes. The fake `pactl` learned `set-default-sink`/`-source`, pipewire-pulse's reuse of module numbers and its restarts; the mock JACK server learned a headset, twin microphones, devices unplugged while running, a server shutdown and a descriptor left open.
+* A tenth end-to-end phase (`tests/e2e/fixes.py`) has a check for each fix, and each check fails on 2.7.0. It changes the default output and input with the fake `pactl` and checks that V1 and strip 1 move at once and let go of the old devices, that a device ticked in the menu stays, and that V1 stays put while the default is strip 3's cable. It checks that apps are listed once, that a headset's mono mic reaches both sides of a strip, and that `pactl subscribe` inherits no descriptor libjack left open. It unloads a cable's module behind BananaSplit's back (and gives its number to another module, as pipewire-pulse does), unloads it twice, restarts pipewire-pulse twice within a minute (all modules gone, `pactl subscribe` ended), and once more while it cannot make cables yet. It unplugs the device a channel stays with and plugs it in again, unticks it, and checks `@physical` too. It runs `--headless` with a `pactl` that reaches no server and with one whose `subscribe` keeps ending, and checks that nothing piles up. It starts a second BananaSplit named `bananasplit` next to `BananaSplit`, loads `^Name-71:` lines while PipeWire calls the device `Name-63` (also with two microphones of the same model), swaps which side of the Yeti gets the number, switches on Default input with a broken `pactl`, renames strips and buses, records two tracks across a change of sample rate, and shuts the audio server down with unsaved changes. The fake `pactl` learned `set-default-sink`/`-source`, pipewire-pulse's reuse of module numbers and its restarts; the mock JACK server learned a headset, twin microphones, devices unplugged while running, a server shutdown and a descriptor left open.
 * `tests/gui/fixes_check.js` checks in Chromium that a long status keeps to three lines at four window sizes and zooms, so the strips end above the bottom bar; that a channel button's tooltip follows changes made in its menu; and that the REC title still says "2 tracks" when the take continues in new files.
 * Unit tests cover the menus' `^Name:` lines and PipeWire's numbers, the default input never being a monitor, which apps are streams under their JACK names, monitor ports only when nothing else matches, cable names shared by two client names, streams named by their description, the files a take is writing, and the messages about cables that came back.
 
 New in 2.7:
 
 * An eighth end-to-end phase records a 1 kHz tone the way PipeWire's libjack behaves: it says 48 kHz until the mixer has run once, while the graph runs at 44.1 kHz. Every file must say 44.1 kHz, the tone must read 1000 Hz, the files must hold as much time as went by, and the player must run at 1.0x. It also changes the rate from 48 to 96 kHz during a take (the take must continue in a second file at 96 kHz, and the GUI must say why), and runs with a libjack that never calls the sample-rate callback. 2.6 fails the first part (its file plays at about 1.09x).
-* A ninth phase works the channels' menus over HTTP like the page does, with the fake `pactl` playing PipeWire (devices, and Discord, Firefox and OBS as apps): A1's virtual microphone switched on and off while running, an app moved into strip 3 and back, OBS given A1's mix (A1's cable comes on for it), PipeWire moving OBS back to the default microphone when that cable goes, devices connected, saved as `connect =` lines and disconnected, refusals, and every cable removed on quit.
+* A ninth phase works the channels' menus over HTTP like the page does, with the fake `pactl` playing PipeWire (devices, and Discord, Firefox and OBS as apps): V1's virtual microphone switched on and off while running, an app moved into strip 3 and back, OBS given V1's mix (V1's cable comes on for it), PipeWire moving OBS back to the default microphone when that cable goes, devices connected, saved as `connect =` lines and disconnected, refusals, and every cable removed on quit.
 * `tests/gui/ui_check.js` now also opens the channel menus and connects and disconnects with them, checks that a muted strip's meter shows its input in grey, sends a bus into another one and checks that loops are blocked in the page and refused by the server, the five outputs in the bottom bar, the VBAN window's IP addresses, that the console fills windows from 1024 × 640 to 3440 × 1440 in one row of equal strips without scrolling (and scrolls when smaller), and long names (131 checks).
 * Unit tests cover the bus sends (same-cycle order, ramps, loops that never form even when two changes race), the input meters of muted and soloed-out channels, the engine following the server's sample rate, the recorder continuing a take in new files at a new rate, cables on any channel, the menus' labels, the apps' streams as `pactl` lists them, the local IP addresses, and the new config keys.
 
@@ -749,7 +749,7 @@ New in 2.6:
 * Phase 3 also checks that requests from another user of the computer are refused (when the test runs as root, it acts as `nobody`; otherwise it prints a SKIP line).
 * A sixth end-to-end phase gives BananaSplit a system libjack that finds no JACK server and a second libjack in PipeWire's private folder: without PipeWire running it reports the error as before; with PipeWire running it opens PipeWire's libjack, the mixer runs, and JACK2's error messages stay hidden.
 * A seventh phase keeps port 8790 busy: BananaSplit moves to another port and notes it, a second launch and `--quit` find it there (and `--quit` for another client name leaves it alone), and after the program file is replaced while it runs (as an update does), "Start with the system" names the new file.
-* `tests/gui/ui_check.js` starts BananaSplit on the mock JACK server (in real time) and works the page in Chromium like a person: it drags faders and knobs, double-clicks, types, scrolls, renames a strip, switches MUTE, SOLO, MONO and routing, edits an EQ band by dragging it, arms tracks, records a take, plays it back and checks that it reaches A1, pauses, plays from a click into the waveform and jumps while playing, saves and loads a scene, switches the theme and zoom, uses the keyboard shortcuts, and checks after every action that the mixer's state changed the way the control says (83 checks).
+* `tests/gui/ui_check.js` starts BananaSplit on the mock JACK server (in real time) and works the page in Chromium like a person: it drags faders and knobs, double-clicks, types, scrolls, renames a strip, switches MUTE, SOLO, MONO and routing, edits an EQ band by dragging it, arms tracks, records a take, plays it back and checks that it reaches V1, pauses, plays from a click into the waveform and jumps while playing, saves and loads a scene, switches the theme and zoom, uses the keyboard shortcuts, and checks after every action that the mixer's state changed the way the control says (83 checks).
 * `tests/window/run_window_test.sh` runs the real app window (GTK 3 on Xvfb) with a tray written from the StatusNotifierItem and dbusmenu specifications: the window opens with the page, the tray menu starts and stops recording, closing hides to the tray and the mixer keeps running, the app-menu launch and the tray bring it back, a crashed window leaves the mixer running, Quit stops everything and saves the window size; without a tray closing minimizes, `close_to_tray = false` quits, without WebKitGTK the page opens in a browser, `--hidden` starts in the tray, a start-up error launched from the app menu appears in a dialog, the Auto theme follows the desktop's dark style live (from a settings portal written from its specification), and a window restarted while recording, after an update replaced the program file, comes from the running program (not the new file, not a browser) and shows the recording in the tray.
 * Unit tests cover the input gain and pan (centre and 0 dB are bit-exact), the WAV reader (every format, broken and still-growing files), playback (bit-exact at the same rate, a 44.1 kHz sine played at 48 kHz, fades on stop and seek and before running dry, sample rates it refuses), who may connect, scenes (names, strict parsing, round trips), the desktop entries (Exec quoting, TryExec, the icons), the tray's D-Bus menu, and the new `[gui]` settings. `packaging/build-packages.sh` checks the packages it builds: the .deb's contents and control file, the desktop entry, and the portable package's install and uninstall in a throw-away home folder (which also check that files BananaSplit did not write are never touched).
 
@@ -764,8 +764,8 @@ New in 2.6:
 * The page in a browser needs a current one (Chromium/Chrome 111+, Firefox 113+); the browser app-window mode needs a Chromium-based one.
 * Only an x86-64 (amd64) build is packaged; on ARM, build from source.
 * **App-side buffering is not under any mixer's control.** PulseAudio-API apps (browsers, Discord) choose their own buffer sizes. The `pipewire-pulse` snippet lowers the default, but an app that asks for 40 ms gets 40 ms. Native PipeWire and JACK apps follow the graph quantum.
-* With **two different sound cards** on A1/A2, PipeWire clocks one and adaptively resamples the other, which is the correct way to handle two clock domains. Plain JACK2 can only drive one card.
+* With **two different sound cards** on V1/V2, PipeWire clocks one and adaptively resamples the other, which is the correct way to handle two clock domains. Plain JACK2 can only drive one card.
 * The 2.3 changes were tested against a mock JACK server and a fake `pactl`/`pw-metadata` that print what PipeWire prints. Check `bananasplit --list-ports` and `bananasplit --low-latency` on your own machine before relying on them live.
-* The same goes for 2.7's channel menus, the virtual microphones of A1–A3 and moving apps between channels: they were tested against the mock JACK server and the fake `pactl`, not a real PipeWire. The sample-rate fix was tested with a mock libjack that behaves as PipeWire's did here; record a minute and check its length on your own system once.
+* The same goes for 2.7's channel menus, the virtual microphones of V1–V3 and moving apps between channels: they were tested against the mock JACK server and the fake `pactl`, not a real PipeWire. The sample-rate fix was tested with a mock libjack that behaves as PipeWire's did here; record a minute and check its length on your own system once.
 * The 2.7.1 fixes were tested the same way, against the mock JACK server and the fake `pactl`; how PipeWire names JACK clients and reuses module numbers was checked in PipeWire's source code, not on a running system.
 * An app moved into a strip is moved the way pavucontrol does it. Some apps pick their output again themselves when they restart (or follow the default output); pick the strip in their own settings then.

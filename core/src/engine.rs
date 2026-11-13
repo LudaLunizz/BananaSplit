@@ -3,8 +3,8 @@
 //! Signal flow (identical topology to Voicemeeter Banana, but 6 input strips):
 //!
 //! ```text
-//!  strip input (L,R) + VBAN in ─► sanitize ─► [mono] ─► gate ─► comp ─► EQ ─► gain × fader × pan, mute/solo ─► meter ─┬─► route A1 ─┐
-//!                                                                                                                    ├─► route A2  │
+//!  strip input (L,R) + VBAN in ─► sanitize ─► [mono] ─► gate ─► comp ─► EQ ─► gain × fader × pan, mute/solo ─► meter ─┬─► route V1 ─┐
+//!                                                                                                                    ├─► route V2  │
 //!                                                                                                                    ├─► ...       ├─► bus sum ─►
 //!                                                                                                                    └─► route B2 ─┘
 //!  (+ player, on the buses it is routed to)
@@ -12,7 +12,7 @@
 //!                                                                                      └─► other buses (sends)
 //! ```
 //!
-//! A bus can feed other buses ("sends", e.g. B1 into A1 to hear the stream
+//! A bus can feed other buses ("sends", e.g. B1 into V1 to hear the stream
 //! mix): after its fader, like a strip. Buses are finished in an order where
 //! every bus comes after the buses feeding it, so a send adds no latency
 //! either; a send that would close a loop is never made.
@@ -71,12 +71,29 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering::Re
 
 pub const NUM_STRIPS: usize = 6;
 pub const NUM_BUSES: usize = 5;
-/// A1..A3 start as hardware outputs and B1..B2 as virtual microphones for
-/// other applications, but any bus can be either, or both (its `connect`
-/// lines and its virtual cable decide).
-pub const BUS_IDS: [&str; NUM_BUSES] = ["A1", "A2", "A3", "B1", "B2"];
-/// A1..A3: the buses that are hardware outputs by default.
+/// The buses as people see them: V1..V3 are mixes in the middle of the
+/// line (inputs go into them, they feed B1/B2 and may also play to a device
+/// of their own), B1 is the mic out (a virtual microphone for Discord, OBS,
+/// ...) and B2 the system out (the default output device). Any bus can have
+/// a device, a virtual cable, or both (its `connect` lines and its `cable`
+/// decide).
+pub const BUS_IDS: [&str; NUM_BUSES] = ["V1", "V2", "V3", "B1", "B2"];
+/// The names up to 2.8.24 (A1..A3 for V1..V3). Still read everywhere a bus
+/// is named (config, scenes, the API, recorder links, VBAN sources), and
+/// still used where the system or other programs remember a name: JACK /
+/// PipeWire port and cable node names (`BananaSplit:A1_L`,
+/// `bananasplit_out_a1`) and the Splitter endpoints on Windows.
+pub const LEGACY_BUS_IDS: [&str; NUM_BUSES] = ["A1", "A2", "A3", "B1", "B2"];
+/// V1..V3: the buses that are not B1/B2.
 pub const NUM_PHYSICAL_BUSES: usize = 3;
+
+/// The bus a name stands for: `V1`..`V3`, `B1`, `B2`, or the old `A1`..`A3`,
+/// in any case.
+pub fn bus_index(id: &str) -> Option<usize> {
+    let id = id.trim();
+    let at = |ids: &[&str; NUM_BUSES]| ids.iter().position(|b| b.eq_ignore_ascii_case(id));
+    at(&BUS_IDS).or_else(|| at(&LEGACY_BUS_IDS))
+}
 /// Bit mask with every bus set.
 pub const ALL_BUSES: u8 = (1 << NUM_BUSES) - 1;
 /// Largest period the engine will process. JACK2 and PipeWire both cap at
@@ -145,7 +162,7 @@ pub struct StripParams {
     pub mute: AtomicBool,
     pub solo: AtomicBool,
     pub mono: AtomicBool,
-    /// Bit `b` set => strip feeds bus `b` (A1 = bit 0 ... B2 = bit 4).
+    /// Bit `b` set => strip feeds bus `b` (V1 = bit 0 ... B2 = bit 4).
     pub routes: AtomicU8,
     /// Level after the fader (what the strip sends).
     pub peak: [PeakMeter; 2],
@@ -188,7 +205,7 @@ pub struct Shared {
     /// Cycles larger than MAX_FRAMES (output was silenced).
     pub oversize_cycles: AtomicU32,
     /// Channels linked to the recorder: bit 0..5 = strips 1..6,
-    /// bit 6..10 = buses A1..B2 (see [`crate::recorder::source_id`]).
+    /// bit 6..10 = buses V1..B2 (see [`crate::recorder::source_id`]).
     pub rec_links: AtomicU16,
     /// The audio server's sample rate, 0 = not known yet. The backend sets
     /// it once the server runs the mixer, and again whenever it changes.
@@ -743,6 +760,20 @@ mod tests {
 
     const N: usize = 128;
 
+    #[test]
+    fn new_and_old_bus_names() {
+        for (i, (v, a)) in BUS_IDS.iter().zip(LEGACY_BUS_IDS).enumerate() {
+            assert_eq!(bus_index(v), Some(i));
+            assert_eq!(bus_index(a), Some(i));
+            assert_eq!(bus_index(&v.to_ascii_lowercase()), Some(i));
+        }
+        assert_eq!(bus_index(" v2 "), Some(1));
+        assert_eq!(BUS_IDS, ["V1", "V2", "V3", "B1", "B2"]);
+        for bad in ["", "A4", "V0", "B3", "1", "V1,B1"] {
+            assert_eq!(bus_index(bad), None, "{bad}");
+        }
+    }
+
     struct Rig {
         eng: Engine,
         out: Vec<Vec<f32>>, // 10 channels
@@ -876,7 +907,7 @@ mod tests {
     fn routing_is_per_bus() {
         let (mut rig, sh) = Rig::new();
         sh.strips[0].routes.store(0b01000, Relaxed); // B1 only
-        sh.strips[1].routes.store(0b00001, Relaxed); // A1 only
+        sh.strips[1].routes.store(0b00001, Relaxed); // V1 only
         rig.run(N, |_, _, _| 0.0);
         rig.run(N, |s, _, _| {
             if s == 0 {
@@ -961,8 +992,8 @@ mod tests {
         // sanitize() lets a huge but finite sample through; a +24 dB shelf
         // then pushes it past f32::MAX (issue #67)
         let (mut rig, sh) = Rig::new();
-        sh.strips[0].routes.store(1, Relaxed); // A1
-        sh.buses[0].routes.store(1 << 3, Relaxed); // A1 sends to B1
+        sh.strips[0].routes.store(1, Relaxed); // V1
+        sh.buses[0].routes.store(1 << 3, Relaxed); // V1 sends to B1
         let mut bands = crate::eq::DEFAULT_BANDS;
         bands[0].gain_db = crate::eq::MAX_GAIN_DB; // low shelf: +24 dB down to DC
         for ch in [0, NUM_STRIPS] {
@@ -1178,9 +1209,9 @@ mod tests {
     fn a_bus_feeds_another_after_its_fader_in_the_same_cycle() {
         let (mut rig, sh) = Rig::new();
         sh.strips[0].routes.store(0b01000, Relaxed); // strip 1 -> B1
-        sh.strips[1].routes.store(0b00001, Relaxed); // strip 2 -> A1
+        sh.strips[1].routes.store(0b00001, Relaxed); // strip 2 -> V1
         sh.buses[3].gain_db.store(-6.0); // B1 fader
-        sh.buses[3].routes.store(0b00001, Relaxed); // B1 -> A1
+        sh.buses[3].routes.store(0b00001, Relaxed); // B1 -> V1
         rig.run(N, |_, _, _| 0.0);
         rig.run(N, |_, _, _| 0.0);
         rig.run(N, |s, _, i| {
@@ -1200,7 +1231,7 @@ mod tests {
         for c in 0..2 {
             for (i, &x) in rig.bus(0, c).iter().enumerate() {
                 let want = if i == 37 { 0.25 + 0.5 * g } else { 0.0 };
-                assert!(approx(x, want), "A1 ch {c} frame {i}: {x}");
+                assert!(approx(x, want), "V1 ch {c} frame {i}: {x}");
             }
             assert!(approx(rig.bus(3, c)[37], 0.5 * g));
         }
@@ -1220,12 +1251,12 @@ mod tests {
         sh.buses[3].mute.store(false, Relaxed);
         sh.buses[0].gain_db.store(0.0);
         sh.buses[3].routes.store(0, Relaxed);
-        sh.buses[4].routes.store(0b00100, Relaxed); // B2 -> A3
-        sh.buses[2].routes.store(0b00010, Relaxed); // A3 -> A2
+        sh.buses[4].routes.store(0b00100, Relaxed); // B2 -> V3
+        sh.buses[2].routes.store(0b00010, Relaxed); // V3 -> V2
         sh.strips[2].routes.store(0b10000, Relaxed); // strip 3 -> B2
         rig.run(N, |s, _, _| if s == 2 { 0.1 } else { 0.0 });
         rig.run(N, |s, _, _| if s == 2 { 0.1 } else { 0.0 });
-        assert!(rig.bus(1, 1).iter().all(|&x| approx(x, 0.1)), "B2 -> A3 -> A2");
+        assert!(rig.bus(1, 1).iter().all(|&x| approx(x, 0.1)), "B2 -> V3 -> V2");
         assert!(rig.bus(2, 0).iter().all(|&x| approx(x, 0.1)));
         assert!(rig.bus(0, 0).iter().all(|&x| x == 0.0), "the B1 send ramped out");
     }
@@ -1233,25 +1264,25 @@ mod tests {
     #[test]
     fn bus_sends_never_make_a_loop() {
         let sh = Shared::new();
-        sh.buses[0].routes.store(0b01000, Relaxed); // A1 -> B1
+        sh.buses[0].routes.store(0b01000, Relaxed); // V1 -> B1
         sh.buses[3].routes.store(0b10000, Relaxed); // B1 -> B2
-        assert!(sh.send_loops(4, 0), "B2 -> A1 would close A1 -> B1 -> B2 -> A1");
+        assert!(sh.send_loops(4, 0), "B2 -> V1 would close V1 -> B1 -> B2 -> V1");
         assert!(sh.send_loops(3, 3), "a bus into itself");
-        assert!(!sh.send_loops(0, 4), "A1 -> B2 is a shortcut, not a loop");
+        assert!(!sh.send_loops(0, 4), "V1 -> B2 is a shortcut, not a loop");
         assert!(!sh.send_loops(1, 0));
         assert_eq!(reach(&sh.bus_routes(), 0), 0b11001);
         // even if a loop is asked for (two changes racing), the engine keeps
         // it open: no feedback, everything stays finite
         let (mut rig, sh) = Rig::new();
         sh.strips[0].routes.store(0b00001, Relaxed);
-        sh.buses[0].routes.store(0b01000, Relaxed); // A1 -> B1
-        sh.buses[3].routes.store(0b00001, Relaxed); // B1 -> A1 (loop)
+        sh.buses[0].routes.store(0b01000, Relaxed); // V1 -> B1
+        sh.buses[3].routes.store(0b00001, Relaxed); // B1 -> V1 (loop)
         sh.buses[0].routes.fetch_or(1, Relaxed); // its own bit is ignored
         for _ in 0..50 {
             rig.run(N, |s, _, _| if s == 0 { 0.5 } else { 0.0 });
         }
-        assert!(rig.bus(0, 0).iter().all(|&x| approx(x, 0.5)), "A1 gets strip 1 once");
-        assert!(rig.bus(3, 0).iter().all(|&x| approx(x, 0.5)), "B1 gets A1");
+        assert!(rig.bus(0, 0).iter().all(|&x| approx(x, 0.5)), "V1 gets strip 1 once");
+        assert!(rig.bus(3, 0).iter().all(|&x| approx(x, 0.5)), "B1 gets V1");
         // turning the first send off lets the other one in, a cycle later
         sh.buses[0].routes.store(0, Relaxed);
         for _ in 0..3 {
@@ -1259,7 +1290,7 @@ mod tests {
         }
         assert!(rig.bus(3, 0).iter().all(|&x| x == 0.0));
         assert!(rig.bus(0, 0).iter().all(|&x| approx(x, 0.5)));
-        sh.strips[0].routes.store(0b01000, Relaxed); // strip 1 -> B1 -> A1
+        sh.strips[0].routes.store(0b01000, Relaxed); // strip 1 -> B1 -> V1
         for _ in 0..3 {
             rig.run(N, |s, _, _| if s == 0 { 0.5 } else { 0.0 });
         }
@@ -1269,7 +1300,7 @@ mod tests {
     #[test]
     fn bus_graph_orders_feeders_first_and_keeps_ramping_sends() {
         let none = [0u8; NUM_BUSES];
-        let (g, order) = bus_graph(&[0, 0, 0, 0b00001, 0b01000], &none); // B1 -> A1, B2 -> B1
+        let (g, order) = bus_graph(&[0, 0, 0, 0b00001, 0b01000], &none); // B1 -> V1, B2 -> B1
         assert_eq!(g, [0, 0, 0, 0b00001, 0b01000]);
         let pos = |b: usize| order.iter().position(|&x| x == b).unwrap();
         assert!(pos(4) < pos(3) && pos(3) < pos(0));

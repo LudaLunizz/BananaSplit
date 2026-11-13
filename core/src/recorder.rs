@@ -3,7 +3,7 @@
 //! Every channel can be *linked* to the recorder, using the same numbering as
 //! the rest of BananaSplit: strips `1`..`6` (tapped post-fader: after gain, mute,
 //! solo and mono, i.e. exactly what the strip sends to the buses) and buses
-//! `A1`..`B2` (tapped post-master: exactly what leaves the bus).
+//! `V1`..`B2` (tapped post-master: exactly what leaves the bus).
 //!
 //! Two modes:
 //! * **mix**: all linked channels are summed (unity gain) into one stereo
@@ -61,7 +61,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// Strips 1..6 followed by buses A1..B2.
+/// Strips 1..6 followed by buses V1..B2.
 pub const NUM_SOURCES: usize = NUM_STRIPS + NUM_BUSES;
 /// Bit mask with every source linked.
 pub const ALL_LINKS: u16 = (1 << NUM_SOURCES) - 1;
@@ -91,22 +91,31 @@ const CHUNK_FRAMES: usize = 4096;
 // Source ids and settings
 // ---------------------------------------------------------------------------
 
-/// Short id of a recorder source: `"1"`..`"6"` for strips, `"A1"`..`"B2"` for buses.
+/// Short id of a recorder source: `"1"`..`"6"` for strips, `"V1"`..`"B2"` for buses.
 pub fn source_id(i: usize) -> &'static str {
-    const IDS: [&str; NUM_SOURCES] = ["1", "2", "3", "4", "5", "6", "A1", "A2", "A3", "B1", "B2"];
+    const IDS: [&str; NUM_SOURCES] = ["1", "2", "3", "4", "5", "6", "V1", "V2", "V3", "B1", "B2"];
     IDS.get(i).copied().unwrap_or("?")
 }
 
-/// Parse `"1, 3, A1, B2"` (or `"none"` / empty) into a link mask.
+/// The source an id stands for, also with the bus names up to 2.8.24
+/// (`A1`..`A3` for V1..V3), as in older configs and older takes' file names.
+pub fn source_index(id: &str) -> Option<usize> {
+    let id = id.trim();
+    (0..crate::engine::NUM_STRIPS)
+        .find(|&i| source_id(i) == id)
+        .or_else(|| crate::engine::bus_index(id).map(|b| crate::engine::NUM_STRIPS + b))
+}
+
+/// Parse `"1, 3, V1, B2"` (or `"none"` / empty; `A1`..`A3` too) into a link mask.
 pub fn parse_links(v: &str) -> Result<u16, String> {
     let mut mask = 0u16;
     for tok in v.split(',').map(str::trim).filter(|t| !t.is_empty()) {
         if tok.eq_ignore_ascii_case("none") {
             continue;
         }
-        match (0..NUM_SOURCES).position(|i| source_id(i).eq_ignore_ascii_case(tok)) {
+        match source_index(tok) {
             Some(i) => mask |= 1 << i,
-            None => return Err(format!("unknown recorder source {tok:?} (expected 1-6, A1, A2, A3, B1, B2)")),
+            None => return Err(format!("unknown recorder source {tok:?} (expected 1-6, V1, V2, V3, B1, B2)")),
         }
     }
     Ok(mask)
@@ -278,7 +287,7 @@ pub fn expand_home(v: &str) -> PathBuf {
     PathBuf::from(v)
 }
 
-/// File-name label of a source: `"1-Mic"`, `"A1-Speakers"`.
+/// File-name label of a source: `"1-Mic"`, `"V1-Speakers"` (`"A1-…"` up to 2.8.24).
 pub fn source_label(i: usize, name: &str) -> String {
     let mut clean = String::new();
     for c in name.trim().chars() {
@@ -2003,11 +2012,13 @@ mod tests {
 
     #[test]
     fn links_parse_and_format() {
-        assert_eq!(parse_links("1, a1 ,B2").unwrap(), 0b100_0100_0001);
+        assert_eq!(parse_links("1, a1 ,B2").unwrap(), 0b100_0100_0001, "the names up to 2.8.24");
+        assert_eq!(parse_links("1, v1 ,B2").unwrap(), 0b100_0100_0001);
+        assert_eq!(source_index("A3"), source_index("V3"));
         assert_eq!(parse_links("none").unwrap(), 0);
         assert_eq!(parse_links("").unwrap(), 0);
         assert_eq!(format_links(0), "none");
-        assert_eq!(format_links(ALL_LINKS), "1,2,3,4,5,6,A1,A2,A3,B1,B2");
+        assert_eq!(format_links(ALL_LINKS), "1,2,3,4,5,6,V1,V2,V3,B1,B2");
         assert_eq!(parse_links(&format_links(0b101_0010_0110)).unwrap(), 0b101_0010_0110);
         assert!(parse_links("7").unwrap_err().contains("\"7\""));
         assert!(parse_links("C1").is_err());
@@ -2019,7 +2030,7 @@ mod tests {
     #[test]
     fn labels_and_settings() {
         assert_eq!(source_label(0, "Mic"), "1-Mic");
-        assert_eq!(source_label(6, "My Speakers / L+R"), "A1-My_Speakers_L_R");
+        assert_eq!(source_label(6, "My Speakers / L+R"), "V1-My_Speakers_L_R");
         assert_eq!(source_label(10, "  "), "B2");
         // never `_part<n>` at the end: that is how a take's later parts end
         assert_eq!(source_label(0, "Guitar part2"), "1-Guitar-part2");
@@ -2472,7 +2483,7 @@ mod tests {
         );
         let files = rec.start(sh.rec_links.load(Relaxed), &names, "T").unwrap();
         assert_eq!(files.len(), 2);
-        assert!(files[0].ends_with("T_1-Mic.wav") && files[1].ends_with("T_A1-Speakers.wav"));
+        assert!(files[0].ends_with("T_1-Mic.wav") && files[1].ends_with("T_V1-Speakers.wav"));
         for cycle in 0..10 {
             run(&mut eng, cycle == 4);
         }
@@ -2915,7 +2926,7 @@ mod tests {
             Settings { folder: dir.display().to_string(), mode: Mode::Multi, ..Settings::default() },
         );
         let files = rec.start(sh.rec_links.load(Relaxed), &names, "T").unwrap();
-        assert!(files[0].ends_with("T_1-Mic.mp3") && files[1].ends_with("T_A1-Speakers.mp3"), "{files:?}");
+        assert!(files[0].ends_with("T_1-Mic.mp3") && files[1].ends_with("T_V1-Speakers.mp3"), "{files:?}");
         for cycle in 0..200 {
             run(&mut eng, cycle == 77);
         }

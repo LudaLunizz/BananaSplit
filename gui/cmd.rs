@@ -612,7 +612,7 @@ mod tests {
         assert_eq!(
             p("op=route&ch=6&bus=0&v=1"),
             Ok(Cmd::Route { ch: 6, bus: 0, on: true }),
-            "A1 feeding A1 is for apply to refuse"
+            "V1 feeding V1 is for apply to refuse"
         );
     }
 

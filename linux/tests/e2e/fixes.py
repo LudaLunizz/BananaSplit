@@ -168,15 +168,22 @@ def conn(d, ch):
     return d["ch"][ch]["conn"]
 
 
+# The default setup up to 2.8.24, written with the old bus names (still read):
+# the first bus (V1, then A1) on the default output, B2 on nothing. From
+# 2.8.25 a new config has B2 on the default output instead; these phases are
+# about following the default, so they keep the old setup.
+OLD_A1 = "[bus.A1]\nconnect = @default\n[bus.B2]\nconnect =\n"
+
+
 # ---- the desktop's default device ----------------------------------------
-m = Mixer(PACTL_MORE_DEVICES="1")
+m = Mixer(ini=OLD_A1, PACTL_MORE_DEVICES="1")
 try:
     YETI_OUT, YETI_IN = "Yeti Stereo Microphone Analog Stereo-63", "Yeti Stereo Microphone Analog Stereo"
-    m.until(lambda d: conn(d, 6) == [YETI_OUT] and conn(d, 0) == [YETI_IN], "A1 plays on the default output, strip 1 takes the default input")
+    m.until(lambda d: conn(d, 6) == [YETI_OUT] and conn(d, 0) == [YETI_IN], "V1 plays on the default output, strip 1 takes the default input")
     m.pactl("set-default-sink", "alsa_output.pci-0000_00_1f.3.analog-stereo")
     m.pactl("set-default-source", "alsa_input.pci-0000_00_1f.3.analog-stereo")
     m.until(lambda d: conn(d, 6) == ["system"] and conn(d, 0) == ["system"],
-            "a new default output and input: A1 and strip 1 move there at once, the old devices are let go")
+            "a new default output and input: V1 and strip 1 move there at once, the old devices are let go")
     st, _ = m.post(op="reconnect")
     time.sleep(0.6)
     d = m.get("/api/devices")
@@ -189,14 +196,14 @@ try:
     m.until(lambda d: sorted(conn(d, 6)) == sorted([YETI_OUT, "system"]), "a device ticked in the menu stays when the default moves on")
     st, _ = m.post(op="dev", ch=6, client=YETI_OUT, v=0)
     m.until(lambda d: conn(d, 6) == ["system"] and "^Yeti" not in " ".join(d["ch"][6]["connect"]) and "@default" in d["ch"][6]["connect"],
-            "unticking the Yeti drops its line; A1 still follows the default (system)")
+            "unticking the Yeti drops its line; V1 still follows the default (system)")
     # The README's own setup: the desktop's default output is strip 3's
-    # cable. A1 stays on the device it had, not on @physical's first device.
+    # cable. V1 stays on the device it had, not on @physical's first device.
     m.pactl("set-default-sink", "bananasplit_in3")
     time.sleep(1.5)
     d = m.get("/api/devices")
     s = m.get("/api/state")
-    check(conn(d, 6) == ["system"], f"the default output is BananaSplit's own cable: A1 stays on system ({conn(d, 6)})")
+    check(conn(d, 6) == ["system"], f"the default output is BananaSplit's own cable: V1 stays on system ({conn(d, 6)})")
     check("staying with \"system\"" in s["status"], f"and says so: {s['status']}")
     # the default input off in the menu: what it connected goes too
     st, _ = m.post(op="devdefault", ch=0, v=0)
@@ -206,63 +213,63 @@ finally:
 
 # ---- staying with a device: only while it is there, and not once unticked ----
 hide = tempfile.mktemp(prefix="bs-hide-")
-m = Mixer(PACTL_MORE_DEVICES="1", MOCKJACK_HIDE_FILE=hide)
+m = Mixer(ini=OLD_A1, PACTL_MORE_DEVICES="1", MOCKJACK_HIDE_FILE=hide)
 try:
-    m.until(lambda d: conn(d, 6) == [YETI_OUT], "A1 on the default output")
+    m.until(lambda d: conn(d, 6) == [YETI_OUT], "V1 on the default output")
     m.pactl("set-default-sink", "alsa_output.pci-0000_00_1f.3.analog-stereo")
-    m.until(lambda d: conn(d, 6) == ["system"], "A1 follows it to system")
+    m.until(lambda d: conn(d, 6) == ["system"], "V1 follows it to system")
     m.pactl("set-default-sink", "bananasplit_in3")
-    m.until(lambda s: "staying with \"system\"" in s["status"], "the default output is strip 3's cable: A1 stays with system",
+    m.until(lambda s: "staying with \"system\"" in s["status"], "the default output is strip 3's cable: V1 stays with system",
             path="/api/state")
     with open(hide, "w") as f:
         f.write("system\n")  # unplugged
-    m.until(lambda d: conn(d, 6) == [YETI_OUT], "system unplugged: A1 takes the other output instead of nothing")
+    m.until(lambda d: conn(d, 6) == [YETI_OUT], "system unplugged: V1 takes the other output instead of nothing")
     with open(hide, "w") as f:
         f.write("")  # plugged in again
-    m.until(lambda d: conn(d, 6) == ["system"], "plugged in again: A1 goes back to system (and lets the other output go)")
+    m.until(lambda d: conn(d, 6) == ["system"], "plugged in again: V1 goes back to system (and lets the other output go)")
 finally:
     check(m.stop() == 0, "quit cleanly")
-m = Mixer(PACTL_MORE_DEVICES="1")
+m = Mixer(ini=OLD_A1, PACTL_MORE_DEVICES="1")
 try:
-    m.until(lambda d: conn(d, 6) == [YETI_OUT], "A1 on the default output")
+    m.until(lambda d: conn(d, 6) == [YETI_OUT], "V1 on the default output")
     m.pactl("set-default-sink", "alsa_output.pci-0000_00_1f.3.analog-stereo")
-    m.until(lambda d: conn(d, 6) == ["system"], "A1 follows it to system")
+    m.until(lambda d: conn(d, 6) == ["system"], "V1 follows it to system")
     m.pactl("set-default-sink", "bananasplit_in3")
-    m.until(lambda s: "staying with \"system\"" in s["status"], "A1 stays with system", path="/api/state")
+    m.until(lambda s: "staying with \"system\"" in s["status"], "V1 stays with system", path="/api/state")
     st, msg = m.post(op="dev", ch=6, client="system", v=0)
-    check(st == 200, f"untick system in A1's menu while A1 stays with it: {msg}")
+    check(st == 200, f"untick system in V1's menu while V1 stays with it: {msg}")
     m.post(op="reconnect")
     time.sleep(1.0)
     d = m.get("/api/devices")
     check(conn(d, 6) == [] and "@default" not in d["ch"][6]["connect"],
           f"it stays off after the next pass (the @default line that kept it goes): {conn(d, 6)} {d['ch'][6]['connect']}")
     st, msg = m.post(op="devdefault", ch=6, v=1)
-    m.until(lambda d: conn(d, 6) == [YETI_OUT], "Default output on again: A1 takes a fallback")
+    m.until(lambda d: conn(d, 6) == [YETI_OUT], "Default output on again: V1 takes a fallback")
 finally:
     check(m.stop() == 0, "quit cleanly")
-m = Mixer(PACTL_MORE_DEVICES="1")
+m = Mixer(ini=OLD_A1, PACTL_MORE_DEVICES="1")
 try:
-    m.until(lambda d: conn(d, 6) == [YETI_OUT], "A1 on the default output")
+    m.until(lambda d: conn(d, 6) == [YETI_OUT], "V1 on the default output")
     m.pactl("set-default-sink", "alsa_output.pci-0000_00_1f.3.analog-stereo")
-    m.until(lambda d: conn(d, 6) == ["system"], "A1 follows it to system")
+    m.until(lambda d: conn(d, 6) == ["system"], "V1 follows it to system")
     m.pactl("set-default-sink", "bananasplit_in3")
-    m.until(lambda s: "staying with \"system\"" in s["status"], "A1 stays with system", path="/api/state")
+    m.until(lambda s: "staying with \"system\"" in s["status"], "V1 stays with system", path="/api/state")
     m.post(op="dev", ch=6, client="system", v=0)
     m.post(op="devdefault", ch=6, v=1)  # at once, before any other pass
     d = m.until(lambda d: conn(d, 6) == [YETI_OUT], "unticked, then Default output on at once: a fallback, not the device just unticked")
 finally:
     check(m.stop() == 0, "quit cleanly")
-m = Mixer(ini="[bus.A1]\nconnect = @physical\n", PACTL_MORE_DEVICES="1")
+m = Mixer(ini="[bus.A1]\nconnect = @physical\n[bus.B2]\nconnect =\n", PACTL_MORE_DEVICES="1")
 try:
-    m.until(lambda d: conn(d, 6) == [YETI_OUT], "A1 (@physical) on the default output, a physical one")
+    m.until(lambda d: conn(d, 6) == [YETI_OUT], "V1 (@physical) on the default output, a physical one")
     m.pactl("set-default-sink", "alsa_output.pci-0000_00_1f.3.analog-stereo")
-    m.until(lambda d: conn(d, 6) == ["system"], "A1 (@physical) follows the default to system")
+    m.until(lambda d: conn(d, 6) == ["system"], "V1 (@physical) follows the default to system")
     m.pactl("set-default-sink", "bananasplit_in3")
     time.sleep(1.2)
     m.post(op="reconnect")
     time.sleep(1.0)
     check(conn(m.get("/api/devices"), 6) == ["system"],
-          f"the default is strip 3's cable: A1 stays with system, not the first device listed: {conn(m.get('/api/devices'), 6)}")
+          f"the default is strip 3's cable: V1 stays with system, not the first device listed: {conn(m.get('/api/devices'), 6)}")
 finally:
     check(m.stop() == 0, "quit cleanly")
 
@@ -473,15 +480,15 @@ m = Mixer(ini=f"[strip4]\nconnect = ^{YETI}-71:\n[strip5]\nconnect = ^system-1:\
              "[bus.A3]\nconnect = ^system:\n[bus.B2]\nconnect = ^system-71:\n")
 try:
     # saved when the Yeti's output was "-71"; now it is "-63"
-    m.until(lambda d: conn(d, 7) == [f"{YETI}-63"], "A2 finds the Yeti's output under its new number")
+    m.until(lambda d: conn(d, 7) == [f"{YETI}-63"], "V2 finds the Yeti's output under its new number")
     d = m.get("/api/devices")
     check(conn(d, 3) == [], f"strip 4: two fit (the Yeti's mic, and what its output plays), so no guess: {conn(d, 3)}")
     check(f'PipeWire numbers JACK names that are taken twice, and now "{YETI}" and "{YETI}-63" are there' in m.stderr(),
           "and says which two")
     check(conn(d, 4) == [], f"strip 5: \"system-1\" is a name of its own, not system renumbered: {conn(d, 4)}")
-    check(conn(d, 8) == ["system"] and conn(d, 10) == [], f"B2's \"system-71\" does not take A3's \"system\": A3 {conn(d, 8)}, B2 {conn(d, 10)}")
+    check(conn(d, 8) == ["system"] and conn(d, 10) == [], f"B2's \"system-71\" does not take V3's \"system\": V3 {conn(d, 8)}, B2 {conn(d, 10)}")
     st, msg = m.post(op="dev", ch=7, client=f"{YETI}-63", v=0)
-    d = m.until(lambda d: conn(d, 7) == [] and d["ch"][7]["connect"] == [], "unticking it in A2's menu removes the old line too")
+    d = m.until(lambda d: conn(d, 7) == [] and d["ch"][7]["connect"] == [], "unticking it in V2's menu removes the old line too")
 finally:
     check(m.stop() == 0, "quit cleanly")
 # two microphones of the same model: PipeWire numbers the second one
@@ -575,8 +582,8 @@ finally:
 check(rc == 1, f"the audio server shut down: BananaSplit stops (exit code {rc})")
 check("server shut down; your settings are saved" in m.stderr(), "and says the settings are saved")
 check("gain_db = -9.5" in m.section("strip3"), "a fader moved before is saved")
-check("cable = on" in m.section("bus.A1"), "a cable switched on is saved")
-check("routes = A1" in m.section("bus.B1"), "a bus send is saved")
+check("cable = on" in m.section("bus.V1"), "a cable switched on is saved")
+check("routes = V1" in m.section("bus.B1"), "a bus send is saved")
 
 print("FIXES " + ("FAIL: " + "; ".join(failed) if failed else "PASS"))
 sys.exit(1 if failed else 0)

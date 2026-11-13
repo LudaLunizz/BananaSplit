@@ -21,7 +21,7 @@
 
 ## Features
 
-- **6 input strips, 5 buses.** A1–A3 play on speakers and headphones, B1–B2 act as virtual microphones. Any bus can be an output, a virtual mic, or both, and buses can feed each other.
+- **6 input strips, 5 buses.** V1–V3 are mixes in between, B1 is the mic out (a virtual microphone for Discord, OBS, …) and B2 the system out on your default output. Any bus can play on a device, be a virtual mic, or both, and buses can feed each other (an input into V1, V1 into B2 but not B1: you hear it, the stream doesn’t). V1–V3 were called A1–A3 up to 2.8.24; those names are still read.
 - **Per-channel menus** to pick devices, apps and a virtual cable for every channel.
 - **Input gain, pan and a 6-band EQ** on every channel, with mute, solo and mono, and a **gate and compressor** on every input strip.
 - **VBAN network audio**, compatible with Voicemeeter.

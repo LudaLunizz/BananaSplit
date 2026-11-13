@@ -1025,7 +1025,7 @@ impl<'a> Resolver<'a> {
         for side in [Side::Strip, Side::Bus] {
             let head = match side {
                 Side::Strip => "\nFor a strip, [strip1] … [strip6] (ports that send audio):",
-                Side::Bus => "\nFor a bus, [bus.A1] … [bus.B2] (ports that take audio):",
+                Side::Bus => "\nFor a bus, [bus.V1] … [bus.B2] (ports that take audio):",
             };
             let _ = writeln!(o, "{head}");
             let physical = self.ports(None, side.flag() | PORT_IS_PHYSICAL);

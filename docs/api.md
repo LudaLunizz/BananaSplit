@@ -81,9 +81,9 @@ number.
 
 | | |
 |---|---|
-| `ch` | A channel, `0` to `10`: `0` to `5` are the input strips 1 to 6, `6` to `10` the buses A1, A2, A3, B1, B2. |
+| `ch` | A channel, `0` to `10`: `0` to `5` are the input strips 1 to 6, `6` to `10` the buses V1, V2, V3, B1, B2 (V1 to V3 were called A1 to A3 up to 2.8.24). |
 | flag (`v`, `on`) | `1`, `true` or `on`; `0`, `false` or `off`. |
-| `bus` | A bus, `0` to `4` (A1 to B2). |
+| `bus` | A bus, `0` to `4` (V1 to B2). |
 
 **Levels and routing**
 
@@ -135,7 +135,7 @@ number.
 | `vban` | `v` flag | VBAN on or off. | `VBAN on` / `VBAN off` |
 | `vbanport` | `v` | The UDP port to listen on, 1 to 65535. | `VBAN listens on UDP port 6980` |
 | `vbanin` | `slot` (`0` to `7`), any of `name` (1 to 16 printable ASCII characters, no space at either end), `from` (an IPv4 address, `any`, or empty), `strip` (`1` to `6`: the strip it plays into), `buffer` (ms, 0 to 200), `on` flag | One incoming stream. | `ok` |
-| `vbanout` | `slot` (`0` to `7`), any of `name`, `to` (an IPv4 address, or empty), `port`, `src` (`1` to `6`, `A1` to `B2`), `format` (`int16`, `int24`, `int32`, `float32`), `channels` (`1` or `2`), `on` flag | One outgoing stream. | `ok` |
+| `vbanout` | `slot` (`0` to `7`), any of `name`, `to` (an IPv4 address, or empty), `port`, `src` (`1` to `6`, `V1` to `B2`; the old `A1` to `A3` are accepted too), `format` (`int16`, `int24`, `int32`, `float32`), `channels` (`1` or `2`), `on` flag | One outgoing stream. | `ok` |
 
 **Player**
 
@@ -184,7 +184,7 @@ times a second while there is something to show). It is one JSON object:
 | `ch` | The 11 channels, below. |
 | `rec` | The recorder: `on`, `takeMode` (`mix` or `multi`: how the current take is recorded), the settings `mode`, `format`, `kbps`, `sr`, `folder` (as written) and `path` (expanded), the running take's `secs`, `quiet` (seconds in which nothing audible was recorded), `dropped` (frames lost to a full buffer, filled with silence), `clipped` (samples louder than full scale that were clipped), `tracks`, `files` (the files being written), `error` and `note` (text or `null`). |
 | `vban` | `on`, `port`, `ips` (this computer's addresses: `if`, `ip`, `bc` broadcast), `listening` (the port actually bound, or `null`), `error`, `in` (8 streams: `on`, `name`, `from`, `strip` (0 to 5), `buffer`, `state` (`off`, `blocked`, `waiting`, `receiving`), `text`, `lost`, `dropouts`, `ppm`), `out` (8 streams: `on`, `name`, `to`, `port`, `src` (0 to 10), `format`, `channels`, `state` (`off`, `blocked`, `sending`), `text`, `packets`, `errors`), `seen` (streams heard on the port: `name`, `from`, `sr`, `ch`, `format`). |
-| `player` | `state` (`stopped`, `playing`, `paused`), `take` (key or `null`), `pos`, `dur` (seconds), `underruns`, `error`. `playTo`: the buses it feeds, a bit mask (bit 0 = A1 ... bit 4 = B2). |
+| `player` | `state` (`stopped`, `playing`, `paused`), `take` (key or `null`), `pos`, `dur` (seconds), `underruns`, `error`. `playTo`: the buses it feeds, a bit mask (bit 0 = V1 ... bit 4 = B2). |
 | `takes` | `rev` (goes up when the list changes), `count`, `newest` (key or `null`). The list itself is `GET /api/takes`. |
 | `disk` | `total` and `free` bytes where recordings go, or `null`. |
 | `scene`, `scenes` | The current scene's name (empty: none) and the saved scenes. |
@@ -195,9 +195,9 @@ A channel in `ch`:
 
 | Field | |
 |---|---|
-| `id` | `1` to `6`, `A1`, `A2`, `A3`, `B1`, `B2`. `name` is its name; `strip` is `true` for an input strip. |
+| `id` | `1` to `6`, `V1`, `V2`, `V3`, `B1`, `B2` (until 2.8.24: `A1`, `A2`, `A3`). `name` is its name; `strip` is `true` for an input strip. |
 | `gain`, `trim`, `pan` | dB, dB, -1 to 1. `mute`, `mono`; `link`: it is recorded; `solo` (strips only). |
-| `routes` | A bit mask over the buses (bit 0 = A1 ... bit 4 = B2): the buses a strip feeds, or a bus sends to. |
+| `routes` | A bit mask over the buses (bit 0 = V1 ... bit 4 = B2): the buses a strip feeds, or a bus sends to. |
 | `m`, `mi` | Output and input level `[left, right]` in dB (about -60: silence). |
 | `conn` | What it is connected to, as text. `dev` is what the menu button says. `cable`: it has a virtual cable. |
 | `eq` | `on`, and `b`: six bands, each `[on (0 or 1), type, Hz, dB, Q]`. |
@@ -263,7 +263,7 @@ curl -sN localhost:$P/api/events                                   # the state a
 
 curl -s -H "$H" --data 'op=gain&ch=0&v=-6' localhost:$P/api/cmd    # strip 1 to -6 dB   -> -6.0 dB
 curl -s -H "$H" --data 'op=mute&ch=3&v=1'  localhost:$P/api/cmd    # strip 4 muted      -> ok
-curl -s -H "$H" --data 'op=route&ch=6&bus=3&v=1' localhost:$P/api/cmd   # A1 sends to B1
+curl -s -H "$H" --data 'op=route&ch=6&bus=3&v=1' localhost:$P/api/cmd   # V1 sends to B1
 curl -s -H "$H" --data 'op=link&ch=0&v=1' localhost:$P/api/cmd && \
 curl -s -H "$H" --data 'op=rec&v=1' localhost:$P/api/cmd           # record strip 1
 curl -s -H "$H" --data 'op=scene&name=Live&act=load' localhost:$P/api/cmd

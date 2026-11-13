@@ -6,9 +6,9 @@ devices, and Discord, Firefox and OBS as apps), drives the menus over HTTP
 exactly like the page does, and checks what BananaSplit asks the sound
 server to do and what it saves:
 
-* a cable switched on and off on A1 (a hardware bus by default) while it runs;
+* a cable switched on and off on V1 (no cable by default) while it runs;
 * an app moved into strip 3's cable and back to the default output;
-* a recording app given A1's mix (A1's cable is switched on for it);
+* a recording app given V1's mix (V1's cable is switched on for it);
 * a cable switched off: PipeWire's move of its apps shows in the menu;
 * every cable removed on quit, and `cable =` saved.
 
@@ -106,22 +106,22 @@ try:
     d = until(lambda d: len(d["play"]) == 2 and len(d["rec"]) == 1, "the menus list the apps that play and record")
     check(d["pulse"] and d["cables"]["ok"], "apps and cables are available")
     check([c["cable"]["on"] for c in d["ch"]] == [True] * 6 + [False] * 3 + [True] * 2, "which channels have a cable")
-    check(d["ch"][6]["cable"]["name"] == "BananaSplit-Out-A1", "A1's cable would be BananaSplit-Out-A1")
+    check(d["ch"][6]["cable"]["name"] == "BananaSplit-Out-V1", "V1's cable would be BananaSplit-Out-V1")
     labels = [c["label"] for c in d["strip"] if c["kind"] == "device"]
     check("Yeti Stereo Microphone Analog Stereo" in labels and "Razer Kiyo Analog Stereo" in labels, f"input devices: {labels}")
     check(not any(c["client"].startswith("BananaSplit-") for c in d["strip"] + d["bus"]), "BananaSplit's own cables are not offered as devices")
     check(any(c["default"] for c in d["strip"]), "the default input is marked")
 
-    # A1, a hardware bus, becomes a virtual microphone as well
+    # V1 (no cable by default) becomes a virtual microphone as well
     st, msg = post(op="cable", ch=6, v=1)
-    check(st == 200 and "BananaSplit-Out-A1" in msg, f"A1's cable on: {msg}")
-    check(re.search(r"load-module module-null-sink sink_name=bananasplit_out_a1 .*node.description=BananaSplit-Out-A1 media.class=Audio/Source/Virtual", pactl_log()) is not None,
-          "A1's cable is a virtual microphone")
-    d = until(lambda d: d["ch"][6]["cable"]["on"], "the menu shows A1's cable on")
+    check(st == 200 and "BananaSplit-Out-V1" in msg, f"V1's cable on: {msg}")
+    check(re.search(r"load-module module-null-sink sink_name=bananasplit_out_a1 .*node.description=BananaSplit-Out-V1 media.class=Audio/Source/Virtual", pactl_log()) is not None,
+          "V1's cable (node bananasplit_out_a1, the name apps remember) is a virtual microphone")
+    d = until(lambda d: d["ch"][6]["cable"]["on"], "the menu shows V1's cable on")
     until(lambda s: s["ch"][6]["cable"] and s["cables"] == 9, "the mixer counts 9 cables", path="/api/state")
     mod = re.findall(r"^(\d+)\tmodule-null-sink\tsink_name=bananasplit_out_a1", open(log_path + ".modules").read(), re.M)
     st, msg = post(op="cable", ch=6, v=0)
-    check(st == 200 and mod and f"pactl unload-module {mod[0]}" in pactl_log(), f"A1's cable off again: {msg}")
+    check(st == 200 and mod and f"pactl unload-module {mod[0]}" in pactl_log(), f"V1's cable off again: {msg}")
 
     # an app into a strip, and back
     st, msg = post(op="stream", kind="play", id=202, ch=2)
@@ -135,14 +135,14 @@ try:
     st, msg = post(op="stream", kind="play", id=202, ch=7)
     check(st == 400, f"a playing app cannot go into a bus: {msg}")
 
-    # a recording app takes A1's mix: A1 gets its cable for it
+    # a recording app takes V1's mix: V1 gets its cable for it
     st, msg = post(op="stream", kind="rec", id=301, ch=6)
-    check(st == 200 and "OBS now records A1" in msg, f"OBS records A1: {msg}")
-    check("pactl move-source-output 301 bananasplit_out_a1" in pactl_log(), "moved to A1's virtual microphone")
-    d = until(lambda d: d["ch"][6]["cable"]["on"] and stream(d, "rec", 301)["ch"] == 6, "A1's cable is on and OBS records it")
+    check(st == 200 and "OBS now records V1" in msg, f"OBS records V1: {msg}")
+    check("pactl move-source-output 301 bananasplit_out_a1" in pactl_log(), "moved to V1's virtual microphone")
+    d = until(lambda d: d["ch"][6]["cable"]["on"] and stream(d, "rec", 301)["ch"] == 6, "V1's cable is on and OBS records it")
     # switching the cable off: PipeWire moves OBS to the default microphone
     st, msg = post(op="cable", ch=6, v=0)
-    until(lambda d: not d["ch"][6]["cable"]["on"] and stream(d, "rec", 301)["ch"] == -1, "A1's cable off: OBS is back on the default microphone")
+    until(lambda d: not d["ch"][6]["cable"]["on"] and stream(d, "rec", 301)["ch"] == -1, "V1's cable off: OBS is back on the default microphone")
 
     # devices: connect, the config line, disconnect
     st, msg = post(op="dev", ch=0, client="Razer Kiyo Analog Stereo", v=1)
@@ -172,7 +172,7 @@ try:
     s1 = ini.split("[strip1]")[1].split("\n[")[0]
     check("cable = off" in b2, "B2's cable switch is saved")
     check("connect =\n" in s1 and "Razer" not in s1, "strip 1's connections are saved as they were left")
-    check("cable =" not in ini.split("[bus.A1]")[1].split("\n[")[0], "A1 keeps its default (no cable line)")
+    check("cable =" not in ini.split("[bus.V1]")[1].split("\n[")[0], "V1 keeps its default (no cable line)")
 finally:
     if proc.poll() is None:
         proc.kill()

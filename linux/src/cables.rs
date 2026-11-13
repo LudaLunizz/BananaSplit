@@ -43,7 +43,7 @@ use crate::devices::Devices;
 use crate::jack::regex_escape;
 use crate::sys;
 use bananasplit::config::Config;
-use bananasplit::engine::{BUS_IDS, NUM_BUSES, NUM_STRIPS};
+use bananasplit::engine::{BUS_IDS, LEGACY_BUS_IDS, NUM_BUSES, NUM_STRIPS};
 use std::io::{BufRead, Write};
 use std::process::{Child, ChildStdin, Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
@@ -53,7 +53,7 @@ pub const REAPER_FLAG: &str = "--reap-cables";
 /// Last line BananaSplit sends the watchdog on a normal exit.
 const DISARM: &str = "done";
 
-/// Strips 1-6, then buses A1..B2.
+/// Strips 1-6, then buses V1..B2.
 pub const NUM_CHANNELS: usize = NUM_STRIPS + NUM_BUSES;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,7 +89,7 @@ fn sanitize(s: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct CableSet {
     pub strips: Vec<CableSpec>, // NUM_STRIPS
-    pub buses: Vec<CableSpec>,  // NUM_BUSES (A1..B2)
+    pub buses: Vec<CableSpec>,  // NUM_BUSES (V1..B2)
     /// Live cables whose description is not the configured one any more.
     pub older: Vec<CableSpec>,
 }
@@ -129,7 +129,7 @@ impl CableSet {
             .collect();
         let buses = (0..NUM_BUSES)
             .map(|b| CableSpec {
-                node_name: format!("{prefix}_out_{}", BUS_IDS[b].to_ascii_lowercase()),
+                node_name: format!("{prefix}_out_{}", LEGACY_BUS_IDS[b].to_ascii_lowercase()),
                 description: format!("{}-Out-{}", cfg.client_name, BUS_IDS[b]),
                 is_source: true,
                 enabled: cfg.buses[b].cable,
@@ -411,7 +411,7 @@ fn load(c: &CableSpec) -> Result<u32, String> {
 /// Loaded cable modules; unloaded on drop. Modules are found by their
 /// exact `sink_name` whenever one is unloaded, not by the id they had.
 pub struct Cables {
-    /// Per channel (strips 1-6, then A1..B2): the cable it has.
+    /// Per channel (strips 1-6, then V1..B2): the cable it has.
     live: Vec<Option<CableSpec>>,
     /// When BananaSplit last made the channel's cable again.
     remade: Vec<Option<Instant>>,
@@ -646,7 +646,11 @@ mod tests {
         assert_eq!(set.strips[2].description, "BananaSplit-In3-Desk-top--main");
         assert_eq!(set.buses[3].node_name, "bananasplit_out_b1");
         assert_eq!(set.buses[4].description, "BananaSplit-Out-B2");
-        assert_eq!(set.buses[0].description, "BananaSplit-Out-A1");
+        assert_eq!(set.buses[0].description, "BananaSplit-Out-V1");
+        assert_eq!(
+            set.buses[0].node_name, "bananasplit_out_a1",
+            "the node keeps the name apps remember (A1 up to 2.8.24)"
+        );
         assert!(set.buses.iter().all(|b| b.is_source) && set.strips.iter().all(|s| !s.is_source));
         let on: Vec<bool> = set.strips.iter().chain(&set.buses).map(|c| c.enabled).collect();
         assert_eq!(on, [true, true, true, true, true, false, false, true, false, true, true]);
@@ -660,7 +664,8 @@ mod tests {
         }
         assert!(set.owns("bananasplit_out_b1", "whatever"));
         assert!(set.owns("x", "BananaSplit-In1-Mic"));
-        assert!(set.owns("x", "BananaSplit-Out-A1"));
+        assert!(set.owns("x", "BananaSplit-Out-V1"));
+        assert!(set.owns("bananasplit_out_a1", "BananaSplit-Out-A1"), "a cable 2.8.24 made is ours too");
         assert!(!set.owns("alsa_input.usb-Blue", "Yeti Stereo Microphone"));
         // a live cable made before a rename still counts as ours
         let mut cables = Cables::none("test");

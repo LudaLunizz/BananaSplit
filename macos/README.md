@@ -121,5 +121,5 @@ sh packaging/bundle.sh && sh tests/launch/smoke.sh dist/BananaSplit.app
 ## Notes
 
 - The UI talks to the mixer over a loopback-only local connection. macOS can't say which user a local connection belongs to, so another user logged in to the same Mac at the same time could reach it, as on Linux without `/proc`.
-- If a device stops delivering audio, BananaSplit reconnects the devices once by itself; Menu ▸ Reconnect devices does it again. If it is the device the mixer runs on (A1's, normally) and it stops again, the mixer goes on without waiting for it, and that device plays again as soon as it runs.
+- If a device stops delivering audio, BananaSplit reconnects the devices once by itself; Menu ▸ Reconnect devices does it again. If it is the device the mixer runs on (the first bus with a device, normally) and it stops again, the mixer goes on without waiting for it, and that device plays again as soon as it runs.
 - Default routing uses `@default` and `@physical`; change it from the channel menus.

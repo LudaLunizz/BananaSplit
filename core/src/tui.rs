@@ -1,9 +1,9 @@
 //! Terminal control surface (ANSI escape codes, no dependencies).
 //!
 //! ```text
-//!   #  NAME             GAIN  L          R          PEAK M S O E  A1 A2 A3 B1 B2
-//! > 1● Mic             -12.0  ████████·· ███████···  -18 M · O E  A1 A2 A3 B1 B2
-//!  A2  Blue Headphones  +0.0  ████······ ████······  -31 ·   · ·
+//!   #  NAME             GAIN  L          R          PEAK M S O E  V1 V2 V3 B1 B2
+//! > 1● Mic             -12.0  ████████·· ███████···  -18 M · O E  V1 V2 V3 B1 B2
+//!  V2  Blue Headphones  +0.0  ████······ ████······  -31 ·   · ·
 //! ```
 //!
 //! Fits 80 columns with 15-character names; a wider terminal gives the
@@ -389,7 +389,7 @@ impl View {
                     r.fetch_or(1 << to, Relaxed);
                 }
             }
-            // rows are numbered like the recorder sources: strips 1-6, then A1..B2
+            // rows are numbered like the recorder sources: strips 1-6, then V1..B2
             Key::Char(b'c') => sh.toggle_rec_link(self.sel),
             Key::Char(b'e') => {
                 sh.eq(self.sel).on.fetch_xor(true, Relaxed);
@@ -541,7 +541,7 @@ impl View {
         let line_end = "\x1b[0m\x1b[K\n";
         let _ = write!(
             o,
-            "\x1b[2m  #  {:<nw$} {:>6}  {:<mw$} {:<mw$} PEAK M S O E D  A1 A2 A3 B1 B2{line_end}",
+            "\x1b[2m  #  {:<nw$} {:>6}  {:<mw$} {:<mw$} PEAK M S O E D  V1 V2 V3 B1 B2{line_end}",
             "NAME",
             "GAIN",
             "L",
@@ -769,11 +769,11 @@ mod tests {
         v.handle(&sh, Key::Char(b's')); // no solo on buses
         // a bus feeds other buses with 1-5, never itself, never in a loop
         assert!(matches!(v.handle(&sh, Key::Char(b'1')), Action::None));
-        assert_eq!(sh.buses[NUM_BUSES - 1].routes.load(Relaxed), 0b00001, "B2 -> A1");
+        assert_eq!(sh.buses[NUM_BUSES - 1].routes.load(Relaxed), 0b00001, "B2 -> V1");
         assert!(matches!(v.handle(&sh, Key::Char(b'5')), Action::Note(n) if n.contains("itself")));
-        v.sel = NUM_STRIPS; // A1
+        v.sel = NUM_STRIPS; // V1
         assert!(matches!(v.handle(&sh, Key::Char(b'5')), Action::Note(n) if n.contains("loop")));
-        assert_eq!(sh.buses[0].routes.load(Relaxed), 0, "A1 -> B2 would loop");
+        assert_eq!(sh.buses[0].routes.load(Relaxed), 0, "V1 -> B2 would loop");
         v.sel = ROWS - 1;
         v.handle(&sh, Key::Char(b'1'));
         assert_eq!(sh.buses[NUM_BUSES - 1].routes.load(Relaxed), 0, "1 again stops it");
@@ -832,7 +832,7 @@ mod tests {
         assert!(plain.lines().count() < 24, "{} rows", plain.lines().count());
         assert!(plain.contains("● REC"));
         assert!(plain.contains(" 1● Mic"));
-        assert!(plain.contains("A1● Speakers"));
+        assert!(plain.contains("V1● Monitor"));
         assert!(plain.contains('…'));
     }
 
@@ -845,7 +845,7 @@ mod tests {
         sh.strips[1].input_peak[0].push_for_test(0.5);
         sh.strips[1].peak[0].push_for_test(0.0);
         sh.strips[2].peak[0].push_for_test(0.5);
-        sh.buses[3].routes.store(0b00001, Relaxed); // B1 -> A1
+        sh.buses[3].routes.store(0b00001, Relaxed); // B1 -> V1
         v.update_meters(&sh);
         assert!(v.in_meters()[1][0] > -7.0 && v.meters()[1][0] <= FLOOR_DB);
         let info = Info {
@@ -865,8 +865,8 @@ mod tests {
         assert!(row("  2").contains("\x1b[90m█"), "strip 2 is muted: its input, grey");
         assert!(row("  3").contains("\x1b[32m█") && !row("  3").contains("\x1b[90m"), "strip 3 in colour");
         let b1 = strip_ansi(&row(" B1"));
-        assert!(b1.ends_with("A1 A2 A3 ── B2"), "{b1}");
-        assert!(row(" B1").contains("\x1b[42;30mA1"), "B1 feeds A1");
+        assert!(b1.ends_with("V1 V2 V3 ── B2"), "{b1}");
+        assert!(row(" B1").contains("\x1b[42;30mV1"), "B1 feeds V1");
         for line in strip_ansi(&s).lines() {
             assert!(line.chars().count() <= 80, "{} cols: {line}", line.chars().count());
         }
@@ -914,7 +914,7 @@ mod tests {
         let lines = fits(&v.render(&sh, &cfg, &info, &[]), 80);
         assert!(lines.len() < 24, "{} rows", lines.len());
         assert!(lines.last().unwrap().starts_with(" round trip 17.3 ms") && lines.last().unwrap().ends_with('…'));
-        assert!(lines.iter().any(|l| l.starts_with(">A2  Blue Headphones  ")), "{lines:#?}");
+        assert!(lines.iter().any(|l| l.starts_with(">V2  Blue Headphones  ")), "{lines:#?}");
         assert!(lines.iter().any(|l| l == " Blue Headphones → "), "full name of the selected row");
         assert!(lines.iter().any(|l| l.starts_with("  4  Game capture (…  ")), "{lines:#?}");
         assert!(lines.iter().any(|l| l.ends_with('…')), "long status is cut, not wrapped");
@@ -923,7 +923,7 @@ mod tests {
         let hdr = lines.iter().find(|l| l.contains("NAME")).unwrap();
         let row = lines.iter().find(|l| l.starts_with("  1")).unwrap();
         let at = |s: &str, needle: &str| s.find(needle).map(|b| s[..b].chars().count()).unwrap();
-        assert_eq!(at(hdr, "A1 A2"), at(row, "A1 A2"));
+        assert_eq!(at(hdr, "V1 V2"), at(row, "V1 V2"));
         assert_eq!(at(hdr, "M S O"), at(row, "· · O"));
         assert_eq!(at(hdr, "GAIN"), at(row, "+0.0"), "GAIN ends where the value ends");
         assert_eq!(at(hdr, "PEAK"), at(row, "-∞") - 2);
@@ -970,7 +970,7 @@ mod tests {
         let hdr = lines.iter().find(|l| l.contains("NAME")).unwrap();
         let row = lines.iter().find(|l| l.starts_with("> 2")).unwrap();
         let at = |s: &str, needle: &str| s.find(needle).map(|b| s[..b].chars().count()).unwrap();
-        assert_eq!(at(hdr, "D  A1"), at(row, "D  A1"), "\n{hdr}\n{row}");
+        assert_eq!(at(hdr, "D  V1"), at(row, "D  V1"), "\n{hdr}\n{row}");
         // buses have neither
         v.sel = NUM_STRIPS;
         v.handle(&sh, Key::Char(b'g'));
@@ -982,7 +982,7 @@ mod tests {
         let sh = Shared::default();
         let mut cfg = Config::default();
         cfg.buses[1].name = "Blue Headphones".into();
-        let mut v = View { sel: NUM_STRIPS + 1, ..View::default() }; // A2
+        let mut v = View { sel: NUM_STRIPS + 1, ..View::default() }; // V2
         assert!(matches!(v.handle(&sh, Key::Char(b'e')), Action::None));
         assert!(sh.buses[1].eq.on.load(Relaxed), "e switches the row's EQ on");
         v.handle(&sh, Key::Char(b'E'));
@@ -1022,7 +1022,7 @@ mod tests {
         };
         let lines = fits(&v.render(&sh, &cfg, &info, &[]), 80);
         assert!(lines.len() < 24, "{} rows", lines.len());
-        assert!(lines.iter().any(|l| l.contains("EQ  A2 Blue Headphones") && l.contains(" ON ")), "{lines:#?}");
+        assert!(lines.iter().any(|l| l.contains("EQ  V2 Blue Headphones") && l.contains(" ON ")), "{lines:#?}");
         assert!(lines.iter().any(|l| l.contains("1    ●   low shelf      106 Hz    +3.5 dB   0.47")), "{lines:#?}");
         assert!(lines.iter().any(|l| l.contains("2    ○   low shelf      250 Hz")), "{lines:#?}");
         assert!(lines.iter().any(|l| l.contains("10.0 kHz")));
@@ -1063,8 +1063,8 @@ mod tests {
         // back on the mixer: both EQ flags show
         let lines = fits(&v.render(&sh, &cfg, &info, &[]), 80);
         let row = |p: &str| lines.iter().find(|l| l.starts_with(p)).unwrap().clone();
-        assert!(row("> 1").contains("   -∞ · · · E ·  A1"), "{}", row("> 1"));
-        assert!(row(" A2").contains("·   · E"), "{}", row(" A2"));
+        assert!(row("> 1").contains("   -∞ · · · E ·  V1"), "{}", row("> 1"));
+        assert!(row(" V2").contains("·   · E"), "{}", row(" V2"));
         assert!(row("  2").contains("· · · ·"));
     }
 

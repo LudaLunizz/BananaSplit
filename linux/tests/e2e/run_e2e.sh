@@ -103,7 +103,7 @@ fi
 LD_LIBRARY_PATH="$HERE" "$BIN" --gui --no-open --gui-port $PORT --config "$TMP/bananasplit.ini" 2>"$TMP/second.txt" || fail "second --gui failed"
 grep -q "already running" "$TMP/second.txt" || fail "second --gui did not find the running one"
 [ "$(cmd 'op=link&ch=0&v=1')" = 200 ] || fail "link strip 1"
-[ "$(cmd 'op=link&ch=6&v=1')" = 200 ] || fail "link A1"
+[ "$(cmd 'op=link&ch=6&v=1')" = 200 ] || fail "link V1"
 [ "$(cmd "op=recset&mode=multi&format=wav32f&folder=$TMP/rec")" = 200 ] || fail "recorder settings"
 [ "$(cmd 'op=rec&v=1')" = 200 ] || fail "start recording: $(cat "$TMP/resp")"
 # state is republished every UI frame (33 ms): allow a few frames for it to show up
@@ -125,9 +125,10 @@ sleep 0.5
 [ "$(cmd 'op=band&ch=7&band=6&g=1')" = 400 ] || fail "EQ band 7 accepted"
 [ "$(cmd 'op=band&ch=7&band=1&g=99')" = 400 ] || fail "EQ gain 99 accepted"
 [ "$(cmd 'op=vbanin&slot=1&on=1&name=Laptop&from=192.168.1.30&strip=6&buffer=20')" = 200 ] || fail "VBAN in"
+# (src=A1: the name of V1 up to 2.8.24, still accepted; saved as V1)
 [ "$(cmd 'op=vbanout&slot=2&on=1&name=Mix&to=127.0.0.1&port=9&src=A1&format=int24')" = 200 ] || fail "VBAN out"
 [ "$(cmd 'op=vbanout&slot=2&src=C1')" = 400 ] || fail "VBAN source C1 accepted"
-i=0; until curl -s "$URL/api/state" | grep -q '"id":"A2".*"eq":{"on":true,"b":\[\[1,"lowcut",80,0.0,0.71\]'; do
+i=0; until curl -s "$URL/api/state" | grep -q '"id":"V2".*"eq":{"on":true,"b":\[\[1,"lowcut",80,0.0,0.71\]'; do
   i=$((i+1)); [ $i -lt 40 ] || fail "state does not show the EQ"; sleep 0.05
 done
 curl -s "$URL/api/state" | grep -q '"vban":{"on":false,"port":6980,' || fail "state has no VBAN"
@@ -137,16 +138,16 @@ trap - EXIT
 cat "$TMP/stderr.txt"
 [ $RC -eq 0 ] || fail "gui: exit code $RC"
 grep -q "GUI at $URL/" "$TMP/stderr.txt" || fail "GUI URL not printed"
-grep -q "^mode = multi$" "$TMP/bananasplit.ini" && grep -q "^links = 1,A1$" "$TMP/bananasplit.ini" || fail "recorder settings not saved on quit"
-sed -n '/^\[bus.A2\]$/,/^\[/p' "$TMP/bananasplit.ini" | grep -q "^eq = on$" || fail "EQ on not saved"
+grep -q "^mode = multi$" "$TMP/bananasplit.ini" && grep -q "^links = 1,V1$" "$TMP/bananasplit.ini" || fail "recorder settings not saved on quit"
+sed -n '/^\[bus.V2\]$/,/^\[/p' "$TMP/bananasplit.ini" | grep -q "^eq = on$" || fail "EQ on not saved"
 grep -q "^eq1 = lowcut 80 +0 0.71$" "$TMP/bananasplit.ini" && grep -q "^eq4 = bell 1500 -4.5 1$" "$TMP/bananasplit.ini" || fail "EQ bands not saved"
 sed -n '/^\[vban.in2\]$/,/^$/p' "$TMP/bananasplit.ini" | tr '\n' ' ' | grep -q "on = true name = Laptop from = 192.168.1.30 strip = 6 buffer_ms = 20" || fail "VBAN in not saved"
-sed -n '/^\[vban.out3\]$/,/^$/p' "$TMP/bananasplit.ini" | tr '\n' ' ' | grep -q "on = true name = Mix to = 127.0.0.1 port = 9 source = A1 format = int24 channels = 2" || fail "VBAN out not saved"
+sed -n '/^\[vban.out3\]$/,/^$/p' "$TMP/bananasplit.ini" | tr '\n' ' ' | grep -q "on = true name = Mix to = 127.0.0.1 port = 9 source = V1 format = int24 channels = 2" || fail "VBAN out not saved"
 grep -q "^enabled = false$" "$TMP/bananasplit.ini" || fail "VBAN switched itself on"
 # takes go into a folder per day, named like the start of their files
 DAY=$(ls "$TMP"/rec)
 [ "$(printf '%s\n' "$DAY" | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')" -eq 1 ] && [ -d "$TMP/rec/$DAY" ] || fail "expected one day folder: $DAY"
-F1=$(ls "$TMP/rec/$DAY"/"$DAY"_*_1-Mic.wav); FA=$(ls "$TMP/rec/$DAY"/"$DAY"_*_A1-Speakers.wav)
+F1=$(ls "$TMP/rec/$DAY"/"$DAY"_*_1-Mic.wav); FA=$(ls "$TMP/rec/$DAY"/"$DAY"_*_V1-Monitor.wav)  # V1 takes the new default name (e2e.ini names no bus)
 [ "$(ls "$TMP/rec/$DAY" | wc -l)" -eq 2 ] || fail "expected exactly 2 tracks: $(ls "$TMP/rec/$DAY")"
 SZ=$(stat -c %s "$F1")
 [ "$SZ" = "$(stat -c %s "$FA")" ] || fail "tracks differ in length"
@@ -158,8 +159,8 @@ S1=$(nz "$F1"); SA=$(nz "$FA")
 K=$(echo "$S1" | head -1 | cut -d' ' -f1)
 [ -n "$K" ] && [ $((K % 2)) -eq 0 ] || fail "strip 1 track has no impulse: $S1"
 [ "$S1" = "$(printf '%d 0.500000\n%d 0.250000' "$K" $((K + 1)))" ] || fail "strip 1 track: $S1"
-[ "$SA" = "$(printf '%d 0.625000\n%d 0.312500' "$K" $((K + 1)))" ] || fail "A1 track: $SA"
-echo "E2E PASS: GUI drove the recorder; strip 1 and A1 tracks hold the impulse on the same frame ($((K / 2)))"
+[ "$SA" = "$(printf '%d 0.625000\n%d 0.312500' "$K" $((K + 1)))" ] || fail "V1 track: $SA"
+echo "E2E PASS: GUI drove the recorder; strip 1 and V1 tracks hold the impulse on the same frame ($((K / 2)))"
 rm -rf "$TMP"
 
 # ---- phase 4: the review fixes (v2.3) ----

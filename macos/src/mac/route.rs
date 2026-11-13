@@ -54,7 +54,7 @@ pub fn names_cable(pattern: &str) -> bool {
 
 /// Software devices and cables. Never picked for `@physical`: if the
 /// system's default output is BlackHole (so all desktop audio goes through
-/// the mixer), A1 must still go to real speakers.
+/// the mixer), V1 must still go to real speakers.
 pub fn is_virtual(d: &DevInfo) -> bool {
     d.virt || is_cable(&d.name)
 }
@@ -63,7 +63,7 @@ pub fn is_virtual(d: &DevInfo) -> bool {
 /// not use it. BananaSplit records the cables and plays into them, so
 /// following such a default would feed the mixer into itself. That happens
 /// with two everyday setups: the default output set to BlackHole (all
-/// desktop sound through the mixer: A1 would play into the cable a strip
+/// desktop sound through the mixer: V1 would play into the cable a strip
 /// records), and the default input set to BlackHole (the virtual mic for
 /// every app: the Mic strip would record what B1 plays into it).
 pub fn default_cable<'a>(devs: &'a [DevInfo], default_id: Option<&str>) -> Option<&'a DevInfo> {
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn default_never_follows_macos_into_a_cable() {
         let outs = devs(&["BlackHole 2ch", "MacBook Pro Speakers", "External Headphones"]);
-        // default output BlackHole (desktop sound through the mixer): A1
+        // default output BlackHole (desktop sound through the mixer): V1
         // plays on the speakers, not into the cable a strip records
         assert_eq!(resolve(DEFAULT_DEVICE, &outs, Some("uid0")).unwrap().id, "uid1");
         assert_eq!(default_cable(&outs, Some("uid0")).unwrap().id, "uid0");
@@ -276,12 +276,12 @@ mod tests {
         buses[0] = vec![0];
         buses[3] = vec![2];
         assert!(cable_feedback(&caps, &rens, &strips, &buses).is_empty());
-        // A1 plays into BlackHole 2ch as well
+        // V1 plays into BlackHole 2ch as well
         buses[0] = vec![0, 1];
         assert_eq!(
             cable_feedback(&caps, &rens, &strips, &buses),
             [
-                "bus A1 plays into BlackHole 2ch and strip 2 records that cable: if strip 2 goes to A1 (directly or through a send), it feeds back"
+                "bus V1 plays into BlackHole 2ch and strip 2 records that cable: if strip 2 goes to V1 (directly or through a send), it feeds back"
             ]
         );
         // a real device on both sides is no cable

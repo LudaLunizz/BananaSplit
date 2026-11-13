@@ -3,7 +3,7 @@
 //! ```text
 //!  input device ─IOProc─ring─┐                          ┌─ring─IOProc─ output device (other bus devices)
 //!  input device ─IOProc─ring─┤→ MASTER IOProc: Engine ──┤
-//!  input device ─IOProc─ring─┘   (on the A1 device's    └───────────── master device (written directly)
+//!  input device ─IOProc─ring─┘   (on the V1 device's    └───────────── master device (written directly)
 //!                                 IO thread)
 //! ```
 //!
@@ -12,7 +12,7 @@
 //! real-time IO thread with the device's audio in the device's own format:
 //! 32-bit floats at the rate the device runs at. As on Windows, every device
 //! has a clock of its own: the mixer runs at 48 kHz in the IOProc of the
-//! first bus device (normally A1), like JACK's process callback on Linux,
+//! first bus device (normally V1), like JACK's process callback on Linux,
 //! and every other device is connected through a lock-free ring read by a
 //! drift-correcting resampler (`bananasplit::ring::Reader`), which also
 //! converts between the device's rate and the mixer's. A master device that

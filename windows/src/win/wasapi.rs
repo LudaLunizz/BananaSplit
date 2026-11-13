@@ -3,7 +3,7 @@
 //! ```text
 //!  capture thread ─ring─┐                         ┌─ring─ sink thread  (other bus devices)
 //!  capture thread ─ring─┤→ MASTER thread: Engine ─┤
-//!  capture thread ─ring─┘   (clocked by the A1    └────── master device (written directly)
+//!  capture thread ─ring─┘   (clocked by the V1    └────── master device (written directly)
 //!                            device's events)
 //! ```
 //!
@@ -13,7 +13,7 @@
 //! as many times as needed.
 //!
 //! Each Windows device has its own clock, so unlike JACK there is no single
-//! graph clock. The mixer is clocked by the first bus device (normally A1),
+//! graph clock. The mixer is clocked by the first bus device (normally V1),
 //! and every other device is connected through a lock-free ring read by a
 //! drift-correcting resampler (`bananasplit::ring`). Audio threads use MMCSS
 //! "Pro Audio" priority and never allocate, lock or block once running.
