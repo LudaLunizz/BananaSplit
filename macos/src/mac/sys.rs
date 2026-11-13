@@ -95,11 +95,15 @@ fn tcp_list() -> Option<Vec<u8>> {
 }
 
 /// Is the program at the other end of this loopback connection (`peer`,
-/// coming in at `us`) run by the user BananaSplit runs as? Yes when the
-/// kernel's socket list can't be read at all, as on Windows.
+/// coming in at `us`) run by the user BananaSplit runs as? No when the
+/// kernel's socket list can't be read: the connection is refused (up to
+/// 2.8.24 it was let in, review note M2).
 pub fn same_user(peer: std::net::SocketAddr, us: std::net::SocketAddr) -> bool {
     use std::net::SocketAddr::V4;
-    let Some(list) = tcp_list() else { return true };
+    let Some(list) = tcp_list() else {
+        crate::gui::peer::list_unreadable("the kernel's TCP list (net.inet.tcp.pcblist_n)");
+        return false;
+    };
     let (V4(peer), V4(us)) = (peer, us) else { return false };
     // its end of the connection: local = peer, remote = us
     crate::gui::peer::pcblist::owner(&list, peer, us) == Some(uid())

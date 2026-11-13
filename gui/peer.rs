@@ -6,6 +6,18 @@
 //! Each reader is compiled for the system that uses it, and under `cargo test`
 //! on every system: the Linux build tests the Windows and macOS readers too.
 
+/// The system's list of connections could not be read, so whose program is
+/// at the other end of a connection is unknown. That answer is "not ours":
+/// the page and the API are refused rather than opened to every user of this
+/// computer. Said once on stderr, so the reason can be found.
+pub fn list_unreadable(what: &str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SAID: AtomicBool = AtomicBool::new(false);
+    if !SAID.swap(true, Ordering::Relaxed) {
+        eprintln!("bananasplit: can't read {what}, so the page and the API refuse every connection");
+    }
+}
+
 /// Linux: `/proc/net/tcp` and `tcp6`.
 #[cfg(any(target_os = "linux", test))]
 pub mod proc_net_tcp {
