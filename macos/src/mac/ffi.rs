@@ -82,6 +82,14 @@ unsafe extern "C" {
     static AVMediaTypeAudio: *const c_void;
 }
 
+// libSystem (always linked): libproc.h.
+unsafe extern "C" {
+    fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
+}
+
+/// `PROC_PIDPATHINFO_MAXSIZE` (sys/proc_info.h: 4 * MAXPATHLEN).
+const PID_PATH_MAX: usize = 4096;
+
 #[link(name = "objc")]
 unsafe extern "C" {
     fn objc_getClass(name: *const c_char) -> *mut c_void;
@@ -389,4 +397,57 @@ pub fn no_app_nap() {
         objc_autoreleasePoolPop(pool);
         CFRelease(reason);
     }
+}
+
+/// The running macOS version (major, minor); None if it can't be read.
+pub fn os_version() -> Option<(u32, u32)> {
+    bananasplit::pure::parse_os_version(&crate::sys::os_product_version()?)
+}
+
+/// The executable of a process, or None (it ended, or isn't ours to see).
+pub fn pid_path(pid: i32) -> Option<String> {
+    let mut buf = vec![0u8; PID_PATH_MAX];
+    // SAFETY: `buf` has room for PID_PATH_MAX bytes; it returns the length
+    // written (not counting the NUL), or 0 or less on failure.
+    let n = unsafe { proc_pidpath(pid, buf.as_mut_ptr().cast(), PID_PATH_MAX as u32) };
+    if n <= 0 {
+        return None;
+    }
+    buf.truncate((n as usize).min(PID_PATH_MAX));
+    String::from_utf8(buf).ok()
+}
+
+/// One process that Core Audio knows (it opened audio).
+pub struct AudioProcess {
+    pub pid: i32,
+    pub bundle_id: Option<String>,
+    /// It runs IO with an output stream now.
+    pub playing: bool,
+    pub path: Option<String>,
+}
+
+/// Every process Core Audio lists, read only (no tap, nothing started).
+/// Empty below macOS 14.2, where the list doesn't exist, or when it can't
+/// be read.
+pub fn audio_processes() -> Vec<AudioProcess> {
+    let (need_major, need_minor) = bananasplit::pure::PROCESS_LIST_OS;
+    match os_version() {
+        Some((major, minor)) if bananasplit::pure::os_at_least(need_major, need_minor, major, minor) => {}
+        _ => return Vec::new(),
+    }
+    hal_on_its_own_thread();
+    let g = kAudioObjectPropertyScopeGlobal;
+    let ids = get_vec::<AudioObjectID>(kAudioObjectSystemObject, kAudioHardwarePropertyProcessObjectList, g)
+        .unwrap_or_default();
+    ids.into_iter()
+        .filter_map(|p| {
+            let pid = get::<i32>(p, kAudioProcessPropertyPID, g)?;
+            Some(AudioProcess {
+                pid,
+                bundle_id: get_string(p, kAudioProcessPropertyBundleID, g).filter(|b| !b.is_empty()),
+                playing: get::<u32>(p, kAudioProcessPropertyIsRunningOutput, g).is_some_and(|v| v != 0),
+                path: pid_path(pid),
+            })
+        })
+        .collect()
 }

@@ -77,6 +77,16 @@ pub const kAudioHardwarePropertyDevices: u32 = 0x6465_7623; // 'dev#'
 pub const kAudioHardwarePropertyDefaultInputDevice: u32 = 0x6449_6e20; // 'dIn '
 pub const kAudioHardwarePropertyDefaultOutputDevice: u32 = 0x644f_7574; // 'dOut'
 pub const kAudioHardwarePropertyRunLoop: u32 = 0x726e_6c70; // 'rnlp'
+/// The process objects (macOS 14.2 and later), an array of AudioObjectIDs.
+pub const kAudioHardwarePropertyProcessObjectList: u32 = 0x7072_7323; // 'prs#'
+
+// Properties of process objects (macOS 14.2 and later).
+/// A `pid_t`.
+pub const kAudioProcessPropertyPID: u32 = 0x7070_6964; // 'ppid'
+/// A CFString the caller releases.
+pub const kAudioProcessPropertyBundleID: u32 = 0x7062_6964; // 'pbid'
+/// A UInt32: 1 while the process runs IO with at least one output stream.
+pub const kAudioProcessPropertyIsRunningOutput: u32 = 0x7069_726f; // 'piro'
 
 // Properties of devices and streams.
 pub const kAudioObjectPropertyName: u32 = 0x6c6e_616d; // 'lnam'
@@ -400,6 +410,10 @@ mod tests {
         assert_eq!(kAudioHardwarePropertyDefaultInputDevice, code(b"dIn "));
         assert_eq!(kAudioHardwarePropertyDefaultOutputDevice, code(b"dOut"));
         assert_eq!(kAudioHardwarePropertyRunLoop, code(b"rnlp"));
+        assert_eq!(kAudioHardwarePropertyProcessObjectList, code(b"prs#"));
+        assert_eq!(kAudioProcessPropertyPID, code(b"ppid"));
+        assert_eq!(kAudioProcessPropertyBundleID, code(b"pbid"));
+        assert_eq!(kAudioProcessPropertyIsRunningOutput, code(b"piro"));
         assert_eq!(kAudioObjectPropertyName, code(b"lnam"));
         assert_eq!(kAudioDevicePropertyDeviceUID, code(b"uid "));
         assert_eq!(kAudioDevicePropertyStreamConfiguration, code(b"slay"));

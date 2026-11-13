@@ -137,7 +137,19 @@ pub fn status() -> Result<String, String> {
         })
         .collect();
     let (def_out, def_in) = (coreaudio::default_uid(false), coreaudio::default_uid(true));
-    Ok(bananasplit::pure::status_report(&devs, def_out.as_deref(), def_in.as_deref()))
+    let mut report = bananasplit::pure::status_report(&devs, def_out.as_deref(), def_in.as_deref());
+    // The apps that use audio (macOS 14.2 and later; nothing below that).
+    // A process whose path can't be read is named by its bundle ID.
+    let procs = ffi::audio_processes();
+    let list: Vec<(u32, String)> = procs
+        .iter()
+        .map(|p| (p.pid as u32, p.path.clone().or_else(|| p.bundle_id.clone()).unwrap_or_default()))
+        .collect();
+    let groups = bananasplit::pure::group_by_app(&list);
+    report.push_str(&bananasplit::pure::audio_app_lines(&groups, |pid| {
+        procs.iter().any(|p| p.pid as u32 == pid && p.playing)
+    }));
+    Ok(report)
 }
 
 pub struct Session {

@@ -66,6 +66,24 @@ pub fn process_exists(pid: u32) -> bool {
     pid > 0 && (unsafe { kill(pid, 0) } == 0 || std::io::Error::last_os_error().raw_os_error() == Some(EPERM))
 }
 
+/// The macOS version as text ("14.2.1", `kern.osproductversion`), or
+/// None if it can't be read.
+pub fn os_product_version() -> Option<String> {
+    let mut buf = [0u8; 32];
+    let mut len = buf.len();
+    // SAFETY: a NUL-terminated name; `buf` has room for `len` bytes, and the
+    // kernel writes at most that and sets `len` to what it wrote.
+    let st = unsafe {
+        sysctlbyname(c"kern.osproductversion".as_ptr(), buf.as_mut_ptr().cast(), &mut len, std::ptr::null(), 0)
+    };
+    if st != 0 {
+        return None;
+    }
+    let text = &buf[..len.min(buf.len())];
+    let text = &text[..text.iter().position(|&b| b == 0).unwrap_or(text.len())];
+    String::from_utf8(text.to_vec()).ok()
+}
+
 /// The kernel's list of TCP sockets (`net.inet.tcp.pcblist_n`, see
 /// `gui::peer::pcblist`), or None if it can't be read.
 fn tcp_list() -> Option<Vec<u8>> {

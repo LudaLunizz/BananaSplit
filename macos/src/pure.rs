@@ -216,6 +216,93 @@ impl Backoff {
     }
 }
 
+/// Is the running macOS (`have_major.have_minor`) at least
+/// `major.minor`?
+pub fn os_at_least(major: u32, minor: u32, have_major: u32, have_minor: u32) -> bool {
+    (have_major, have_minor) >= (major, minor)
+}
+
+/// "14.2.1" (the `kern.osproductversion` text) as (14, 2); a missing
+/// minor is 0. None if it doesn't start with a number.
+pub fn parse_os_version(text: &str) -> Option<(u32, u32)> {
+    let mut parts = text.trim().split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = match parts.next() {
+        Some(m) => m.parse().ok()?,
+        None => 0,
+    };
+    Some((major, minor))
+}
+
+/// The macOS version the Core Audio process list needs (its properties
+/// came with macOS 14.2).
+pub const PROCESS_LIST_OS: (u32, u32) = (14, 2);
+
+/// Processes that belong to one app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppGroup {
+    /// The app's name ("Google Chrome" for ".../Google Chrome.app"), or
+    /// the executable path of a process that is in no app bundle.
+    pub name: String,
+    /// The outermost app bundle's path, or the executable path.
+    pub key: String,
+    pub pids: Vec<u32>,
+}
+
+/// The outermost app bundle in a path: everything up to and including the
+/// first path component that ends in ".app" and has a "/" after it.
+fn outermost_bundle(path: &str) -> Option<&str> {
+    let mut end = 0;
+    for comp in path.split('/') {
+        end += comp.len();
+        let is_app = comp.len() > 4 && comp.to_ascii_lowercase().ends_with(".app");
+        if is_app && path[end..].starts_with('/') {
+            return Some(&path[..end]);
+        }
+        end += 1; // the '/'
+    }
+    None
+}
+
+/// Group processes (pid, executable path) under the outermost ".app"
+/// bundle their executable is in, so a browser's or an Electron app's
+/// helper processes ("Google Chrome.app/Contents/Frameworks/.../Google
+/// Chrome Helper.app/...") count as the app itself. A process in no bundle
+/// is a group of its own, keyed by its path; one without a path by its
+/// pid. Groups are in order of name (then key); pids in the order given.
+pub fn group_by_app(processes: &[(u32, String)]) -> Vec<AppGroup> {
+    let mut groups: Vec<AppGroup> = Vec::new();
+    for (pid, path) in processes {
+        let (key, name) = match outermost_bundle(path) {
+            Some(b) => {
+                let file = b.rsplit('/').next().unwrap_or(b);
+                (b.to_string(), file[..file.len() - 4].to_string())
+            }
+            None if path.is_empty() => (format!("pid {pid}"), format!("pid {pid}")),
+            None => (path.clone(), path.clone()),
+        };
+        match groups.iter_mut().find(|g| g.key == key) {
+            Some(g) => g.pids.push(*pid),
+            None => groups.push(AppGroup { name, key, pids: vec![*pid] }),
+        }
+    }
+    groups.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.key.cmp(&b.key)));
+    groups
+}
+
+/// The `--status` lines for the apps that use audio: "audio app: <name>
+/// (<n> processes, playing|idle)", playing when any of its processes plays
+/// (`playing(pid)`). Empty for no groups.
+pub fn audio_app_lines(groups: &[AppGroup], playing: impl Fn(u32) -> bool) -> String {
+    let mut s = String::new();
+    for g in groups {
+        let n = g.pids.len();
+        let what = if g.pids.iter().any(|&p| playing(p)) { "playing" } else { "idle" };
+        let _ = writeln!(s, "audio app: {} ({n} {}, {what})", g.name, if n == 1 { "process" } else { "processes" });
+    }
+    s
+}
+
 /// One device for `--status`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusDevice {
@@ -625,6 +712,143 @@ mod tests {
         b.reset();
         assert_eq!(b, Backoff::default());
         assert_eq!(b.next_delay(), Duration::from_secs(1));
+    }
+
+    // ---- os_at_least, parse_os_version
+    #[test]
+    fn os_at_least_compares_major_then_minor() {
+        assert!(os_at_least(14, 2, 14, 2));
+        assert!(os_at_least(14, 2, 14, 5));
+        assert!(os_at_least(14, 2, 15, 0));
+        assert!(!os_at_least(14, 2, 14, 1));
+        assert!(!os_at_least(14, 2, 13, 9));
+        assert!(os_at_least(14, 2, 26, 0));
+    }
+
+    #[test]
+    fn parse_os_version_texts() {
+        assert_eq!(parse_os_version("14.2.1"), Some((14, 2)));
+        assert_eq!(parse_os_version("15.0"), Some((15, 0)));
+        assert_eq!(parse_os_version("26\n"), Some((26, 0)));
+        assert_eq!(parse_os_version(""), None);
+        assert_eq!(parse_os_version("x.1"), None);
+        assert_eq!(parse_os_version("14.beta"), None);
+    }
+
+    // ---- group_by_app, audio_app_lines
+    fn procs(v: &[(u32, &str)]) -> Vec<(u32, String)> {
+        v.iter().map(|&(p, s)| (p, s.to_string())).collect()
+    }
+
+    fn names(g: &[AppGroup]) -> Vec<(&str, Vec<u32>)> {
+        g.iter().map(|g| (g.name.as_str(), g.pids.clone())).collect()
+    }
+
+    #[test]
+    fn group_plain_app() {
+        let g = group_by_app(&procs(&[(10, "/Applications/Music.app/Contents/MacOS/Music")]));
+        assert_eq!(names(&g), [("Music", vec![10])]);
+        assert_eq!(g[0].key, "/Applications/Music.app");
+    }
+
+    #[test]
+    fn group_nested_helpers_under_the_outermost_app() {
+        let g = group_by_app(&procs(&[
+            (1, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            (
+                2,
+                "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/1/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)",
+            ),
+            (
+                3,
+                "/Applications/Google Chrome.app/Contents/Frameworks/x/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper",
+            ),
+        ]));
+        assert_eq!(names(&g), [("Google Chrome", vec![1, 2, 3])]);
+    }
+
+    #[test]
+    fn group_electron_helper_alone_still_names_the_app() {
+        let g = group_by_app(&procs(&[(
+            7,
+            "/Applications/Discord.app/Contents/Frameworks/Discord Helper (Renderer).app/Contents/MacOS/Discord Helper (Renderer)",
+        )]));
+        assert_eq!(names(&g), [("Discord", vec![7])]);
+    }
+
+    #[test]
+    fn group_sibling_with_a_shared_name_prefix_is_separate() {
+        let g = group_by_app(&procs(&[
+            (1, "/Applications/Foo.app/Contents/MacOS/Foo"),
+            (2, "/Applications/Foo.app2/Contents/MacOS/Foo"),
+            (3, "/Applications/Foo.application/bin/foo"),
+            (4, "/Applications/Foo Pro.app/Contents/MacOS/Foo Pro"),
+        ]));
+        assert_eq!(
+            names(&g),
+            [
+                ("/Applications/Foo.app2/Contents/MacOS/Foo", vec![2]),
+                ("/Applications/Foo.application/bin/foo", vec![3]),
+                ("Foo", vec![1]),
+                ("Foo Pro", vec![4]),
+            ]
+        );
+    }
+
+    #[test]
+    fn group_no_bundle_is_its_own_group_by_path() {
+        let g =
+            group_by_app(&procs(&[(5, "/usr/sbin/coreaudiod"), (6, "/usr/sbin/coreaudiod"), (8, "/usr/bin/afplay")]));
+        assert_eq!(names(&g), [("/usr/bin/afplay", vec![8]), ("/usr/sbin/coreaudiod", vec![5, 6])]);
+    }
+
+    #[test]
+    fn group_needs_a_slash_after_app() {
+        // a path that ends in ".app" is not inside a bundle; ".app" alone is no name
+        let g = group_by_app(&procs(&[(1, "/tmp/odd.app"), (2, "/x/.app/bin")]));
+        assert_eq!(names(&g), [("/tmp/odd.app", vec![1]), ("/x/.app/bin", vec![2])]);
+    }
+
+    #[test]
+    fn group_same_name_in_two_places_stays_apart_in_stable_order() {
+        let g = group_by_app(&procs(&[
+            (2, "/Users/me/Applications/Zoom.app/Contents/MacOS/zoom"),
+            (1, "/Applications/Zoom.app/Contents/MacOS/zoom"),
+        ]));
+        assert_eq!(g.len(), 2);
+        assert_eq!(
+            (g[0].key.as_str(), g[1].key.as_str()),
+            ("/Applications/Zoom.app", "/Users/me/Applications/Zoom.app")
+        );
+    }
+
+    #[test]
+    fn group_bundle_suffix_case_and_unknown_path() {
+        let g = group_by_app(&procs(&[(3, "/Applications/Old.APP/Contents/MacOS/old"), (9, "")]));
+        assert_eq!(names(&g), [("Old", vec![3]), ("pid 9", vec![9])]);
+    }
+
+    #[test]
+    fn group_empty_list() {
+        assert!(group_by_app(&[]).is_empty());
+        assert_eq!(audio_app_lines(&[], |_| true), "");
+    }
+
+    #[test]
+    fn audio_app_lines_playing_when_any_process_plays() {
+        let g = group_by_app(&procs(&[
+            (1, "/Applications/Safari.app/Contents/MacOS/Safari"),
+            (2, "/System/Library/Frameworks/WebKit.framework/x/com.apple.WebKit.GPU"),
+            (4, "/Applications/Music.app/Contents/MacOS/Music"),
+            (5, "/Applications/Music.app/Contents/XPCServices/x.xpc/Contents/MacOS/x"),
+        ]));
+        let s = audio_app_lines(&g, |p| p == 5);
+        assert_eq!(
+            s,
+            "audio app: /System/Library/Frameworks/WebKit.framework/x/com.apple.WebKit.GPU (1 process, idle)\n\
+             audio app: Music (2 processes, playing)\n\
+             audio app: Safari (1 process, idle)\n"
+        );
     }
 
     // ---- status_report
