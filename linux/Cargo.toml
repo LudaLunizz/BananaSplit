@@ -5,6 +5,7 @@ edition = "2024"
 description = "6-strip, 5-bus low-latency virtual audio mixer for Linux (JACK / PipeWire) as a desktop app, with EQ, a recorder and player, scenes and Voicemeeter-compatible VBAN"
 license = "GPL-3.0-or-later"
 rust-version = "1.88"
+publish = false
 
 # Intentionally no outside dependencies (only the shared core in ../core): libjack is loaded at runtime with dlopen,
 # so the same binary works with JACK2 and with PipeWire's libjack.

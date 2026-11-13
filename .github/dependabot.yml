@@ -19,3 +19,17 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
+
+  # core and linux have no outside dependencies today; these entries keep
+  # their lockfiles watched if that ever changes (issue #115).
+  - package-ecosystem: cargo
+    directory: /core
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: cargo
+    directory: /linux
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5

@@ -1,0 +1,44 @@
+# cargo-deny settings for all four crates (core, linux, windows, macos).
+# CI runs `cargo deny check` in each crate folder with this file
+# (`--config ../deny.toml`). Issue #115.
+
+[graph]
+all-features = true
+
+[advisories]
+# Known vulnerabilities fail the build; unmaintained crates are reported for
+# every dependency, direct or not. Add an `ignore` entry only with a reason.
+unmaintained = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# BananaSplit is GPL-3.0-or-later: every dependency's licence must be one
+# that can be combined with it.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "GPL-3.0-or-later",
+]
+confidence-threshold = 0.9
+private = { ignore = true }  # our own crates (publish = false)
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io; no git dependencies.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

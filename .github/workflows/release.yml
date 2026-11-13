@@ -25,12 +25,12 @@ jobs:
       run:
         working-directory: linux
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TAG }}
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, toolchain stable
 
       - name: Check tag matches crate version
         run: |
@@ -43,7 +43,7 @@ jobs:
       - name: Build and check packages
         run: sh packaging/build-packages.sh
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-linux
           path: linux/dist/*
@@ -56,7 +56,7 @@ jobs:
       run:
         working-directory: linux
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TAG }}
           fetch-depth: 0
@@ -67,7 +67,7 @@ jobs:
       - name: Build and check the Flatpak
         run: sh packaging/build-flatpak.sh
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-flatpak
           path: linux/dist/*.flatpak
@@ -81,11 +81,11 @@ jobs:
         working-directory: windows
         shell: pwsh
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TAG }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, toolchain stable
         with:
           targets: x86_64-pc-windows-msvc
 
@@ -114,7 +114,7 @@ jobs:
           Compress-Archive -Path "$stage/*" -DestinationPath "dist/$name.zip" -Force
           Copy-Item target/x86_64-pc-windows-msvc/release/bananasplit.exe "dist/bananasplit-$version-windows-x64.exe"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-windows
           path: windows/dist/*
@@ -127,11 +127,11 @@ jobs:
       run:
         working-directory: macos
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TAG }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, toolchain stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
@@ -160,7 +160,7 @@ jobs:
           esac
           test -f "dist/bananasplit-$version-macos.zip"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-macos
           path: macos/dist/bananasplit-*-macos.zip
@@ -175,7 +175,7 @@ jobs:
     needs: [linux, flatpak, windows, macos]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*
           path: dist
@@ -185,7 +185,7 @@ jobs:
         working-directory: dist
         run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bananasplit-${{ env.TAG }}
           path: dist/*
