@@ -66,6 +66,18 @@ unsafe extern "C" {
     pub fn AudioDeviceDestroyIOProcID(device: AudioObjectID, id: IoProcId) -> OSStatus;
     pub fn AudioDeviceStart(device: AudioObjectID, id: IoProcId) -> OSStatus;
     pub fn AudioDeviceStop(device: AudioObjectID, id: IoProcId) -> OSStatus;
+    fn AudioObjectAddPropertyListener(
+        object: AudioObjectID,
+        address: *const AudioObjectPropertyAddress,
+        listener: ListenerProc,
+        client: *mut c_void,
+    ) -> OSStatus;
+    fn AudioObjectRemovePropertyListener(
+        object: AudioObjectID,
+        address: *const AudioObjectPropertyAddress,
+        listener: ListenerProc,
+        client: *mut c_void,
+    ) -> OSStatus;
     /// `inDescription` is a `CATapDescription *` (macOS 14.2).
     fn AudioHardwareCreateProcessTap(description: *mut c_void, out_tap: *mut AudioObjectID) -> OSStatus;
     fn AudioHardwareDestroyProcessTap(tap: AudioObjectID) -> OSStatus;
@@ -652,4 +664,62 @@ pub fn destroy_aggregate(device: AudioObjectID) {
     // SAFETY: an aggregate this process created; destroyed once (its
     // owner's Drop).
     unsafe { AudioHardwareDestroyAggregateDevice(device) };
+}
+
+/// An `AudioObjectPropertyListenerProc`.
+type ListenerProc =
+    unsafe extern "C" fn(AudioObjectID, u32, *const AudioObjectPropertyAddress, *mut c_void) -> OSStatus;
+
+/// Called by the HAL on its own notification thread: only sets the flag
+/// (no allocation, no lock, no logging).
+unsafe extern "C" fn set_flag(
+    _: AudioObjectID,
+    _: u32,
+    _: *const AudioObjectPropertyAddress,
+    client: *mut c_void,
+) -> OSStatus {
+    // SAFETY: `client` is the `&'static AtomicBool` the Listener registered.
+    unsafe { &*client.cast::<std::sync::atomic::AtomicBool>() }.store(true, std::sync::atomic::Ordering::SeqCst);
+    0
+}
+
+/// A property listener on a Core Audio object that sets `flag` whenever
+/// the property changes. Registered on creation, removed on drop.
+///
+/// Never drop a Listener from inside its own callback (or from code the
+/// callback waits for): removing a listener waits for its callback to
+/// return, so it would wait for itself. The callback here only stores a
+/// flag, and the handles live as long as the app.
+pub struct Listener {
+    object: AudioObjectID,
+    address: AudioObjectPropertyAddress,
+    flag: &'static std::sync::atomic::AtomicBool,
+}
+
+impl Listener {
+    /// Listen to `selector` (global scope, main element) on `object`.
+    pub fn new(
+        object: AudioObjectID,
+        selector: u32,
+        flag: &'static std::sync::atomic::AtomicBool,
+    ) -> Result<Listener, String> {
+        let address = address(selector, kAudioObjectPropertyScopeGlobal);
+        let client = (flag as *const std::sync::atomic::AtomicBool).cast_mut().cast::<c_void>();
+        // SAFETY: `address` outlives the call; `client` is a static flag,
+        // valid for as long as the HAL may call `set_flag` with it.
+        let st = unsafe { AudioObjectAddPropertyListener(object, &address, set_flag, client) };
+        if st != 0 {
+            return Err(status_text(st));
+        }
+        Ok(Listener { object, address, flag })
+    }
+}
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        let client = (self.flag as *const std::sync::atomic::AtomicBool).cast_mut().cast::<c_void>();
+        // SAFETY: the same object, address, function and client data it
+        // was registered with; not called from inside `set_flag`.
+        unsafe { AudioObjectRemovePropertyListener(self.object, &self.address, set_flag, client) };
+    }
 }

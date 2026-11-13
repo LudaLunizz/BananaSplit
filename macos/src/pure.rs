@@ -303,6 +303,18 @@ pub fn audio_app_lines(groups: &[AppGroup], playing: impl Fn(u32) -> bool) -> St
     s
 }
 
+/// The device rescan when Core Audio's listeners report changes: a slow
+/// safety net in case one is missed.
+pub const FALLBACK_RESCAN: Duration = Duration::from_secs(10);
+/// The rescan when the listeners could not be registered (as before them).
+pub const POLL_RESCAN: Duration = Duration::from_secs(2);
+
+/// Look at the devices again now? Yes when a listener said something
+/// changed (`dirty`), or `fallback` passed since the last look.
+pub fn should_rescan(dirty: bool, elapsed: Duration, fallback: Duration) -> bool {
+    dirty || elapsed >= fallback
+}
+
 /// The macOS version process taps need (BananaSplit's floor for them).
 pub const TAP_OS: (u32, u32) = (14, 4);
 /// What a tap entry point says below [`TAP_OS`].
@@ -757,6 +769,28 @@ mod tests {
         assert_eq!(parse_os_version(""), None);
         assert_eq!(parse_os_version("x.1"), None);
         assert_eq!(parse_os_version("14.beta"), None);
+    }
+
+    // ---- should_rescan
+    #[test]
+    fn rescan_when_a_listener_fired() {
+        assert!(should_rescan(true, Duration::ZERO, FALLBACK_RESCAN));
+        assert!(should_rescan(true, Duration::from_millis(1), FALLBACK_RESCAN));
+    }
+
+    #[test]
+    fn rescan_on_the_fallback_only() {
+        assert!(!should_rescan(false, Duration::from_secs(2), FALLBACK_RESCAN));
+        assert!(!should_rescan(false, Duration::from_millis(9_999), FALLBACK_RESCAN));
+        assert!(should_rescan(false, Duration::from_secs(10), FALLBACK_RESCAN));
+        assert!(should_rescan(false, Duration::from_secs(600), FALLBACK_RESCAN));
+    }
+
+    #[test]
+    fn rescan_poll_without_listeners_is_the_old_two_seconds() {
+        assert!(!should_rescan(false, Duration::from_millis(1_999), POLL_RESCAN));
+        assert!(should_rescan(false, Duration::from_secs(2), POLL_RESCAN));
+        assert!(FALLBACK_RESCAN > POLL_RESCAN);
     }
 
     // ---- tap_channel_offset, tap_pair, tap_test_line, TAP_OS

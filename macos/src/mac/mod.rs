@@ -25,6 +25,7 @@ use bananasplit::vban::VbanTap;
 use coreaudio::{Graph, RATE, Stats};
 use route::DevInfo;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
@@ -33,8 +34,23 @@ use std::time::{Duration, Instant};
 /// can go away (kept for the main loop, which is shared with Linux).
 pub const SERVER_GONE: &str = "the macOS audio system stopped";
 
-/// How often to look for added/removed devices and default-device changes.
-const RESCAN: Duration = Duration::from_secs(2);
+/// How often the cheap checks run: a stalled device (two still checks in a
+/// row), a failed start's retry, the IOProc guard's notes. The device list
+/// itself is looked at when Core Audio says it changed (`DEVICES_CHANGED`),
+/// or every `pure::FALLBACK_RESCAN`.
+const CHECK_TICK: Duration = Duration::from_secs(2);
+
+/// Set by Core Audio's listeners (devices added or removed, a default
+/// device changed, coreaudiod restarted); cleared by `take_changed`.
+static DEVICES_CHANGED: AtomicBool = AtomicBool::new(false);
+
+/// The system object properties whose changes trigger a device rescan.
+const WATCHED: [u32; 4] = [
+    catypes::kAudioHardwarePropertyDevices,
+    catypes::kAudioHardwarePropertyDefaultInputDevice,
+    catypes::kAudioHardwarePropertyDefaultOutputDevice,
+    catypes::kAudioHardwarePropertyServiceRestarted,
+];
 /// After reconnecting the devices because one stalled: how long the audio
 /// must run before another stall is reconnected again.
 const STALL_REARM: Duration = Duration::from_secs(60);
@@ -159,6 +175,13 @@ pub struct Session {
     graph: Option<Graph>,
     signature: String,
     last_scan: Instant,
+    /// The last run of the cheap checks (`CHECK_TICK`).
+    last_check: Instant,
+    /// The device rescan's safety net: FALLBACK_RESCAN with the listeners,
+    /// POLL_RESCAN (as before them) if they could not be registered.
+    fallback: Duration,
+    /// Core Audio's listeners, alive as long as the session (the app).
+    _listeners: Vec<ffi::Listener>,
     dirty: bool,
     /// When a stalled device was reconnected. Not again until the devices
     /// change, or the audio ran for STALL_REARM since without a stall (a
@@ -204,13 +227,28 @@ impl Session {
         play_tap: Arc<PlayTap>,
         notes: &mut Vec<String>,
     ) -> Result<Session, String> {
-        let _ = notes; // a failed start is said by the first connect()
+        // Listen for device changes; without the listeners, poll as before.
+        ffi::hal_on_its_own_thread();
+        let (listeners, fallback) = match WATCHED
+            .iter()
+            .map(|&sel| ffi::Listener::new(catypes::kAudioObjectSystemObject, sel, &DEVICES_CHANGED))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(l) => (l, bananasplit::pure::FALLBACK_RESCAN),
+            Err(e) => {
+                notes.push(format!("cannot listen for device changes ({e}): looking every 2 seconds instead"));
+                (Vec::new(), bananasplit::pure::POLL_RESCAN)
+            }
+        };
         let mut s = Session {
             shared,
             stats: Arc::new(Stats::default()),
             graph: None,
             signature: String::new(),
             last_scan: Instant::now(),
+            last_check: Instant::now(),
+            fallback,
+            _listeners: listeners,
             dirty: false,
             stall_retried: None,
             bench: None,
@@ -291,6 +329,25 @@ impl Session {
         false
     }
 
+    /// Look at the devices now: true (and everything reset for a fresh
+    /// start) if they differ from the last look.
+    fn rescan(&mut self) -> bool {
+        let sig = coreaudio::signature();
+        if sig == self.signature {
+            return false;
+        }
+        self.signature = sig;
+        self.dirty = true;
+        self.stall_retried = None;
+        self.bench = None;
+        self.guard_retried = None;
+        // the devices changed: a failed start is tried again now, and its
+        // backoff starts over
+        self.backoff.reset();
+        self.retry_at = None;
+        true
+    }
+
     /// Edge-triggered: true once when a device appeared, disappeared or
     /// changed its rate, a default device changed, or a device stopped
     /// delivering audio. The caller then calls `connect`, which rebuilds
@@ -318,23 +375,17 @@ impl Session {
             self.arrived = Some(got);
             return true;
         }
-        if self.last_scan.elapsed() < RESCAN {
+        let fired = DEVICES_CHANGED.swap(false, SeqCst);
+        if bananasplit::pure::should_rescan(fired, self.last_scan.elapsed(), self.fallback) {
+            self.last_scan = Instant::now();
+            if self.rescan() {
+                return true;
+            }
+        }
+        if self.last_check.elapsed() < CHECK_TICK {
             return false;
         }
-        self.last_scan = Instant::now();
-        let sig = coreaudio::signature();
-        if sig != self.signature {
-            self.signature = sig;
-            self.dirty = true;
-            self.stall_retried = None;
-            self.bench = None;
-            self.guard_retried = None;
-            // the devices changed: a failed start is tried again now, and
-            // its backoff starts over
-            self.backoff.reset();
-            self.retry_at = None;
-            return true;
-        }
+        self.last_check = Instant::now();
         if self.dirty {
             return true;
         }
