@@ -524,6 +524,10 @@ async function until(pred, what, ms = 4000) {
     e.style.width = "";
     return { box, full, px: parseFloat(getComputedStyle(e).fontSize), text: e.textContent };
   });
+  // (a new config leaves V2 unnamed since 2.8.25: give it a long name first)
+  await post({ op: "name", ch: 7, v: "Headphones Studio" });
+  await untilPage(() => strip(7).locator(".name").evaluate((e) => e.textContent === "Headphones Studio"), "V2 renamed");
+  await sleep(250);
   const longName = await nameFit(7), shortName = await nameFit(0);
   check(longName.full <= longName.box + 0.01 && longName.px < 12.5 && shortName.px === 12.5,
     `a long name fits its strip in a smaller font (${longName.text}: ${longName.px}px, ${shortName.text}: ${shortName.px}px)`);
