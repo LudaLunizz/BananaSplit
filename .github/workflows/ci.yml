@@ -17,6 +17,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The rules that keep BananaSplit small: core has no dependencies, each
+  # app only its allowed ones, every app has its gui_platform.rs.
+  structure:
+    name: Structure
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the crates' dependencies and the GUI contract
+        run: sh scripts/check-structure.sh
+
   # The shared mixer core, on every system it ships on: config and recorder
   # have per-OS branches (config folder, `~` expansion, connect hints).
   core:
