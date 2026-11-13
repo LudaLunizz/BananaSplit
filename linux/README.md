@@ -13,6 +13,14 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  V2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    V1 ── V3 B1 B2
 ```
 
+## What's new in 2.8.25
+
+* **Routing: V1–V3 in the middle, B1 = mic out, B2 = system out** (#123): buses A1–A3 are now called **V1–V3**, the mixes between the inputs and the outputs. B1 is the mic out (the microphone Discord and OBS pick), B2 the system out (what you hear): a new setup plays B2 on the default output. Something you want to hear but not stream goes to B2 and not to B1. Old settings, scenes, recordings and API calls with `A1`–`A3` still work, and the device names other apps remember (`bananasplit_out_a1`, the JACK ports, Splitter's endpoints) don't change. A 2.8.25 settings file can't be read by 2.8.24.
+* **FROM keys on every bus card** (#125): the bottom of a bus card lists everything that can feed it, inputs 1–6 and the other buses. Lit: it goes straight in. Dashed: it only arrives through another bus. A white ring with a glow: its sound is coming out of this bus right now. Click a key to route that channel straight into the bus. `/api/state` has the same as `from` and `via` per bus (`docs/api.md`).
+* **Updater: a backup key and the version inside the signature** (#121): a release signed with BananaSplit's offline backup key is accepted too, so the release key can be replaced if it is ever lost or leaked. A release is installed only when its signed `SHA256SUMS.txt` names that version.
+* **The page refuses unknown users** (#117): when BananaSplit can't read the system's list of connections, the page and the API now refuse the connection instead of letting it in (all three systems).
+* **Build pipeline** (#115): GitHub Actions are pinned to fixed versions, and every build checks the dependencies for known security problems (`cargo deny`); `time` was updated for RUSTSEC-2026-0009 (Windows and macOS builds).
+
 ## What's new in 2.8.24
 
 * **Updater fix** (#112): a signature file (`SHA256SUMS.txt.sig`) with a non-ASCII character in a certain place made the update check stop with an error instead of refusing the file. It is now refused like any other bad signature. No update was ever installed from such a file: the check stopped before installing anything. All three systems.
