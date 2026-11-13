@@ -18,14 +18,28 @@ pub use crate::update::Updater;
 
 /// Whose process is at the other end of a loopback connection: `Some(true)`
 /// ours, `Some(false)` another user's, `None` not (yet) in the system's list,
-/// so the caller asks again. (Without /proc, as in 2.5: ours.)
+/// so the caller asks again. Without a readable /proc/net/tcp: not ours, the
+/// connection is refused (up to 2.8.24 it was let in).
 pub fn peer_is_ours(peer: SocketAddr, us: SocketAddr) -> Option<bool> {
-    let Ok(t4) = std::fs::read_to_string("/proc/net/tcp") else { return Some(true) };
-    let owner = owner(&t4, peer, us).or_else(|| {
-        let t6 = std::fs::read_to_string("/proc/net/tcp6").ok()?;
-        owner(&t6, mapped(peer), mapped(us))
-    });
-    owner.map(|o| o == crate::sys::uid())
+    let t4 = std::fs::read_to_string("/proc/net/tcp").ok();
+    ours_in(t4.as_deref(), || std::fs::read_to_string("/proc/net/tcp6").ok(), peer, us, crate::sys::uid())
+}
+
+/// [`peer_is_ours`] on the tables it was given (`tcp6` is read only when
+/// the connection is not in `tcp`).
+fn ours_in(
+    t4: Option<&str>,
+    t6: impl FnOnce() -> Option<String>,
+    peer: SocketAddr,
+    us: SocketAddr,
+    uid: u32,
+) -> Option<bool> {
+    let Some(t4) = t4 else {
+        crate::gui::peer::list_unreadable("/proc/net/tcp");
+        return Some(false);
+    };
+    let owner = owner(t4, peer, us).or_else(|| owner(&t6()?, mapped(peer), mapped(us)));
+    owner.map(|o| o == uid)
 }
 
 /// The folder above `bananasplit/` where a running GUI notes its port
@@ -110,6 +124,22 @@ pub fn open_window(url: &str) -> bool {
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, TcpListener, TcpStream};
+
+    /// No connection list to read: refused, not let in.
+    #[test]
+    fn an_unreadable_list_refuses() {
+        let (p, u) = ("127.0.0.1:40000".parse().unwrap(), "127.0.0.1:8790".parse().unwrap());
+        assert_eq!(ours_in(None, || None, p, u, 1000), Some(false));
+        // the same connection in a readable list still gets in
+        let lo = u32::from_ne_bytes([127, 0, 0, 1]);
+        let t = format!(
+            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid\n   0: {lo:08X}:9C40 {lo:08X}:2256 01 00000000:00000000 00:00000000 00000000  1000\n"
+        );
+        assert_eq!(ours_in(Some(&t), || None, p, u, 1000), Some(true));
+        assert_eq!(ours_in(Some(&t), || None, p, u, 1001), Some(false));
+        // not in either list (yet): ask again
+        assert_eq!(ours_in(Some("header\n"), || Some("header\n".into()), p, u, 1000), None);
+    }
 
     /// A real connection, in the real /proc: the owner is this process's user.
     #[test]

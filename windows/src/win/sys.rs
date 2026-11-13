@@ -160,12 +160,13 @@ fn process_user(process: HANDLE) -> Option<Vec<u8>> {
 /// same user as BananaSplit? Other users of this computer (another account,
 /// fast user switching, Remote Desktop) can reach 127.0.0.1 too, and must
 /// not drive the mixer. Unknown (the connection is not in the tables, or its
-/// process cannot be looked at): no. If Windows gives no tables at all, as
-/// before: yes.
+/// process cannot be looked at): no. If Windows gives no tables at all: no
+/// as well (up to 2.8.24 it was let in).
 pub fn same_user(peer: SocketAddr, us: SocketAddr) -> bool {
     let tables = [(false, tcp_table(AF_INET)), (true, tcp_table(AF_INET6))];
     if tables.iter().all(|(_, t)| t.is_none()) {
-        return true;
+        crate::gui::peer::list_unreadable("the TCP connection tables (GetExtendedTcpTable)");
+        return false;
     }
     let Some(pid) = tables.iter().find_map(|(v6, t)| t.as_deref().and_then(|t| owner_pid(t, *v6, peer, us))) else {
         return false;
