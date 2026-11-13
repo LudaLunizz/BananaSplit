@@ -1399,54 +1399,44 @@ mod tests {
         assert_eq!(Source::github().keys(), vec![release_key(), backup_key()]);
     }
 
-    /// A list sign-release.sh writes from 2.8.25, signed with a test key.
-    fn signed_list(key_pem: &str, sums: &str) -> String {
-        let dir = std::env::temp_dir().join(format!("bs-signed-list-{}-{}", std::process::id(), sums.len()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let (k, m, s) = (dir.join("k.pem"), dir.join("m"), dir.join("s"));
-        std::fs::write(&k, key_pem).unwrap();
-        std::fs::write(&m, sums).unwrap();
-        let ok = std::process::Command::new("openssl")
-            .args(["pkeyutl", "-sign", "-rawin", "-inkey"])
-            .arg(&k)
-            .arg("-in")
-            .arg(&m)
-            .arg("-out")
-            .arg(&s)
-            .status()
-            .unwrap()
-            .success();
-        assert!(ok, "openssl signs");
-        let sig: String = std::fs::read(&s).unwrap().iter().map(|b| format!("{b:02x}")).collect();
-        let _ = std::fs::remove_dir_all(&dir);
-        sig
-    }
-
-    /// RFC 8032 test 3's secret key as PEM, so openssl signs with [`vectors_key`].
-    const TEST_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIMWqjfQ/n4N77bdELzHct7Fm04U1B28JS4XOOi4LRFj3\n-----END PRIVATE KEY-----\n";
+    /// Lists as sign-release.sh writes them from 2.8.25 (and one as up to
+    /// 2.8.24), signed with the RFC 8032 test 3 key ([`vectors_key`]).
+    /// Ed25519 signatures are deterministic, so they were made once with
+    /// `openssl pkeyutl -sign -rawin` and are kept here: macOS's LibreSSL
+    /// can't make them.
+    const SIGNED_LISTS: [(&str, &str); 3] = [
+        (
+            "# BananaSplit 2.8.25\n# signed 2026-11-14\nab  bananasplit-2.8.25-linux-x86_64.tar.gz\n",
+            "7cb173181927de6d941eba8c4aa3e6583836f3c9dafb142c040bf62a5528749cf80a6e6eb953b10966212fd79789d65fe16bec8b18f592c6e3c7d6752abe160e",
+        ),
+        (
+            "ab  bananasplit-2.8.24-linux-x86_64.tar.gz\n",
+            "962d085b30e0039aceb63564c1aa3efc456f1847b02c62aeb962b333c214035231b3747d1a288725227e4c9468390c53282213f896765855532198f148b48206",
+        ),
+        (
+            "# BananaSplit two\nab  x\n",
+            "b32969ebe7929101907da4a5e59605ef9d5d7deae7174e54dfedab11ec435e35d2f5ede904d66268a836daff2ba3f7320a5a72df9d8810c423e35ac57140600a",
+        ),
+    ];
 
     #[test]
     fn a_signed_list_belongs_to_one_version() {
-        if std::process::Command::new("openssl").arg("version").output().is_err() {
-            return; // no openssl on this system: the vectors above still run
-        }
         let key = parse_hex32(vectors_key()).unwrap();
-        let sums = "# BananaSplit 2.8.25\n# signed 2026-11-14\nab  bananasplit-2.8.25-linux-x86_64.tar.gz\n";
-        let sig = signed_list(TEST_PEM, sums);
+        let [(sums, sig), (old, old_sig), (odd, odd_sig)] = SIGNED_LISTS;
         assert_eq!(signed_version(sums), Some("2.8.25"));
         assert_eq!(signed_date(sums), Some("2026-11-14"));
-        assert!(check_release(sums, &sig, &[key], "2.8.25").is_ok());
-        assert!(check_release(sums, &sig, &[key], "2.8.25.0").is_ok(), "the same version written longer");
-        let e = check_release(sums, &sig, &[key], "2.8.26").unwrap_err();
+        assert!(check_release(sums, sig, &[key], "2.8.25").is_ok());
+        assert!(check_release(sums, sig, &[key], "2.8.25.0").is_ok(), "the same version written longer");
+        let e = check_release(sums, sig, &[key], "2.8.26").unwrap_err();
         assert!(e.contains("is for BananaSplit 2.8.25, not 2.8.26"), "{e}");
-        assert!(check_release(sums, &sig, &[backup_key()], "2.8.25").unwrap_err().contains("not signed"));
+        assert!(check_release(sums, sig, &[backup_key()], "2.8.25").unwrap_err().contains("not signed"));
         // signed, but no version line (as up to 2.8.24): refused
-        let old = "ab  bananasplit-2.8.24-linux-x86_64.tar.gz\n";
-        let e = check_release(old, &signed_list(TEST_PEM, old), &[key], "2.8.24").unwrap_err();
+        assert!(check_signature(old, old_sig, &[key]).is_ok());
+        let e = check_release(old, old_sig, &[key], "2.8.24").unwrap_err();
         assert!(e.contains("does not say which version"), "{e}");
         // a version line that is not a version
-        let odd = "# BananaSplit two\nab  x\n";
-        assert!(check_release(odd, &signed_list(TEST_PEM, odd), &[key], "2.8.25").is_err());
+        assert!(check_signature(odd, odd_sig, &[key]).is_ok());
+        assert!(check_release(odd, odd_sig, &[key], "2.8.25").is_err());
     }
 
     /// 2.8.24 and older read the new lists with sum_for, which must skip the
