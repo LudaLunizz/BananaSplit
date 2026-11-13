@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.26" date="2026-11-13">
+      <description>
+        <p>When the local page is refused because the system's list of connections can't be read, the window now says why. On a bus card, keys 7 8 9 0 switch the other buses into it, next to 1–6 for the inputs.</p>
+      </description>
+    </release>
     <release version="2.8.25" date="2026-11-13">
       <description>
         <p>Buses A1–A3 are now V1–V3, the mixes in the middle; B1 is the mic out and B2 the system out. Every bus card shows what reaches it and what is sounding, and a click routes it. The updater accepts an offline backup key and checks the version inside the signature, and the local page refuses connections it can't attribute to the user.</p>
