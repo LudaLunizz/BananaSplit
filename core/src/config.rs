@@ -27,6 +27,7 @@
 //! mono = false
 //! connect = @default
 //! routes = B1         # buses this bus feeds after its fader (never in a loop)
+//! limit_db = -6.0     # brickwall limiter after the fader, -40 .. +12 (+12 / off = off)
 //! cable = on          # a virtual microphone of this bus (default: B1, B2)
 //!
 //! [recorder]
@@ -98,6 +99,7 @@
 use crate::dynamics::{COMP, DynSettings, GATE};
 use crate::engine::{BUS_IDS, NUM_BUSES, NUM_STRIPS, Shared, bus_index, clamp_db, clamp_pan, clamp_trim};
 use crate::eq::{BANDS, Band, DEFAULT_BANDS, EqSettings};
+use crate::limiter::{self, LIMIT_OFF_DB, parse_limit};
 use crate::recorder::{self, ALL_LINKS, Format, Mode, Settings};
 use crate::vban::{self, FromAddr, NUM_IN, NUM_OUT, SampleFormat, VbanConfig};
 use std::fmt::Write as _;
@@ -215,6 +217,8 @@ pub struct BusConfig {
     /// Its virtual cable (a microphone apps can record its mix from).
     pub cable: bool,
     pub eq: EqSettings,
+    /// Brickwall limiter, dBFS ([`LIMIT_OFF_DB`] = off).
+    pub limit_db: f32,
 }
 
 impl BusConfig {
@@ -361,6 +365,7 @@ impl Default for Config {
             connect: connect.iter().map(|s| s.to_string()).collect(),
             cable,
             eq: EqSettings::default(),
+            limit_db: LIMIT_OFF_DB,
         };
         const B1: u8 = 8;
         const B2: u8 = 16;
@@ -687,6 +692,7 @@ impl Config {
                         "pan" => b.pan = parse_pan(v).map_err(err)?,
                         "mute" => b.mute = parse_bool(v).map_err(err)?,
                         "mono" => b.mono = parse_bool(v).map_err(err)?,
+                        "limit_db" => b.limit_db = parse_limit(v).map_err(err)?,
                         "routes" => {
                             let r = parse_routes(v).map_err(err)?;
                             if r & (1 << i) != 0 {
@@ -852,6 +858,10 @@ impl Config {
             if b.routes != 0 {
                 let _ = writeln!(o, "routes = {}", format_routes(b.routes));
             }
+            // (only when on, for the same reason)
+            if !limiter::is_off(b.limit_db) {
+                let _ = writeln!(o, "limit_db = {}", b.limit_db);
+            }
             if b.connect.is_empty() {
                 let _ = writeln!(o, "connect =");
             }
@@ -937,6 +947,7 @@ impl Config {
             p.mono.store(b.mono, Relaxed);
             p.routes.store(b.routes & crate::engine::ALL_BUSES & !(1 << i), Relaxed);
             p.eq.apply(&b.eq);
+            p.limit.store(b.limit_db);
         }
         sh.rec_links.store(self.recorder.links & ALL_LINKS, Relaxed);
     }
@@ -963,6 +974,7 @@ impl Config {
             b.mono = p.mono.load(Relaxed);
             b.routes = sends[i];
             b.eq = p.eq.settings();
+            b.limit_db = p.limit.load();
         }
         self.recorder.links = sh.rec_links.load(Relaxed) & ALL_LINKS;
     }
@@ -1549,11 +1561,29 @@ mod tests {
         c.strips[1].eq.on = true;
         c.strips[1].eq.bands[3].gain_db = -6.0;
         c.buses[2].eq.bands[0].kind = crate::eq::Kind::LowCut;
+        c.buses[3].limit_db = -6.5;
         c.apply(&sh);
+        assert_eq!(sh.buses[3].limit.load(), -6.5);
         assert_eq!(sh.rec_links.load(Relaxed), 0b100_0000_1000);
         let mut d = Config::default();
         d.capture(&sh);
         assert_eq!(c, d);
+    }
+
+    #[test]
+    fn bus_limit_round_trip() {
+        let mut c = Config::default();
+        assert!(c.buses.iter().all(|b| b.limit_db == LIMIT_OFF_DB));
+        // off writes nothing (older versions can still read the file)
+        assert!(!c.to_ini().contains("limit_db"));
+        c.buses[1].limit_db = -12.0;
+        let text = c.to_ini();
+        assert_eq!(text.matches("limit_db = ").count(), 1);
+        assert_eq!(Config::parse(&text).unwrap(), c);
+        let p = Config::parse("[bus.B1]\nlimit_db = -99\n[bus.V2]\nlimit_db = off\n").unwrap();
+        assert_eq!((p.buses[3].limit_db, p.buses[1].limit_db), (crate::limiter::LIMIT_MIN_DB, LIMIT_OFF_DB));
+        assert!(Config::parse("[bus.B1]\nlimit_db = loud\n").is_err());
+        assert!(Config::parse("[strip1]\nlimit_db = -6\n").is_err());
     }
 
     #[test]

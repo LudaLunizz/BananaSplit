@@ -772,6 +772,11 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
                 src.direct,
                 src.through
             );
+            let lim = &sh.buses[r - NUM_STRIPS].limit;
+            o.push_str(",\"limit\":");
+            jnum(&mut o, lim.load() as f64, 1);
+            o.push_str(",\"limGr\":");
+            jnum(&mut o, lim.gr.load() as f64, 1);
         }
         o.push_str(",\"m\":[");
         jnum(&mut o, f.meters[r][0] as f64, 1);
@@ -1708,6 +1713,7 @@ mod tests {
         h.shared.strips[1].trim_db.store(6.0);
         h.shared.buses[4].pan.store(-0.25);
         h.shared.buses[3].routes.store(0b00001, Relaxed); // B1 -> V1
+        h.shared.buses[3].limit.store(-6.0);
         cfg.gui.scene = "Live <Room>".into();
         let ps = h.player.status();
         let scene_list = vec!["Live <Room>".to_string()];
@@ -1750,10 +1756,16 @@ mod tests {
         assert!(json.contains(r#""rtt":8.00"#) && json.contains(r#""cpu":0.0"#));
         assert!(json.contains(r#""id":"1","name""#) && json.contains(r#""id":"B2""#));
         assert!(json.contains(&format!(r#""link":true,"solo":false,"routes":8,"m":[-60.0,-12.5],"mi":[-30.0,-31.5],"conn":"Firefox","dev":"Yeti {lt}USB{gt}","cable":true,"eq":{{"on":false,"b":[[1,"lowshelf",100,0.0,0.71],[1,"bell",250,0.0,1.00],"#)), "{json}");
-        assert!(json.contains(r#""id":"B1","name":"Mic out","strip":false,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"routes":1,"from":1,"via":0,"m":"#), "{json}");
+        assert!(json.contains(r#""id":"B1","name":"Mic out","strip":false,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"routes":1,"from":1,"via":0,"limit":-6.0,"limGr":0.0,"m":"#), "{json}");
         // V1 gets strip 1 through B1 (strip 1 → B1 → V1), and B1 straight
         assert!(json.contains(r#""id":"V1","name""#), "{json}");
-        assert!(json.contains(&format!(r#""routes":0,"from":{},"via":1,"m":"#, 1 << (NUM_STRIPS + 3))), "{json}");
+        assert!(
+            json.contains(&format!(
+                r#""routes":0,"from":{},"via":1,"limit":12.0,"limGr":0.0,"m":"#,
+                1 << (NUM_STRIPS + 3)
+            )),
+            "{json}"
+        );
         assert!(json.contains(r#""cables":8,"devRev":42,"#));
         assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]},"dyn":{"gate":false,"g":[-50.0,-80.0,1.0,100.0,200.0],"comp":false,"c":[-18.0,3.0,6.0,10.0,150.0,0.0],"ggr":0.0,"cgr":0.0}},{"id":"2""#), "{json}");
         assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]}},{"id":"V2""#), "a bus has no dyn: {json}");
@@ -1816,6 +1828,11 @@ mod tests {
         assert_eq!(command(&h, "op=pan&ch=7&v=3").unwrap(), "R100");
         assert_eq!(command(&h, "op=pan&ch=7&v=0").unwrap(), "C");
         assert!(command(&h, "op=pan&ch=11&v=0").is_err());
+        assert_eq!(command(&h, "op=limit&ch=9&v=-6.04").unwrap(), "limit -6.0 dB");
+        assert_eq!(sh.buses[3].limit.load(), -6.0);
+        assert_eq!(command(&h, "op=limit&ch=9&v=off").unwrap(), "limit off");
+        assert_eq!(sh.buses[3].limit.load(), bananasplit::limiter::LIMIT_OFF_DB);
+        assert!(command(&h, "op=limit&ch=0&v=-6").is_err());
         command(&h, "op=playto&bus=3&v=1").unwrap();
         command(&h, "op=playto&bus=0&v=0").unwrap();
         assert_eq!(h.player.routes(), 0b01000);
