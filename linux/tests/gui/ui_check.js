@@ -472,20 +472,36 @@ async function until(pred, what, ms = 4000) {
   const bad = await post({ op: "dev", ch: 0, client: "No Such Device", v: 1 });
   check(bad.status === 400 && bad.text.includes("gone"), "connecting something that is not there is refused");
 
-  // ---- 2.7: a bus feeds another bus ----
-  await strip(9).locator(".rt", { hasText: "V1" }).click();
-  await until((s) => (s.ch[9].routes & 1) !== 0, "B1's TO V1 key sends B1 into V1");
-  await untilPage(() => strip(6).locator(".rt", { hasText: "B1" }).evaluate((e) => e.classList.contains("loop")), "V1's B1 key is blocked (it would be a loop)");
-  await strip(6).locator(".rt", { hasText: "B1" }).click();
+  // ---- 2.7: a bus feeds another bus (2.8.25: set on the card of the bus it goes into) ----
+  const src = (card, label) => strip(card).locator(".srcs .rt", { hasText: new RegExp("^" + label + "$") });
+  await src(6, "B1").click();
+  await until((s) => (s.ch[9].routes & 1) !== 0, "V1's FROM B1 key sends B1 into V1");
+  await until((s) => (s.ch[6].from & (1 << 9)) !== 0, "and the state says B1 goes straight into V1");
+  await untilPage(() => src(6, "B1").evaluate((e) => e.getAttribute("aria-pressed") === "true"), "the key shows it pressed");
+  await untilPage(() => src(9, "V1").evaluate((e) => e.classList.contains("loop")), "B1's V1 key is blocked (it would be a loop)");
+  await src(9, "V1").click();
   await sleep(400);
   check(((await state()).ch[6].routes & 8) === 0, "clicking it does not make the loop");
   const loop = await post({ op: "route", ch: 6, bus: 3, v: 1 });
   check(loop.status === 400 && loop.text.includes("loop"), "the server refuses a loop too");
   const self = await post({ op: "route", ch: 7, bus: 1, v: 1 });
   check(self.status === 400, "and a bus feeding itself");
-  check(await strip(6).locator(".rt.self").count() === 1 && await strip(6).locator(".rt.self").isDisabled(), "a bus has no key for itself");
-  await strip(9).locator(".rt", { hasText: "V1" }).click();
-  await until((s) => (s.ch[9].routes & 1) === 0, "B1's V1 key again stops it");
+  check(await src(6, "V1").count() === 0, "a bus has no key for itself");
+  check(await strip(6).locator(".srcs .rt").count() === 10, "a bus card lists the 10 other channels");
+  // ---- 2.8.25: what reaches a bus, straight in or through another bus ----
+  const routes0 = (await state()).ch[0].routes;
+  await post({ op: "route", ch: 0, bus: 0, v: 0 });
+  await post({ op: "route", ch: 0, bus: 3, v: 1 });
+  await until((s) => (s.ch[6].via & 1) !== 0 && (s.ch[6].from & 1) === 0, "strip 1 → B1 → V1: V1 gets strip 1 through B1");
+  await untilPage(() => src(6, "1").evaluate((e) => e.classList.contains("via") && e.getAttribute("aria-pressed") !== "true"), "V1's key 1 is outlined, not pressed");
+  await src(6, "1").click();
+  await until((s) => (s.ch[0].routes & 1) !== 0 && (s.ch[6].from & 1) !== 0, "V1's key 1 routes strip 1 straight into V1");
+  await untilPage(() => src(6, "1").evaluate((e) => e.getAttribute("aria-pressed") === "true"), "and shows it pressed");
+  await untilPage(() => strip(0).locator(".foot .rt", { hasText: "V1" }).evaluate((e) => e.getAttribute("aria-pressed") === "true"), "strip 1's own V1 key agrees");
+  // back as it was
+  for (let b = 0; b < 5; b++) await post({ op: "route", ch: 0, bus: b, v: (routes0 >> b) & 1 });
+  await src(6, "B1").click();
+  await until((s) => (s.ch[9].routes & 1) === 0, "V1's B1 key again stops it");
   // ---- 2.7: every output in the bottom bar ----
   check(await page.locator("#outs .orow").count() === 5, "the bottom bar shows all five outputs");
   check((await page.locator("#outs .orow").nth(4).textContent()).startsWith("B2"), "B2 last");

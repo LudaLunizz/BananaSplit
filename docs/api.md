@@ -198,6 +198,7 @@ A channel in `ch`:
 | `id` | `1` to `6`, `V1`, `V2`, `V3`, `B1`, `B2` (until 2.8.24: `A1`, `A2`, `A3`). `name` is its name; `strip` is `true` for an input strip. |
 | `gain`, `trim`, `pan` | dB, dB, -1 to 1. `mute`, `mono`; `link`: it is recorded; `solo` (strips only). |
 | `routes` | A bit mask over the buses (bit 0 = V1 ... bit 4 = B2): the buses a strip feeds, or a bus sends to. |
+| `from`, `via` | Buses only (from 2.8.25): what reaches the bus, as a bit mask over the channels (bits 0 to 5 = strips 1 to 6, bit 6 = V1 ... bit 10 = B2). `from`: routed or sent straight into it; `via`: reaching it only through other buses (strip 2 → V1 → B1 sets bit 1 of B1's `via`). |
 | `m`, `mi` | Output and input level `[left, right]` in dB (about -60: silence). |
 | `conn` | What it is connected to, as text. `dev` is what the menu button says. `cable`: it has a virtual cable. |
 | `eq` | `on`, and `b`: six bands, each `[on (0 or 1), type, Hz, dB, Q]`. |
