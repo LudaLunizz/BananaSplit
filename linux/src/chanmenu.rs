@@ -263,7 +263,7 @@ pub fn handle(
     info: &PulseInfo,
 ) -> Result<String, String> {
     let check = |ch: usize| if ch < NUM_CHANNELS { Ok(ch) } else { Err("bad channel".to_string()) };
-    // "strip 3", "A1"
+    // "strip 3", "V1"
     let id = |ch: usize| if ch < NUM_STRIPS { format!("strip {}", ch + 1) } else { source_id(ch).to_string() };
     match op {
         DevOp::List => {

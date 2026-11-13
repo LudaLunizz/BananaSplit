@@ -1700,7 +1700,7 @@ mod tests {
         });
         h.shared.strips[1].trim_db.store(6.0);
         h.shared.buses[4].pan.store(-0.25);
-        h.shared.buses[3].routes.store(0b00001, Relaxed); // B1 -> A1
+        h.shared.buses[3].routes.store(0b00001, Relaxed); // B1 -> V1
         cfg.gui.scene = "Live <Room>".into();
         let ps = h.player.status();
         let scene_list = vec!["Live <Room>".to_string()];
@@ -1743,14 +1743,14 @@ mod tests {
         assert!(json.contains(r#""rtt":8.00"#) && json.contains(r#""cpu":0.0"#));
         assert!(json.contains(r#""id":"1","name""#) && json.contains(r#""id":"B2""#));
         assert!(json.contains(&format!(r#""link":true,"solo":false,"routes":8,"m":[-60.0,-12.5],"mi":[-30.0,-31.5],"conn":"Firefox","dev":"Yeti {lt}USB{gt}","cable":true,"eq":{{"on":false,"b":[[1,"lowshelf",100,0.0,0.71],[1,"bell",250,0.0,1.00],"#)), "{json}");
-        assert!(json.contains(r#""id":"B1","name":"Virtual B1","strip":false,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"routes":1,"m":"#), "{json}");
+        assert!(json.contains(r#""id":"B1","name":"Mic out","strip":false,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"routes":1,"m":"#), "{json}");
         assert!(json.contains(r#""cables":8,"devRev":42,"#));
         assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]},"dyn":{"gate":false,"g":[-50.0,-80.0,1.0,100.0,200.0],"comp":false,"c":[-18.0,3.0,6.0,10.0,150.0,0.0],"ggr":0.0,"cgr":0.0}},{"id":"2""#), "{json}");
-        assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]}},{"id":"A2""#), "a bus has no dyn: {json}");
+        assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]}},{"id":"V2""#), "a bus has no dyn: {json}");
         assert!(json.contains(r#""id":"3","name":"Desktop","strip":true,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"solo":false,"routes":0,"m":[-60.0,-12.5],"mi":[-30.0,-31.5],"conn":"","dev":"Not connected","cable":false,"eq":{"on":true"#), "{json}");
         assert!(json.contains(r#""id":"2","name":"Discord","strip":true,"gain":0.0,"trim":6.0,"pan":0.00,"#), "{json}");
         assert!(
-            json.contains(r#""id":"B2","name":"Virtual B2","strip":false,"gain":0.0,"trim":0.0,"pan":-0.25,"#),
+            json.contains(r#""id":"B2","name":"System out","strip":false,"gain":0.0,"trim":0.0,"pan":-0.25,"#),
             "{json}"
         );
         assert!(json.contains(r#"[1,"bell",1500,-4.5,1.00]"#));

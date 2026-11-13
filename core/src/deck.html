@@ -149,8 +149,8 @@ main[hidden] { display: none; }
 <div id="toast"></div>
 <script>
 "use strict";
-// Same numbers as gui.html and engine.rs: 6 input strips, then buses A1 A2 A3 B1 B2.
-const NUM_STRIPS = 6, BUS_IDS = ["A1", "A2", "A3", "B1", "B2"];
+// Same numbers as gui.html and engine.rs: 6 input strips, then buses V1 V2 V3 B1 B2.
+const NUM_STRIPS = 6, BUS_IDS = ["V1", "V2", "V3", "B1", "B2"];
 const MIN_DB = -60, MAX_DB = 12;
 // Fader taper: more travel around 0 dB (same as gui.html).
 const TAPER = [[-60, 0], [-36, .15], [-24, .3], [-12, .55], [0, .8], [12, 1]];
@@ -326,7 +326,7 @@ function build(S) {
   S.ch.forEach((c, ch) => {
     const strip = ch < NUM_STRIPS;
     const bus = strip ? "" : BUS_IDS[ch - NUM_STRIPS] || "";
-    const col = el("section", "col " + (strip ? "strip" : "bus " + (bus[0] === "A" ? "a" : "b")));
+    const col = el("section", "col " + (strip ? "strip" : "bus " + (bus[0] === "V" ? "a" : "b")));
     col.ch = ch;
     col.nameEl = el("div", "name");
     col.subEl = el("div", "sub");
@@ -356,7 +356,7 @@ function build(S) {
     col.append(keys);
     if (strip) {
       col.routes = BUS_IDS.map((id, b) => {
-        const k = el("button", "k " + (id[0] === "A" ? "ra" : "rb"), id);
+        const k = el("button", "k " + (id[0] === "V" ? "ra" : "rb"), id);
         k.addEventListener("click", () => {
           const on = k.getAttribute("aria-pressed") !== "true";
           hold("route" + ch + "_" + b); setPressed(k, on);

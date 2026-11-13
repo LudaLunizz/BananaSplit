@@ -7,7 +7,7 @@
 //! sound settings, e.g. `CABLE Output` or `Headset Earphone`.
 
 use bananasplit::config::{DEFAULT_DEVICE, PHYSICAL};
-use bananasplit::engine::{BUS_IDS, NUM_BUSES, NUM_STRIPS};
+use bananasplit::engine::{BUS_IDS, LEGACY_BUS_IDS, NUM_BUSES, NUM_STRIPS};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DevInfo {
@@ -19,7 +19,7 @@ pub struct DevInfo {
 
 /// Virtual cables and other software devices. Never picked for `@physical`:
 /// if the Windows default output is "CABLE Input" (so all desktop audio
-/// goes through the mixer), A1 must still go to real speakers.
+/// goes through the mixer), V1 must still go to real speakers.
 pub fn is_virtual(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     n.contains("vb-audio")
@@ -79,9 +79,15 @@ fn splitter_device(name: &str) -> Option<u32> {
 
 /// The name of the half of channel `ch`'s Splitter cable that other apps
 /// use: "Splitter 3" for strip 3 (channel 2), "Splitter B1" for bus B1.
-/// Channels are strips 1-6, then buses A1..B2.
+/// Channels are strips 1-6, then buses V1..B2. The Splitter driver names
+/// the cables of V1..V3 "Splitter A1".."Splitter A3" (the bus names up to
+/// 2.8.24): those device names are the driver's and stay.
 pub fn splitter_name(ch: usize) -> String {
-    if ch < NUM_STRIPS { format!("Splitter {}", ch + 1) } else { format!("Splitter {}", BUS_IDS[ch - NUM_STRIPS]) }
+    if ch < NUM_STRIPS {
+        format!("Splitter {}", ch + 1)
+    } else {
+        format!("Splitter {}", LEGACY_BUS_IDS[ch - NUM_STRIPS])
+    }
 }
 
 /// Which channel's Splitter cable an endpoint belongs to, and which half,
@@ -116,7 +122,7 @@ fn endpoint_cable(endpoint: &str) -> Option<(usize, SplitterEnd)> {
             Some(_) => None,
         };
     }
-    let b = (0..NUM_BUSES).find(|&b| id.eq_ignore_ascii_case(BUS_IDS[b]))?;
+    let b = (0..NUM_BUSES).find(|&b| id.eq_ignore_ascii_case(LEGACY_BUS_IDS[b]))?;
     // a bus's cable: the bus plays into "Splitter B1 Input", apps record
     // "Splitter B1"
     match suffix {
@@ -198,7 +204,7 @@ pub fn names_cable(pattern: &str) -> bool {
 /// and plays into them, so following such a default would feed the mixer
 /// into itself. That happens with two everyday setups: the default output
 /// set to "CABLE Input" or "Splitter 1" (all desktop sound through the
-/// mixer: A1 would play into the cable a strip records), and the default
+/// mixer: V1 would play into the cable a strip records), and the default
 /// input set to "CABLE Output" or "Splitter B1" (the virtual mic for every
 /// app: the Mic strip would record what B1 plays into it).
 pub fn default_cable<'a>(devs: &'a [DevInfo], default_id: Option<&str>) -> Option<&'a DevInfo> {
@@ -260,7 +266,7 @@ mod tests {
         let outs =
             devs(&["CABLE Input (VB-Audio Virtual Cable)", "Speakers (Realtek(R) Audio)", "Headphones (USB Headset)"]);
         // default output "CABLE Input" (desktop sound through the mixer):
-        // A1 plays on the speakers, not into the cable a strip records
+        // V1 plays on the speakers, not into the cable a strip records
         assert_eq!(resolve(DEFAULT_DEVICE, &outs, Some("id0")).unwrap().id, "id1");
         assert_eq!(default_cable(&outs, Some("id0")).unwrap().id, "id0");
         // a real default is followed as before
@@ -438,7 +444,7 @@ mod tests {
         strips[0] = vec![1];
         buses[0] = vec![0];
         assert_eq!(splitter_feedback(&caps, &rens, &strips, &buses).len(), 1);
-        // A1 plays into device 2, strip 1 records device 1: not connected
+        // V1 plays into device 2, strip 1 records device 1: not connected
         strips[0] = vec![0];
         assert!(splitter_feedback(&caps, &rens, &strips, &buses).is_empty());
         // "1-" is the same device as no number
@@ -459,7 +465,7 @@ mod tests {
         let none: Vec<Vec<usize>> = vec![vec![]; NUM_STRIPS];
         let quiet: Vec<Vec<usize>> = vec![vec![]; NUM_BUSES];
         // the usual setup: strip 1 records its cable, B1 plays into its own,
-        // A1 plays on the speakers
+        // V1 plays on the speakers
         let mut strips = none.clone();
         strips[0] = vec![1];
         strips[1] = vec![0];
@@ -467,12 +473,12 @@ mod tests {
         buses[0] = vec![0];
         buses[3] = vec![2];
         assert!(splitter_feedback(&caps, &rens, &strips, &buses).is_empty());
-        // A1 plays into strip 1's cable too
+        // V1 plays into strip 1's cable too
         buses[0] = vec![0, 1];
         assert_eq!(
             splitter_feedback(&caps, &rens, &strips, &buses),
             [
-                "bus A1 plays into Splitter 1 and strip 1 records that cable: if strip 1 goes to A1 (directly or through a send), it feeds back"
+                "bus V1 plays into Splitter 1 and strip 1 records that cable: if strip 1 goes to V1 (directly or through a send), it feeds back"
             ]
         );
         // strip 2 records B1's microphone as well
@@ -493,7 +499,7 @@ mod tests {
 
     #[test]
     fn default_never_follows_windows_into_splitter() {
-        // default output "Splitter 1" (all desktop sound into strip 1): A1
+        // default output "Splitter 1" (all desktop sound into strip 1): V1
         // plays on the speakers, not back into the cable strip 1 records
         let outs = devs(&["Splitter 1 (Splitter Cables)", "Speakers (Realtek(R) Audio)"]);
         assert_eq!(resolve(DEFAULT_DEVICE, &outs, Some("id0")).unwrap().id, "id1");

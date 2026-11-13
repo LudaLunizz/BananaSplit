@@ -74,10 +74,10 @@ Per-channel virtual cables come from two drivers. Without either, cables are una
 
 - **Splitter**, BananaSplit's own cables, installed separately: a cable for every channel, named after it, so switching one channel's cable off leaves the others alone.
   - Strip N: apps play into `Splitter N`, and strip N records `Splitter N Output`. The strip's channel menu shows `Splitter N`.
-  - Bus A1 … B2: the bus plays into `Splitter B1 Input` (say), and apps record `Splitter B1` as their microphone. The bus's channel menu shows `Splitter B1`.
+  - Bus V1 … B2: the bus plays into `Splitter B1 Input` (say), and apps record `Splitter B1` as their microphone. The bus's channel menu shows `Splitter B1`.
 - **VB-Audio** cable pairs. They cover the channels whose Splitter cable is missing (all of them, without Splitter), strips first, then buses. Each pair is used by at most one channel. Installing Splitter therefore moves channels off VB-Audio's cables: point apps that used "CABLE Input" or "CABLE Output" at the channel's Splitter cable.
 
-A channel uses its cable while the cable is switched on in its menu: every strip and B1, B2 to begin with (A1 … A3 are speakers and headsets, so `Splitter A1` … `Splitter A3` stay silent until you switch their cables on). `@default` never follows Windows into a cable of either kind, because BananaSplit would then record itself. If a bus plays into a Splitter cable that a strip records, the status line warns that the strip mustn't go to that bus.
+A channel uses its cable while the cable is switched on in its menu: every strip and B1, B2 to begin with (V1 … V3 have none at first, so `Splitter A1` … `Splitter A3`, the cables of V1 … V3 (their names up to 2.8.24, kept by the driver), stay silent until you switch their cables on). `@default` never follows Windows into a cable of either kind, because BananaSplit would then record itself. If a bus plays into a Splitter cable that a strip records, the status line warns that the strip mustn't go to that bus.
 
 **Menu ▸ Virtual cables…** explains them and shows which cables are installed (and which Splitter cables are missing), whether Voicemeeter is, and the current Windows default devices. On the first start without cables it opens by itself, once. It has buttons for the Splitter and VB-Audio download pages and the Windows sound settings.
 

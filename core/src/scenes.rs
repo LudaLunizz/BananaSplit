@@ -253,7 +253,7 @@ mod tests {
         sh.buses[1].mute.store(true, Relaxed);
         sh.buses[3].eq.on.store(true, Relaxed);
         sh.buses[3].eq.bands[2].gain_db.store(-3.0);
-        sh.buses[4].routes.store(0b00010, Relaxed); // B2 -> A2
+        sh.buses[4].routes.store(0b00010, Relaxed); // B2 -> V2
         sh.strips[0].dynamics.gate_on.store(true, Relaxed);
         sh.strips[0].dynamics.comp[crate::dynamics::C_RATIO].store(6.5);
         sh.rec_links.store(0b100_0000_0001, Relaxed);

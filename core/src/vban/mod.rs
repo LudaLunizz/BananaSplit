@@ -35,7 +35,6 @@ pub use proto::{DEFAULT_PORT, SampleFormat};
 pub use tap::{NUM_IN, NUM_OUT, VbanRt, VbanTap};
 
 use crate::engine::NUM_STRIPS;
-use crate::recorder::{NUM_SOURCES, source_id};
 use rx::RxStream;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
@@ -122,12 +121,10 @@ pub fn parse_strip(v: &str) -> Result<usize, String> {
         .ok_or_else(|| format!("expected a strip 1-{NUM_STRIPS}, got {v:?}"))
 }
 
-/// `1`..`6`, `A1`..`B2` -> source index (same numbering as the recorder).
+/// `1`..`6`, `V1`..`B2` (or `A1`..`A3`, the names up to 2.8.24) -> source
+/// index (same numbering as the recorder).
 pub fn parse_source(v: &str) -> Result<usize, String> {
-    let v = v.trim();
-    (0..NUM_SOURCES)
-        .find(|&i| source_id(i).eq_ignore_ascii_case(v))
-        .ok_or_else(|| format!("expected a source 1-6, A1, A2, A3, B1 or B2, got {v:?}"))
+    crate::recorder::source_index(v).ok_or_else(|| format!("expected a source 1-6, V1, V2, V3, B1 or B2, got {v:?}"))
 }
 
 pub fn parse_buffer_ms(v: &str) -> Result<u32, String> {
@@ -163,7 +160,7 @@ pub struct OutStream {
     pub name: String,
     pub to: Option<Ipv4Addr>,
     pub port: u16,
-    /// Source index 0..=10 (strips 1-6, buses A1-B2).
+    /// Source index 0..=10 (strips 1-6, buses V1-B2).
     pub source: usize,
     pub format: SampleFormat,
     pub channels: u8,

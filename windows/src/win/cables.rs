@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn report_lists_splitter_cables() {
-        // all of Splitter but bus A2's microphone half (switched off in
+        // all of Splitter but bus V2's microphone half ("Splitter A2") (switched off in
         // Windows), with "Splitter B1" as every app's default microphone
         let rens: Vec<String> = (0..NUM_STRIPS + NUM_BUSES)
             .map(|ch| {
@@ -174,7 +174,7 @@ mod tests {
             .collect();
         let rens = devs(&rens.iter().map(|s| s.as_str()).collect::<Vec<_>>());
         let caps = devs(&caps.iter().map(|s| s.as_str()).collect::<Vec<_>>());
-        // caps: strips' outputs id0..id5, then A1 (id6), A3 (id7), B1 (id8), B2 (id9)
+        // caps: strips' outputs id0..id5, then V1 = Splitter A1 (id6), V3 = Splitter A3 (id7), B1 (id8), B2 (id9)
         assert_eq!(
             report_json(&caps, &rens, Some("id8"), Some("id11")),
             r#"{"splitter":{"found":true,"cables":["Splitter 1","Splitter 2","Splitter 3","Splitter 4","Splitter 5","Splitter 6","Splitter A1","Splitter A3","Splitter B1","Splitter B2"],"missing":["Splitter A2"]},"pairs":[],"voicemeeter":[],"output":{"name":"Speakers","cable":false},"input":{"name":"Splitter B1","cable":true}}"#

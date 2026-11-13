@@ -488,7 +488,7 @@ mod tests {
                 Some(format!("Splitter {} (Splitter Cables)", s + 1).as_str())
             );
         }
-        for (b, id) in ["A1", "A2", "A3", "B1", "B2"].iter().enumerate() {
+        for (b, id) in bananasplit::engine::LEGACY_BUS_IDS.iter().enumerate() {
             assert_eq!(p.bus_cable[b].as_deref(), Some(format!("Splitter {id} Input (Splitter Cables)").as_str()));
             assert_eq!(p.bus_cable_label[b].as_deref(), Some(format!("Splitter {id} (Splitter Cables)").as_str()));
         }
@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn default_config_uses_strips_and_b_buses() {
-        // strips and B1, B2 have their cables on; A1..A3 are speakers
+        // strips and B1, B2 have their cables on; V1..V3 none
         let cfg = Config::default();
         let (caps, rens) = splitter(&[]);
         let p = build_plan_info(&cfg, &caps, &rens);
@@ -680,6 +680,9 @@ mod tests {
     fn the_menu_json() {
         let mut cfg = Config::default();
         cfg.strips[0].connect = vec!["@default".into(), "Mic \"<1>\"".into()];
+        // as up to 2.8.24: the first bus on the default output, B2 on none
+        cfg.buses[0].connect = vec!["@default".into()];
+        cfg.buses[4].connect = vec![];
         let (caps, rens) = splitter(&[]);
         let devs = Devs { caps, rens, def_cap: Some("id0".into()), def_ren: None };
         let o = list_with(&cfg, &Ok(devs));
@@ -687,7 +690,7 @@ mod tests {
         assert!(o.contains(r#""ch":[{"id":"1","cable":{"on":true,"name":"Splitter 1"},"conn":["@default","Mic \"\u003c1\u003e\"","Splitter 1 Output"],"connect":["@default","Mic \"\u003c1\u003e\""]},"#), "{o}");
         assert!(
             o.contains(
-                r#"{"id":"A1","cable":{"on":false,"name":"Virtual cable"},"conn":["@default"],"connect":["@default"]}"#
+                r#"{"id":"V1","cable":{"on":false,"name":"Virtual cable"},"conn":["@default"],"connect":["@default"]}"#
             ),
             "{o}"
         );

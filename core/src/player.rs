@@ -33,7 +33,7 @@
 
 use crate::engine::{MAX_FRAMES, NUM_BUSES};
 use crate::mp3;
-use crate::recorder::{NUM_SOURCES, source_id, stamp_day};
+use crate::recorder::{NUM_SOURCES, stamp_day};
 use crate::vban::resample::{MAX_DOWN, Resampler};
 use crate::vban::ring::Ring;
 use std::collections::{HashMap, HashSet};
@@ -62,7 +62,7 @@ pub const MIN_RATE: u32 = 8000;
 /// Shared between the player thread and the engine.
 pub struct PlayTap {
     ring: Ring,
-    /// Buses the player feeds (bit b = bus b, A1 = bit 0).
+    /// Buses the player feeds (bit b = bus b, V1 = bit 0).
     pub routes: AtomicU8,
     /// The engine plays while this is set (pause = clear it).
     run: AtomicBool,
@@ -540,7 +540,7 @@ impl TrackReader {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Track {
-    /// `mix`, `1-Mic`, `A1-Speakers`, or the file name for other files.
+    /// `mix`, `1-Mic`, `V1-Speakers` (`A1-…` up to 2.8.24), or the file name for other files.
     pub label: String,
     pub parts: Vec<(PathBuf, FileInfo)>,
 }
@@ -638,7 +638,7 @@ fn label_rank(label: &str) -> (usize, String) {
         return (0, String::new());
     }
     let id = label.split('-').next().unwrap_or("");
-    match (0..NUM_SOURCES).position(|i| source_id(i) == id) {
+    match crate::recorder::source_index(id) {
         Some(i) => (1 + i, label.to_string()),
         None => (1 + NUM_SOURCES, label.to_string()),
     }
@@ -1962,7 +1962,7 @@ mod tests {
         assert!(b.out.iter().all(|o| o.iter().all(|&x| x == 0.0)));
         assert_eq!(tap.test_played(), 0);
         tap.test_push(&frames[2 * 1000..2 * 8000]);
-        // first cycle fades in on A1 (the default route)
+        // first cycle fades in on V1 (the default route)
         b.run(&mut rt, &tap, 128);
         assert!(b.out[0][0] > 0.0 && b.out[0][0] < 0.01);
         assert_eq!(b.out[0][127], 0.5);

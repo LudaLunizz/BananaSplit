@@ -69,7 +69,7 @@ impl InSlot {
 
 pub struct OutSlot {
     ring: OnceLock<Ring>,
-    /// Source 0..=10 (strips 1-6, then buses A1-B2); NONE = off.
+    /// Source 0..=10 (strips 1-6, then buses V1-B2); NONE = off.
     pub(crate) source: AtomicU8,
     /// Frames the engine could not hand over (the sender fell behind).
     pub(crate) dropped: AtomicU32,

@@ -73,7 +73,7 @@ try:
     check(st['app']['platform'] == 'linux', 'app.platform is "linux"')
     check('welcome' not in st['app'], 'no welcome on Linux')
     # --- the channels: 11, ids, strips have dyn, buses do not
-    check([c['id'] for c in st['ch']] == ['1','2','3','4','5','6','A1','A2','A3','B1','B2'], 'channel ids as documented')
+    check([c['id'] for c in st['ch']] == ['1','2','3','4','5','6','V1','V2','V3','B1','B2'], 'channel ids as documented')
     check('dyn' in st['ch'][0] and 'dyn' not in st['ch'][6], 'dyn on strips only')
     check(len(st['ch'][0]['eq']['b']) == 6 and len(st['ch'][0]['eq']['b'][0]) == 5, 'eq: 6 bands of 5 values')
     check(len(st['ch'][0]['dyn']['g']) == 5 and len(st['ch'][0]['dyn']['c']) == 6, 'dyn: 5 gate and 6 compressor settings')

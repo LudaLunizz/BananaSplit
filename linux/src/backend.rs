@@ -11,7 +11,7 @@ use crate::cables::{CableSet, Cables};
 use crate::devices::{self, Resolver, Side, client_of};
 use crate::jack::{JackClient, LATENCY_CAPTURE, LATENCY_PLAYBACK, Port, regex_escape};
 use bananasplit::config::{Config, DEFAULT_DEVICE, PHYSICAL};
-use bananasplit::engine::{BUS_IDS, Engine, MAX_FRAMES, NUM_BUSES, NUM_STRIPS, Shared};
+use bananasplit::engine::{BUS_IDS, Engine, LEGACY_BUS_IDS, MAX_FRAMES, NUM_BUSES, NUM_STRIPS, Shared};
 use bananasplit::player::PlayTap;
 use bananasplit::recorder::RecTap;
 use bananasplit::vban::VbanTap;
@@ -210,7 +210,10 @@ impl Backend {
             ins.push(pair(&format!("in{}", s + 1), true)?);
         }
         let mut outs = Vec::with_capacity(NUM_BUSES);
-        for id in BUS_IDS {
+        // The port names stay A1_L .. B2_R for V1 .. B2 (the names up to
+        // 2.8.24): patchbays, link rules and other programs' `connect`
+        // lines remember them.
+        for id in LEGACY_BUS_IDS {
             outs.push(pair(id, false)?);
         }
         let in_ports: [[Port; 2]; NUM_STRIPS] = ins.try_into().unwrap_or_else(|_| unreachable!());
