@@ -8,6 +8,7 @@
 
 use crate::ring::MAX_RATIO;
 use std::fmt::Write as _;
+use std::time::Duration;
 
 /// The mixer's rate.
 pub const RATE: u32 = 48_000;
@@ -145,14 +146,73 @@ pub fn buffer_request(frames: u32, range: Option<(f64, f64)>) -> Option<u32> {
     Some(f64::from(frames).clamp(min.max(1.0), max.max(1.0)).round() as u32)
 }
 
-/// `AVAuthorizationStatus` for the microphone: Some(true) allowed,
-/// Some(false) denied or restricted (inputs read as silence), None not
-/// asked yet.
-pub fn mic_status(status: isize) -> Option<bool> {
+/// May BananaSplit record from microphones (`AVAuthorizationStatus` for
+/// audio)?
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    Authorized,
+    /// The user said no in System Settings: every input reads as silence.
+    Denied,
+    /// A policy (Screen Time, device management) says no.
+    Restricted,
+    /// Not asked yet: the first input BananaSplit starts asks.
+    NotDetermined,
+}
+
+/// The `AVAuthorizationStatus` integer as an [`Access`] (values from the
+/// SDK's AVCaptureDevice.h: 0 not determined, 1 restricted, 2 denied,
+/// 3 authorized). An unknown value counts as not determined.
+pub fn access_from_status(status: isize) -> Access {
     match status {
-        3 => Some(true),      // AVAuthorizationStatusAuthorized
-        1 | 2 => Some(false), // Restricted, Denied
-        _ => None,            // NotDetermined
+        3 => Access::Authorized,
+        2 => Access::Denied,
+        1 => Access::Restricted,
+        _ => Access::NotDetermined,
+    }
+}
+
+/// The status line while a device start waits for the user to answer
+/// macOS's microphone question.
+pub const WAITING_FOR_MIC: &str = "Waiting for microphone permission: answer macOS's question to start the audio";
+
+/// The status line once that start is done (it replaces the waiting text).
+pub const STARTED_AFTER_WAIT: &str = "The audio devices are started";
+
+/// What to tell the user about microphone access, when it keeps the
+/// inputs silent (Denied or Restricted); None otherwise.
+pub fn access_note(access: Access) -> Option<&'static str> {
+    match access {
+        Access::Denied => Some(
+            "macOS doesn't let BananaSplit record (every input is silent): allow it in System Settings › Privacy & Security › Microphone › BananaSplit, then restart BananaSplit. If it is allowed there but every input stays silent after an update, run tccutil reset Microphone io.github.ludalunizz.bananasplit in the Terminal and start BananaSplit again",
+        ),
+        Access::Restricted => Some(
+            "a policy on this Mac (Screen Time or device management) doesn't let BananaSplit record (every input is silent): see System Settings › Privacy & Security › Microphone › BananaSplit, or ask whoever manages this Mac. If it is allowed there but every input stays silent after an update, run tccutil reset Microphone io.github.ludalunizz.bananasplit in the Terminal and start BananaSplit again",
+        ),
+        Access::Authorized | Access::NotDetermined => None,
+    }
+}
+
+/// When to try a failed device start again: 1 s, 2 s, 4 s, ... up to 30 s
+/// between attempts, from the first again after `reset` (the devices
+/// changed, or a start worked).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Backoff {
+    failures: u32,
+}
+
+impl Backoff {
+    /// The longest wait between two attempts.
+    pub const MAX: Duration = Duration::from_secs(30);
+
+    /// One more failed attempt: how long to wait before the next.
+    pub fn next_delay(&mut self) -> Duration {
+        let secs = 1u64.checked_shl(self.failures).unwrap_or(u64::MAX);
+        self.failures = self.failures.saturating_add(1);
+        Duration::from_secs(secs).min(Self::MAX)
+    }
+
+    pub fn reset(&mut self) {
+        self.failures = 0;
     }
 }
 
@@ -506,23 +566,65 @@ mod tests {
         assert_eq!(buffer_request(1, Some((14.6, 100.0))), Some(15));
     }
 
-    // ---- mic_status
+    // ---- access_from_status, access_note
     #[test]
-    fn mic_status_allowed() {
-        assert_eq!(mic_status(3), Some(true));
+    fn access_each_known_status() {
+        assert_eq!(access_from_status(0), Access::NotDetermined);
+        assert_eq!(access_from_status(1), Access::Restricted);
+        assert_eq!(access_from_status(2), Access::Denied);
+        assert_eq!(access_from_status(3), Access::Authorized);
     }
 
     #[test]
-    fn mic_status_denied_or_restricted() {
-        assert_eq!(mic_status(1), Some(false));
-        assert_eq!(mic_status(2), Some(false));
+    fn access_unknown_status_is_not_determined() {
+        assert_eq!(access_from_status(4), Access::NotDetermined);
+        assert_eq!(access_from_status(-1), Access::NotDetermined);
+        assert_eq!(access_from_status(isize::MAX), Access::NotDetermined);
     }
 
     #[test]
-    fn mic_status_not_asked_or_unknown() {
-        assert_eq!(mic_status(0), None);
-        assert_eq!(mic_status(4), None);
-        assert_eq!(mic_status(-1), None);
+    fn access_note_only_when_inputs_are_silenced() {
+        assert_eq!(access_note(Access::Authorized), None);
+        assert_eq!(access_note(Access::NotDetermined), None);
+        for a in [Access::Denied, Access::Restricted] {
+            let n = access_note(a).expect("a note");
+            assert!(n.contains("System Settings › Privacy & Security › Microphone › BananaSplit"));
+            assert!(n.contains("tccutil reset Microphone io.github.ludalunizz.bananasplit"));
+        }
+    }
+
+    // ---- Backoff
+    #[test]
+    fn backoff_first_attempt_waits_one_second_then_doubles() {
+        let mut b = Backoff::default();
+        assert_eq!(b.next_delay(), Duration::from_secs(1));
+        assert_eq!(b.next_delay(), Duration::from_secs(2));
+        assert_eq!(b.next_delay(), Duration::from_secs(4));
+        assert_eq!(b.next_delay(), Duration::from_secs(8));
+        assert_eq!(b.next_delay(), Duration::from_secs(16));
+    }
+
+    #[test]
+    fn backoff_caps_at_thirty_seconds_and_never_overflows() {
+        let mut b = Backoff::default();
+        for _ in 0..5 {
+            b.next_delay();
+        }
+        assert_eq!(b.next_delay(), Backoff::MAX);
+        for _ in 0..200 {
+            assert_eq!(b.next_delay(), Duration::from_secs(30));
+        }
+    }
+
+    #[test]
+    fn backoff_reset_starts_over() {
+        let mut b = Backoff::default();
+        for _ in 0..10 {
+            b.next_delay();
+        }
+        b.reset();
+        assert_eq!(b, Backoff::default());
+        assert_eq!(b.next_delay(), Duration::from_secs(1));
     }
 
     // ---- status_report

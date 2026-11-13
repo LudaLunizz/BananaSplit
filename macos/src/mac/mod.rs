@@ -18,26 +18,38 @@ pub mod route;
 use bananasplit::config::Config;
 use bananasplit::engine::Shared;
 use bananasplit::player::PlayTap;
+use bananasplit::pure::{Access, Backoff, STARTED_AFTER_WAIT, WAITING_FOR_MIC, access_note};
 use bananasplit::recorder::RecTap;
 use bananasplit::vban::VbanTap;
 use coreaudio::{Graph, RATE, Stats};
 use route::DevInfo;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 /// Never happens: devices that fail are retried, there is no server that
 /// can go away (kept for the main loop, which is shared with Linux).
 pub const SERVER_GONE: &str = "the macOS audio system stopped";
 
-/// What a strip says when macOS doesn't let BananaSplit record.
-pub const MIC_DENIED: &str = "macOS doesn't let BananaSplit record (every input is silent): allow it in System Settings › Privacy & Security › Microphone, then restart BananaSplit";
-
 /// How often to look for added/removed devices and default-device changes.
 const RESCAN: Duration = Duration::from_secs(2);
 /// After reconnecting the devices because one stalled: how long the audio
 /// must run before another stall is reconnected again.
 const STALL_REARM: Duration = Duration::from_secs(60);
+/// A start still waiting this long is waiting for the user's answer to
+/// macOS's microphone question: the status line says so.
+const SAY_WAITING: Duration = Duration::from_millis(300);
+
+/// A device start running on its own thread, because macOS may ask the
+/// user about the microphone first and `AudioDeviceStart` waits for the
+/// answer: the menu and the page keep working meanwhile.
+struct Pending {
+    rx: Receiver<Result<Graph, String>>,
+    since: Instant,
+    /// The status line said "waiting" already.
+    told: bool,
+}
 
 pub struct Status {
     pub sample_rate: u32,
@@ -155,6 +167,16 @@ pub struct Session {
     bad_seen: u64,
     /// Said once with the next connection's errors.
     note: Option<String>,
+    /// A start waiting for the microphone question (see `Pending`).
+    pending: Option<Pending>,
+    /// What it returned, until `connect` takes it.
+    arrived: Option<Result<Graph, String>>,
+    /// Failed starts are tried again after 1 s, 2 s, 4 s, ... up to 30 s,
+    /// and right away when the devices change.
+    backoff: Backoff,
+    retry_at: Option<Instant>,
+    /// Why the last start failed (while there is no graph).
+    last_err: Option<String>,
     rec_tap: Arc<RecTap>,
     vban_tap: Arc<VbanTap>,
     play_tap: Option<Arc<PlayTap>>,
@@ -169,23 +191,12 @@ impl Session {
         play_tap: Arc<PlayTap>,
         notes: &mut Vec<String>,
     ) -> Result<Session, String> {
-        let signature = coreaudio::signature();
-        let stats = Arc::new(Stats::default());
-        shared.sample_rate.store(RATE, SeqCst);
-        // Start audio right away; the first connect() reuses this graph.
-        let graph =
-            match Graph::build(cfg, &shared, &stats, rec_tap.clone(), vban_tap.clone(), Some(play_tap.clone()), None) {
-                Ok(g) => Some(g),
-                Err(e) => {
-                    notes.push(e);
-                    None
-                }
-            };
-        Ok(Session {
+        let _ = notes; // a failed start is said by the first connect()
+        let mut s = Session {
             shared,
-            stats,
-            graph,
-            signature,
+            stats: Arc::new(Stats::default()),
+            graph: None,
+            signature: String::new(),
             last_scan: Instant::now(),
             dirty: false,
             stall_retried: None,
@@ -193,10 +204,72 @@ impl Session {
             guard_retried: None,
             bad_seen: 0,
             note: None,
+            pending: None,
+            arrived: None,
+            backoff: Backoff::default(),
+            retry_at: None,
+            last_err: None,
             rec_tap,
             vban_tap,
             play_tap: Some(play_tap),
-        })
+        };
+        // Start audio right away; the first connect() reuses this graph.
+        s.start(cfg);
+        Ok(s)
+    }
+
+    /// Stop the old graph, then open every configured device again: on a
+    /// thread of its own while macOS hasn't asked about the microphone yet
+    /// (the answer comes back through `pending`), otherwise right here, as
+    /// it always did.
+    fn start(&mut self, cfg: &Config) {
+        self.graph = None; // stop the old IOProcs first
+        self.dirty = false;
+        self.signature = coreaudio::signature();
+        self.last_scan = Instant::now();
+        self.shared.sample_rate.store(RATE, SeqCst);
+        if ffi::mic_access() == Access::NotDetermined {
+            let (tx, rx) = mpsc::channel();
+            let (cfg, shared, stats) = (cfg.clone(), self.shared.clone(), self.stats.clone());
+            let (rec, vban, play) = (self.rec_tap.clone(), self.vban_tap.clone(), self.play_tap.clone());
+            let bench = self.bench.clone();
+            let spawned = std::thread::Builder::new().name("bs-start".into()).spawn(move || {
+                let built = Graph::build(&cfg, &shared, &stats, rec, vban, play, bench.as_deref());
+                // (Session gone: the graph stops here)
+                let _ = tx.send(built);
+            });
+            if spawned.is_ok() {
+                self.pending = Some(Pending { rx, since: Instant::now(), told: false });
+                return;
+            }
+        }
+        let built = Graph::build(
+            cfg,
+            &self.shared,
+            &self.stats,
+            self.rec_tap.clone(),
+            self.vban_tap.clone(),
+            self.play_tap.clone(),
+            self.bench.as_deref(),
+        );
+        self.install(built);
+    }
+
+    /// Take a start's result: the new graph, or why it failed (tried again
+    /// after the next backoff delay).
+    fn install(&mut self, built: Result<Graph, String>) {
+        match built {
+            Ok(g) => {
+                self.graph = Some(g);
+                self.backoff.reset();
+                self.retry_at = None;
+                self.last_err = None;
+            }
+            Err(e) => {
+                self.retry_at = Some(Instant::now() + self.backoff.next_delay());
+                self.last_err = Some(e);
+            }
+        }
     }
 
     /// Devices that fail are retried and the graph is rebuilt, so there is
@@ -210,6 +283,28 @@ impl Session {
     /// delivering audio. The caller then calls `connect`, which rebuilds
     /// the graph.
     pub fn take_changed(&mut self) -> bool {
+        // A start waiting for the microphone question: nothing else until
+        // it is back (the devices are looked at again after that).
+        if let Some(p) = &mut self.pending {
+            let got = match p.rx.try_recv() {
+                Ok(built) => built,
+                Err(TryRecvError::Disconnected) => Err("the audio start stopped before it finished".into()),
+                Err(TryRecvError::Empty) => {
+                    if !p.told && p.since.elapsed() >= SAY_WAITING {
+                        p.told = true;
+                        self.note = Some(WAITING_FOR_MIC.into());
+                        return true;
+                    }
+                    return false;
+                }
+            };
+            if p.told {
+                self.note = Some(STARTED_AFTER_WAIT.into());
+            }
+            self.pending = None;
+            self.arrived = Some(got);
+            return true;
+        }
         if self.last_scan.elapsed() < RESCAN {
             return false;
         }
@@ -221,11 +316,22 @@ impl Session {
             self.stall_retried = None;
             self.bench = None;
             self.guard_retried = None;
+            // the devices changed: a failed start is tried again now, and
+            // its backoff starts over
+            self.backoff.reset();
+            self.retry_at = None;
             return true;
         }
-        if self.graph.is_none() || self.dirty {
-            self.dirty = true; // retry a failed build now and then
+        if self.dirty {
             return true;
+        }
+        if self.graph.is_none() {
+            // a failed start, tried again after its backoff delay
+            if self.retry_at.is_none_or(|t| Instant::now() >= t) {
+                self.dirty = true;
+                return true;
+            }
+            return false;
         }
         if self.guard_retried.is_none_or(|t| t.elapsed() >= STALL_REARM) {
             let bad = self.stats.bad_cycles.load(Relaxed);
@@ -275,35 +381,44 @@ impl Session {
 
     /// (Re)open every configured device if anything changed. `force` = the
     /// user asked for it (Reconnect, a channel menu).
+    /// While a start waits for the microphone question it returns at once
+    /// (with the "waiting" note when there is one); a forced reconnect
+    /// meanwhile happens as soon as the answer is in.
     pub fn connect(&mut self, cfg: &Config, force: bool) -> (Vec<String>, Vec<String>) {
-        if force || self.dirty || self.graph.is_none() {
-            self.graph = None; // stop the old IOProcs first
-            self.dirty = false;
-            self.signature = coreaudio::signature();
-            self.last_scan = Instant::now();
-            self.shared.sample_rate.store(RATE, SeqCst);
-            match Graph::build(
-                cfg,
-                &self.shared,
-                &self.stats,
-                self.rec_tap.clone(),
-                self.vban_tap.clone(),
-                self.play_tap.clone(),
-                self.bench.as_deref(),
-            ) {
-                Ok(g) => self.graph = Some(g),
-                Err(e) => return (Vec::new(), vec![e]),
+        if let Some(built) = self.arrived.take() {
+            self.install(built);
+        }
+        if self.pending.is_some() {
+            self.dirty |= force;
+            return (Vec::new(), self.note.take().into_iter().collect());
+        }
+        let retry_due = self.retry_at.is_none_or(|t| Instant::now() >= t);
+        if force || self.dirty || (self.graph.is_none() && retry_due) {
+            self.start(cfg);
+            if self.pending.is_some() {
+                return (Vec::new(), self.note.take().into_iter().collect());
             }
         }
-        let g = self.graph.as_ref().expect("graph built");
-        let mut errs = g.errs.clone();
-        if g.inputs > 0 && ffi::mic_access() == Some(false) {
-            errs.insert(0, MIC_DENIED.into());
-        }
+        let mut errs = Vec::new();
+        let desc = match &self.graph {
+            Some(g) => {
+                errs = g.errs.clone();
+                if g.inputs > 0
+                    && let Some(n) = access_note(ffi::mic_access())
+                {
+                    errs.insert(0, n.into());
+                }
+                g.desc.clone()
+            }
+            None => {
+                errs.extend(self.last_err.clone());
+                Vec::new()
+            }
+        };
         if let Some(n) = self.note.take() {
             errs.insert(0, n);
         }
-        (g.desc.clone(), errs)
+        (desc, errs)
     }
 
     /// What each channel is connected to now, without (re)building
@@ -330,5 +445,12 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.graph = None;
+        // A start still waiting for the microphone question: give it a
+        // moment, so its devices stop here; otherwise its thread stops them
+        // when it is done (the channel is closed by then).
+        if let Some(p) = self.pending.take() {
+            drop(p.rx.recv_timeout(Duration::from_secs(2)));
+        }
+        self.arrived = None;
     }
 }

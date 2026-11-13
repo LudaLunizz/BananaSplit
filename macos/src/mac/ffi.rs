@@ -324,11 +324,11 @@ pub fn latency_frames(device: AudioObjectID, input: bool) -> u32 {
     dev.saturating_add(safety).saturating_add(stream)
 }
 
-/// May BananaSplit record from microphones? Some(false): the user said no
-/// (or a policy does) in System Settings › Privacy & Security ›
-/// Microphone, and every input reads as silence. None: not asked yet (the
-/// first input BananaSplit starts asks).
-pub fn mic_access() -> Option<bool> {
+/// May BananaSplit record from microphones? Denied or Restricted: the user
+/// said no (or a policy does) in System Settings › Privacy & Security ›
+/// Microphone, and every input reads as silence. NotDetermined: not asked
+/// yet (the first input BananaSplit starts asks). Never asks by itself.
+pub fn mic_access() -> bananasplit::pure::Access {
     // SAFETY: Objective-C runtime calls with NUL-terminated names; the
     // message `+[AVCaptureDevice authorizationStatusForMediaType:]` takes an
     // NSString and returns an NSInteger, and objc_msgSend is called through
@@ -339,14 +339,14 @@ pub fn mic_access() -> Option<bool> {
         let class = objc_getClass(c"AVCaptureDevice".as_ptr());
         let sel = sel_registerName(c"authorizationStatusForMediaType:".as_ptr());
         if class.is_null() || sel.is_null() || AVMediaTypeAudio.is_null() {
-            return None;
+            return bananasplit::pure::Access::NotDetermined;
         }
         let send: unsafe extern "C" fn(*mut c_void, *mut c_void, *const c_void) -> isize =
             std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
         let pool = objc_autoreleasePoolPush();
         let status = send(class, sel, AVMediaTypeAudio);
         objc_autoreleasePoolPop(pool);
-        bananasplit::pure::mic_status(status)
+        bananasplit::pure::access_from_status(status)
     }
 }
 
