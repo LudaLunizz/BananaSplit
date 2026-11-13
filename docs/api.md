@@ -34,7 +34,9 @@ Every request has to pass these, or it is refused with a 403 before anything is 
 
 * **The other end is you.** The connection must come from a process of the user BananaSplit runs as
   (another account on the same computer is refused: *"BananaSplit only answers the user it runs
-  as"*).
+  as"*). If the system's list of connections can't be read (a sandbox, a hardened `/proc`), whose
+  program it is can't be told, so every connection is refused, yours too, and the answer says so
+  and names the list (from 2.8.26).
 * **`Host`** must name this server: `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`
   (*"wrong Host"*). A web page cannot talk to the server through a DNS name it controls.
 * **Under `/api/`, not from another web page.** A request with `Sec-Fetch-Site: cross-site` or
