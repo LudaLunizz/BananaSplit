@@ -13,6 +13,12 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  A2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    A1 ── A3 B1 B2
 ```
 
+## What's new in 2.8.24
+
+* **Updater fix** (#112): a signature file (`SHA256SUMS.txt.sig`) with a non-ASCII character in a certain place made the update check stop with an error instead of refusing the file. It is now refused like any other bad signature. No update was ever installed from such a file: the check stopped before installing anything. All three systems.
+* **Windows: channel menus** (#104): unticking a Splitter cable on a bus (A1–A3, B1, B2) works again; ticking or unticking a device no longer changes `@default` or `@physical`; the menus read the devices once instead of many times; the two halves of a Splitter cable must be on the same Splitter device, also in the cables report and the feedback warnings.
+* **macOS** (#108, #110): `bananasplit --status` shows every device and the default output and input without starting any audio or asking for a permission. If the audio code fails on a device, or a device's buffers change shape while it runs, that device plays silence and BananaSplit reconnects, instead of the app stopping or writing to the wrong channels.
+
 ## What's new in 2.8.23
 
 * **New licence: GPL-3.0-or-later** (#100): BananaSplit is now free software under the GNU General Public License, version 3 or later. You can still use, share and change it freely; anyone who shares a changed version must share its source code under the same licence. Releases up to 2.8.22 stay under MIT.

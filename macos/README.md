@@ -76,6 +76,7 @@ The program is inside the app: `/Applications/BananaSplit.app/Contents/MacOS/ban
 | `--gui-port PORT` | Use a specific local port (default `8790`) |
 | `--config FILE` | Use a custom config file |
 | `--list-devices` | List the audio devices |
+| `--status` | Show every device (name, UID, rate, channels) and the default output and input, without starting any audio or asking for a permission |
 | `--print-default-config` | Print the default config and exit |
 | `--update` | Look for a new version on GitHub |
 | `--quit` | Quit a running instance |

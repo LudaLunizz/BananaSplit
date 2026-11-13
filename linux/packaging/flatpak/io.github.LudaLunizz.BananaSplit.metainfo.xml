@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.8.24" date="2026-11-13">
+      <description>
+        <p>The updater refuses a damaged signature file instead of stopping with an error. On Windows the channel menus handle Splitter cables on buses correctly, and on macOS a new --status option lists the devices and a failing device plays silence instead of stopping the app.</p>
+      </description>
+    </release>
     <release version="2.8.23" date="2026-11-09">
       <description>
         <p>BananaSplit is now licensed under the GNU GPL, version 3 or later. The local API is documented, and fixes from a code review make the gate, the updater and the same-user checks more robust.</p>
