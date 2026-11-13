@@ -1178,6 +1178,8 @@ function buildStrip(ch) {
       (s < NUM_STRIPS ? ins : bs).append(k);
       return k;
     });
+    // keys 1-9, 0 in row order (see the keydown handler)
+    u.srcKeys = u.srcs.filter(Boolean);
     rows.append(ins, bs);
     foot.append(rows);
     root.append(foot);
@@ -1859,8 +1861,10 @@ document.addEventListener("keydown", (e) => {
   else if (k === "]") select(selected + 1);
   else if (k === "F2") startRename(u);
   else if (k >= "1" && k <= "5" && k.length === 1 && u.routes && u.routes[+k - 1] && !(t && t.closest && t.closest(".menu, .cmenu"))) u.routes[+k - 1].click();
-  // a bus card: 1-6 switch that input's route into it
-  else if (k >= "1" && k <= "6" && k.length === 1 && u.srcs && u.srcs[+k - 1] && !(t && t.closest && t.closest(".menu, .cmenu"))) u.srcs[+k - 1].click();
+  // a bus card: its "From" row in order, 1-6 the inputs, 7 8 9 0 the
+  // other four buses (the same as a click: a send into it, or refused if
+  // it would close a loop)
+  else if (k >= "0" && k <= "9" && k.length === 1 && u.srcKeys && !(t && t.closest && t.closest(".menu, .cmenu"))) u.srcKeys[(+k + 9) % 10].click();
   else return;
   e.preventDefault();
 });
@@ -1967,6 +1971,8 @@ function reachOf(S, from) {
   return seen;
 }
 
+// The key of a "From" key on a bus card: "1".."9", then "0".
+function srcKey(u, k) { return String((u.srcKeys.indexOf(k) + 1) % 10); }
 // No sound out of channel `x` now: muted, soloed out, or quiet.
 function silentCh(S, x) {
   const c = S.ch[x];
@@ -2073,7 +2079,7 @@ function render(S) {
           const from = IDS[s], to = IDS[ch];
           setTitle(k, loop ? to + " already feeds " + from + ", so " + from + " can't feed " + to
             : (direct ? from + " goes straight into " + to : via ? from + " reaches " + to + " through another bus" : from + " does not reach " + to)
-              + ". Click to " + (direct ? "stop sending " : "send ") + from + " straight into " + to);
+              + ". Click (or key " + srcKey(u, k) + ") to " + (direct ? "stop sending " : "send ") + from + " straight into " + to);
         });
         const o = outEls[me];
         setText(o.nm, c.name || IDS[ch]);

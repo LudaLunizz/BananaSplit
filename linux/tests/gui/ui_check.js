@@ -502,6 +502,29 @@ async function until(pred, what, ms = 4000) {
   for (let b = 0; b < 5; b++) await post({ op: "route", ch: 0, bus: b, v: (routes0 >> b) & 1 });
   await src(6, "B1").click();
   await until((s) => (s.ch[9].routes & 1) === 0, "V1's B1 key again stops it");
+  // ---- issue #129: the keyboard reaches the whole "From" row (1-6, then 7 8 9 0) ----
+  await strip(6).locator(".btn.mute").click();
+  await strip(6).locator(".btn.mute").click();
+  await until((s) => !s.ch[6].mute, "V1 selected, not muted");
+  check(await strip(6).evaluate((e) => e.classList.contains("sel")), "V1's card is selected");
+  check((await src(6, "B1").getAttribute("title")).includes("key 9"), "B1's key on V1's card says it is key 9");
+  await page.keyboard.press("9");
+  await until((s) => (s.ch[9].routes & 1) !== 0, "key 9 on V1's card sends B1 into V1");
+  await page.keyboard.press("0");
+  await until((s) => (s.ch[10].routes & 1) !== 0, "key 0 sends B2 into V1");
+  await page.keyboard.press("0");
+  await until((s) => (s.ch[10].routes & 1) === 0, "key 0 again stops it");
+  // B1 feeds V1 now: on B1's card, V1 (key 7) would close a loop and is refused
+  await strip(9).locator(".btn.mute").click();
+  await strip(9).locator(".btn.mute").click();
+  await until((s) => !s.ch[9].mute, "B1 selected, not muted");
+  await page.keyboard.press("7");
+  await sleep(400);
+  check(((await state()).ch[6].routes & 8) === 0, "key 7 on B1's card does not make the V1 → B1 loop");
+  await strip(6).locator(".btn.mute").click();
+  await strip(6).locator(".btn.mute").click();
+  await page.keyboard.press("9");
+  await until((s) => (s.ch[9].routes & 1) === 0, "key 9 on V1's card again stops B1 into V1");
   // ---- 2.7: every output in the bottom bar ----
   check(await page.locator("#outs .orow").count() === 5, "the bottom bar shows all five outputs");
   check((await page.locator("#outs .orow").nth(4).textContent()).startsWith("B2"), "B2 last");
