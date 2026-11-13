@@ -176,7 +176,7 @@ impl Beat {
 ///
 /// The callback itself runs behind [`guarded`]: a panic or a buffer list
 /// that does not look as it did at start gives silence, never a crash.
-struct Proc<S> {
+pub(super) struct Proc<S> {
     device: AudioObjectID,
     id: IoProcId,
     state: *mut S,
@@ -257,7 +257,7 @@ impl<S> Drop for Proc<S> {
 
 /// What one IOProc does in each IO cycle. [`guarded`] calls it, only for a
 /// buffer list that matches the one at start.
-trait Cycle: Send {
+pub(super) trait Cycle: Send {
     /// # Safety
     /// `input` and `output` are this cycle's buffer lists from the HAL
     /// (null, or lists of 32-bit floats as the device was opened with).
@@ -265,7 +265,7 @@ trait Cycle: Send {
 }
 
 /// An IOProc's state behind its guard.
-struct Guarded<S> {
+pub(super) struct Guarded<S> {
     beat: Arc<Beat>,
     stats: Arc<Stats>,
     /// The direction the IOProc uses: its layout is checked on this list.
@@ -329,7 +329,7 @@ unsafe extern "C" fn guarded<S: Cycle>(
 /// Start `inner` on the device behind a guard, recording its buffer layout
 /// in the direction it uses (`pair`: the stereo pair it reads or writes).
 /// On failure `inner` comes back.
-fn launch<S: Cycle>(
+pub(super) fn launch<S: Cycle>(
     dev: &Device,
     inner: S,
     pair: (usize, usize),

@@ -32,6 +32,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>BananaSplit mixes what your microphones, sound cards and virtual cables bring in.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>BananaSplit captures the sound of the app you choose, so you can mix it on a channel of its own.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>BananaSplit sends and receives VBAN network audio (the format of Voicemeeter) to and from other computers on your network.</string>
 	<key>NSHumanReadableCopyright</key>

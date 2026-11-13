@@ -64,6 +64,8 @@ OPTIONS:
     --list-devices       List the audio devices
     --status             Show every device (UID, rate, channels) and the
                          defaults, without starting any audio
+    --tap-test PID       Capture the sound of the app that process belongs to
+                         for 3 seconds and say how much came in (macOS 14.4+)
     --print-default-config
                          Print the default configuration and exit
     --update             Look for a new version on GitHub (the app has this in
@@ -83,6 +85,7 @@ struct Args {
     explicit_port: bool,
     list: bool,
     status: bool,
+    tap_test: Option<u32>,
     quit: bool,
     print_default: bool,
     update: bool,
@@ -98,6 +101,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         explicit_port: false,
         list: false,
         status: false,
+        tap_test: None,
         quit: false,
         print_default: false,
         update: false,
@@ -120,6 +124,10 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             }
             "--list-devices" => a.list = true,
             "--status" => a.status = true,
+            "--tap-test" => {
+                let p = args.next().ok_or("missing process id after --tap-test")?;
+                a.tap_test = Some(p.parse().map_err(|_| "bad process id after --tap-test")?);
+            }
             "--quit" => a.quit = true,
             "--print-default-config" => a.print_default = true,
             "--update" => a.update = true,
@@ -663,6 +671,18 @@ fn main() -> ExitCode {
             }
         };
     }
+    if let Some(pid) = args.tap_test {
+        return match mac::tap::tap_test(pid) {
+            Ok(s) => {
+                println!("{s}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if args.quit {
         let defq = Config::default();
         if let Some(p) = gui::find_running(&defq.client_name, args.explicit_port.then_some(args.port))
@@ -810,5 +830,10 @@ mod tests {
         assert!(args(&["--status"]).is_ok_and(|a| a.status && !a.list && !a.headless));
         assert!(!args(&[]).unwrap().status);
         assert!(HELP.contains("--status"));
+        // the process tap check
+        assert!(args(&["--tap-test", "4242"]).is_ok_and(|a| a.tap_test == Some(4242) && !a.status));
+        assert!(args(&["--tap-test"]).is_err());
+        assert!(args(&["--tap-test", "chrome"]).is_err());
+        assert!(HELP.contains("--tap-test PID"));
     }
 }

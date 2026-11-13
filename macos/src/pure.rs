@@ -303,6 +303,30 @@ pub fn audio_app_lines(groups: &[AppGroup], playing: impl Fn(u32) -> bool) -> St
     s
 }
 
+/// The macOS version process taps need (BananaSplit's floor for them).
+pub const TAP_OS: (u32, u32) = (14, 4);
+/// What a tap entry point says below [`TAP_OS`].
+pub const TAP_TOO_OLD: &str = "process taps need macOS 14.4 or later";
+
+/// Where a tap's channels start in its aggregate device's input: after
+/// the physical input channels of its sub-device (a microphone), so they
+/// are the last `tap_channels` of `input_channels`. None when there is no
+/// tap channel or fewer inputs than tap channels.
+pub fn tap_channel_offset(input_channels: u32, tap_channels: u32) -> Option<usize> {
+    (tap_channels > 0 && tap_channels <= input_channels).then(|| (input_channels - tap_channels) as usize)
+}
+
+/// The stereo pair of a tap that starts at `offset`: its first two
+/// channels, or its only channel twice.
+pub fn tap_pair(offset: usize, tap_channels: u32) -> (usize, usize) {
+    (offset, if tap_channels > 1 { offset + 1 } else { offset })
+}
+
+/// `--tap-test`'s result line.
+pub fn tap_test_line(frames: u64, peak: f32) -> String {
+    format!("tap ok: {frames} frames, peak {peak:.3}")
+}
+
 /// One device for `--status`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusDevice {
@@ -733,6 +757,45 @@ mod tests {
         assert_eq!(parse_os_version(""), None);
         assert_eq!(parse_os_version("x.1"), None);
         assert_eq!(parse_os_version("14.beta"), None);
+    }
+
+    // ---- tap_channel_offset, tap_pair, tap_test_line, TAP_OS
+    #[test]
+    fn tap_offset_skips_the_physical_inputs() {
+        // an output device with no inputs: the tap is all there is
+        assert_eq!(tap_channel_offset(2, 2), Some(0));
+        // a device with a stereo microphone: the tap comes after it
+        assert_eq!(tap_channel_offset(4, 2), Some(2));
+        // an interface with 8 inputs and a mono tap
+        assert_eq!(tap_channel_offset(9, 1), Some(8));
+    }
+
+    #[test]
+    fn tap_offset_none_when_the_tap_is_missing() {
+        assert_eq!(tap_channel_offset(0, 2), None);
+        assert_eq!(tap_channel_offset(1, 2), None);
+        assert_eq!(tap_channel_offset(4, 0), None);
+    }
+
+    #[test]
+    fn tap_pair_stereo_and_mono() {
+        assert_eq!(tap_pair(2, 2), (2, 3));
+        assert_eq!(tap_pair(8, 1), (8, 8));
+    }
+
+    #[test]
+    fn tap_needs_14_4() {
+        let (maj, min) = TAP_OS;
+        assert!(!os_at_least(maj, min, 14, 2));
+        assert!(!os_at_least(maj, min, 14, 3));
+        assert!(os_at_least(maj, min, 14, 4));
+        assert!(os_at_least(maj, min, 15, 0));
+    }
+
+    #[test]
+    fn tap_test_line_text() {
+        assert_eq!(tap_test_line(144_000, 0.5), "tap ok: 144000 frames, peak 0.500");
+        assert_eq!(tap_test_line(0, 0.0), "tap ok: 0 frames, peak 0.000");
     }
 
     // ---- group_by_app, audio_app_lines

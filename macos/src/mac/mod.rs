@@ -14,6 +14,7 @@ pub mod chanmenu;
 pub mod coreaudio;
 pub mod ffi;
 pub mod route;
+pub mod tap;
 
 use bananasplit::config::Config;
 use bananasplit::engine::Shared;

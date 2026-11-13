@@ -88,6 +88,28 @@ pub const kAudioProcessPropertyBundleID: u32 = 0x7062_6964; // 'pbid'
 /// A UInt32: 1 while the process runs IO with at least one output stream.
 pub const kAudioProcessPropertyIsRunningOutput: u32 = 0x7069_726f; // 'piro'
 
+// Properties of process taps (macOS 14.2 and later).
+/// A CFString the caller releases: the tap's UID, for an aggregate's tap list.
+pub const kAudioTapPropertyUID: u32 = 0x7475_6964; // 'tuid'
+/// An AudioStreamBasicDescription: the tap's format.
+pub const kAudioTapPropertyFormat: u32 = 0x7466_6d74; // 'tfmt'
+/// `CATapMutedWhenTapped` (a CATapMuteBehavior, an NSInteger): the tapped
+/// process is silent on its device while something reads the tap.
+pub const CATapMutedWhenTapped: isize = 2;
+/// `kCFNumberSInt64Type`.
+pub const kCFNumberSInt64Type: isize = 4;
+
+// Keys of an aggregate device's description (CFStrings in the dictionary).
+pub const kAudioAggregateDeviceUIDKey: &std::ffi::CStr = c"uid";
+pub const kAudioAggregateDeviceNameKey: &std::ffi::CStr = c"name";
+pub const kAudioAggregateDeviceSubDeviceListKey: &std::ffi::CStr = c"subdevices";
+pub const kAudioAggregateDeviceMainSubDeviceKey: &std::ffi::CStr = c"master";
+pub const kAudioAggregateDeviceIsPrivateKey: &std::ffi::CStr = c"private";
+pub const kAudioAggregateDeviceTapListKey: &std::ffi::CStr = c"taps";
+pub const kAudioSubDeviceUIDKey: &std::ffi::CStr = c"uid";
+pub const kAudioSubTapUIDKey: &std::ffi::CStr = c"uid";
+pub const kAudioSubTapDriftCompensationKey: &std::ffi::CStr = c"drift";
+
 // Properties of devices and streams.
 pub const kAudioObjectPropertyName: u32 = 0x6c6e_616d; // 'lnam'
 pub const kAudioDevicePropertyDeviceUID: u32 = 0x7569_6420; // 'uid '
@@ -414,6 +436,8 @@ mod tests {
         assert_eq!(kAudioProcessPropertyPID, code(b"ppid"));
         assert_eq!(kAudioProcessPropertyBundleID, code(b"pbid"));
         assert_eq!(kAudioProcessPropertyIsRunningOutput, code(b"piro"));
+        assert_eq!(kAudioTapPropertyUID, code(b"tuid"));
+        assert_eq!(kAudioTapPropertyFormat, code(b"tfmt"));
         assert_eq!(kAudioObjectPropertyName, code(b"lnam"));
         assert_eq!(kAudioDevicePropertyDeviceUID, code(b"uid "));
         assert_eq!(kAudioDevicePropertyStreamConfiguration, code(b"slay"));
