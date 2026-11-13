@@ -5,11 +5,16 @@
 #
 #   sh packaging/bundle.sh
 #
-# The app is signed ad hoc, not with an Apple Developer ID (that takes
-# Apple's paid developer program): README.md says how to open it the first
-# time.
+# The app is signed ad hoc, unless SIGNING_IDENTITY names a Developer ID
+# (Apple's paid developer program) and then also notarized when
+# NOTARY_PROFILE is set: packaging/signing.sh, packaging/SIGNING.md.
+# Ad hoc, README.md says how to open it the first time.
 set -eu
 cd "$(dirname "$0")/.."
+. packaging/signing.sh
+# (a profile without an identity stops here, before the long build)
+mode=$(signing_mode)
+echo "signing: $mode"
 
 version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)
 if [ -z "$version" ]; then
@@ -33,14 +38,17 @@ lipo -create -output "$app/Contents/MacOS/bananasplit" \
 cp assets/icons/bananasplit.icns "$app/Contents/Resources/bananasplit.icns"
 sed "s/@VERSION@/$version/g" packaging/Info.plist > "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist"
-# Apple silicon runs only signed code; the signature also seals Info.plist,
-# whose microphone and network texts macOS shows when it asks.
-codesign --force --sign - --entitlements packaging/entitlements.plist "$app"
+sign_app "$mode" "$app"
 codesign --verify --deep --strict "$app"
 codesign -d --entitlements - "$app" 2>/dev/null | grep -q com.apple.security.device.audio-input || {
     echo "the app's signature lacks the audio-input entitlement" >&2
     exit 1
 }
+said=$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")
+if [ "$said" != "$version" ]; then
+    echo "the app's Info.plist says version $said, Cargo.toml $version" >&2
+    exit 1
+fi
 archs=$(lipo -archs "$app/Contents/MacOS/bananasplit")
 for a in arm64 x86_64; do
     case " $archs " in
@@ -57,4 +65,7 @@ echo "for $archs"
 zip="dist/bananasplit-$version-macos.zip"
 rm -f "$zip"
 ditto -c -k --keepParent "$app" "$zip"
-echo "built $app and $zip"
+if [ "$mode" = notarize ]; then
+    notarize_app "$app" "$zip"
+fi
+echo "built $app and $zip ($mode)"

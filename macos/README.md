@@ -20,6 +20,8 @@ The mixer core is shared with the [Linux app](../linux/README.md) and the [Windo
 
 Both can be changed later in **System Settings › Privacy & Security** (Microphone, Local Network; macOS 11 and 12: System Preferences › Security & Privacy › Privacy › Microphone). After allowing the microphone there, quit and start BananaSplit again.
 
+The release build can be signed with a Developer ID and notarized by Apple once the maintainer's certificate is set up for it (`packaging/SIGNING.md`). Such a release opens without step 2, and keeps its microphone permission across updates. Until then, releases are signed ad hoc: open them with **Open Anyway** as above, and after an update use the `tccutil` line under [Updates](#updates) if the inputs go silent.
+
 ## Running
 
 BananaSplit opens in its own window, with a Dock icon and a menu bar while the window is shown.

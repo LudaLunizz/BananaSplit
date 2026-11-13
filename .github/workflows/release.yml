@@ -123,6 +123,12 @@ jobs:
   macos:
     name: macOS app
     runs-on: macos-15
+    # Signing and notarizing happen only when the maintainer's Developer ID
+    # secrets exist (macos/packaging/SIGNING.md); without them every step
+    # below that checks MACOS_CERTIFICATE is skipped and the app is signed
+    # ad hoc, as before.
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
     defaults:
       run:
         working-directory: macos
@@ -143,9 +149,45 @@ jobs:
             exit 1
           fi
 
-      # One app for Apple silicon and Intel, signed ad hoc (Apple silicon
-      # runs nothing unsigned) but not with an Apple Developer ID: people
-      # open it the first time with Open Anyway (macos/README.md).
+      - name: Import the Developer ID certificate
+        if: env.MACOS_CERTIFICATE != ''
+        env:
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kcpass=$(openssl rand -hex 24)
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kcpass" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kcpass" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kcpass" "$kc"
+          # codesign looks in the search list: this keychain first
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          id=$(security find-identity -v -p codesigning "$kc" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)
+          if [ -z "$id" ]; then
+            echo "::error::the certificate holds no Developer ID Application identity"
+            exit 1
+          fi
+          echo "SIGNING_IDENTITY=$id" >> "$GITHUB_ENV"
+          echo "NOTARY_KEYCHAIN=$kc" >> "$GITHUB_ENV"
+
+      - name: Store the notary credentials
+        if: env.MACOS_CERTIFICATE != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials bananasplit-notary --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --keychain "$NOTARY_KEYCHAIN"
+          echo "NOTARY_PROFILE=bananasplit-notary" >> "$GITHUB_ENV"
+
+      # One app for Apple silicon and Intel. Without the secrets above it is
+      # signed ad hoc (Apple silicon runs nothing unsigned) and people open
+      # it the first time with Open Anyway (macos/README.md); with them
+      # bundle.sh signs with the Developer ID, notarizes and staples.
       - name: Build the app
         run: sh packaging/bundle.sh
 
@@ -165,6 +207,10 @@ jobs:
           name: release-macos
           path: macos/dist/bananasplit-*-macos.zip
           if-no-files-found: error
+
+      - name: Remove the signing keychain
+        if: always() && env.MACOS_CERTIFICATE != ''
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
   # The workflow doesn't publish the release: linux/packaging/sign-release.sh
   # --release <tag>, run on the computer with the release key, takes these
