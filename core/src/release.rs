@@ -906,9 +906,12 @@ pub fn ed25519_verify(key: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
 }
 
 /// 128 hexadecimal digits (a signature file, written by sign-release.sh).
+/// Anything else is None, never a panic: the text is downloaded.
 pub fn parse_sig(text: &str) -> Option<[u8; 64]> {
     let t = text.trim();
-    if t.len() != 128 {
+    // ASCII first: the length is in bytes, and the halves are cut at byte
+    // 64, which must not fall inside a character.
+    if !t.is_ascii() || t.len() != 128 {
         return None;
     }
     let (a, b) = (parse_hex32(&t[..64])?, parse_hex32(&t[64..])?);
@@ -1297,6 +1300,26 @@ mod tests {
             parse_hex32(SIGNING_KEY).is_some_and(|k| Point::decode(&k, curve_d()).is_some()),
             "the release key is a point"
         );
+    }
+
+    #[test]
+    fn signature_files_that_are_not_128_hex_digits_are_refused() {
+        let good = "a".repeat(128);
+        assert!(parse_sig(&good).is_some());
+        assert!(parse_sig(&format!("  {good}\n")).is_some(), "whitespace around it is fine");
+        // 128 bytes with a two-byte character across byte 64 (issue #112):
+        // refused, not a panic at the cut
+        let across = format!("{}é{}", "a".repeat(63), "a".repeat(63));
+        assert_eq!(across.len(), 128);
+        assert_eq!(parse_sig(&across), None);
+        // other non-ASCII and wrong lengths
+        assert_eq!(parse_sig(&format!("{}é", "a".repeat(126))), None);
+        assert_eq!(parse_sig(&"€".repeat(42)), None);
+        assert_eq!(parse_sig(&"a".repeat(127)), None);
+        assert_eq!(parse_sig(&"a".repeat(129)), None);
+        assert_eq!(parse_sig(""), None);
+        // ASCII of the right length that is not hex
+        assert_eq!(parse_sig(&"g".repeat(128)), None);
     }
 
     #[test]
