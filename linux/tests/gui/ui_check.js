@@ -152,7 +152,7 @@ async function until(pred, what, ms = 4000) {
   await page.keyboard.press("m");
   await until((s) => !s.ch[4].mute, "key M unmutes the selected strip");
   await page.keyboard.press("2");
-  await until((s) => (s.ch[4].routes & 2) !== 0, "key 2 routes it to A2");
+  await until((s) => (s.ch[4].routes & 2) !== 0, "key 2 routes it to V2");
   await page.keyboard.press("2");
   await until((s) => (s.ch[4].routes & 2) === 0, "key 2 again stops it");
   await page.keyboard.press("o");
@@ -473,9 +473,9 @@ async function until(pred, what, ms = 4000) {
   check(bad.status === 400 && bad.text.includes("gone"), "connecting something that is not there is refused");
 
   // ---- 2.7: a bus feeds another bus ----
-  await strip(9).locator(".rt", { hasText: "A1" }).click();
-  await until((s) => (s.ch[9].routes & 1) !== 0, "B1's TO A1 key sends B1 into A1");
-  await untilPage(() => strip(6).locator(".rt", { hasText: "B1" }).evaluate((e) => e.classList.contains("loop")), "A1's B1 key is blocked (it would be a loop)");
+  await strip(9).locator(".rt", { hasText: "V1" }).click();
+  await until((s) => (s.ch[9].routes & 1) !== 0, "B1's TO V1 key sends B1 into V1");
+  await untilPage(() => strip(6).locator(".rt", { hasText: "B1" }).evaluate((e) => e.classList.contains("loop")), "V1's B1 key is blocked (it would be a loop)");
   await strip(6).locator(".rt", { hasText: "B1" }).click();
   await sleep(400);
   check(((await state()).ch[6].routes & 8) === 0, "clicking it does not make the loop");
@@ -484,8 +484,8 @@ async function until(pred, what, ms = 4000) {
   const self = await post({ op: "route", ch: 7, bus: 1, v: 1 });
   check(self.status === 400, "and a bus feeding itself");
   check(await strip(6).locator(".rt.self").count() === 1 && await strip(6).locator(".rt.self").isDisabled(), "a bus has no key for itself");
-  await strip(9).locator(".rt", { hasText: "A1" }).click();
-  await until((s) => (s.ch[9].routes & 1) === 0, "B1's A1 key again stops it");
+  await strip(9).locator(".rt", { hasText: "V1" }).click();
+  await until((s) => (s.ch[9].routes & 1) === 0, "B1's V1 key again stops it");
   // ---- 2.7: every output in the bottom bar ----
   check(await page.locator("#outs .orow").count() === 5, "the bottom bar shows all five outputs");
   check((await page.locator("#outs .orow").nth(4).textContent()).startsWith("B2"), "B2 last");
