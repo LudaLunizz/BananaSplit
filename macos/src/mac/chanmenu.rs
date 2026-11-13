@@ -543,8 +543,10 @@ mod tests {
         assert_eq!(v[0], ChanView { dev: "MacBook Pro Microphone · BlackHole 2ch".into(), cable: true });
         assert_eq!(v[1], ChanView { dev: "BlackHole 16ch".into(), cable: true });
         assert_eq!(v[2], ChanView { dev: "Not connected".into(), cable: false });
-        assert_eq!(v[NUM_STRIPS], ChanView { dev: "MacBook Pro Speakers".into(), cable: false });
+        // V1 has no device of its own by default; B2 (system out) plays to the default output
+        assert_eq!(v[NUM_STRIPS], ChanView { dev: "Not connected".into(), cable: false });
         assert_eq!(v[NUM_STRIPS + 1].dev, "External Headphones");
+        assert_eq!(v[NUM_STRIPS + 4].dev, "MacBook Pro Speakers");
     }
 
     #[test]
