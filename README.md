@@ -230,16 +230,17 @@ All of these run in CI on every push and pull request.
 The workflow builds the Linux packages, the Windows executable and the macOS app and writes `SHA256SUMS.txt`, but doesn't publish them. `sign-release.sh --release` does, with your own GitHub login (`gh`), so the release is made by your account:
 
 - It takes the files that the workflow left for the tag, but only from a successful run of `release.yml` in this repository.
-- It checks the files against `SHA256SUMS.txt` and that the key is the one in `src/update.rs`.
+- It checks the files against `SHA256SUMS.txt` and that the key is one of the two in `core/src/release.rs` (`SIGNING_KEY`, or the backup `BACKUP_SIGNING_KEY`).
+- It writes two lines above the checksums, `# BananaSplit <version>` and `# signed <day>`: from 2.8.25 the updater installs a release only when its signed list names that release's version. `sha256sum --check` skips these lines.
 - It signs `SHA256SUMS.txt` and publishes everything, `SHA256SUMS.txt.sig` included, as a pre-release with generated notes.
 
-For a release that already exists (the workflow published them itself up to 2.8.2), it only signs that release's `SHA256SUMS.txt` and uploads `SHA256SUMS.txt.sig`.
+For a release that already exists (the workflow published them itself up to 2.8.2), it only adds those lines to that release's `SHA256SUMS.txt`, signs it and uploads both files.
 
 The in-app updater offers a release once it is published and **not** marked pre-release. It finds the files by their names (`bananasplit-<version>-linux-x86_64.tar.gz`, `bananasplit_<version>_amd64.deb`, `bananasplit-<version>-windows-x64.exe`, `bananasplit-<version>-macos.zip`) and installs a release only when its `SHA256SUMS.txt` is signed with the release key, so keep those names and `SHA256SUMS.txt`.
 
 **The macOS app** is signed ad hoc only (Apple silicon runs nothing unsigned), not with an Apple Developer ID, and not notarized: macOS asks people once to allow it (**Open Anyway**).
 
-**The release key** is kept off GitHub on purpose (not even as a secret), so the workflow can't sign. A release without `SHA256SUMS.txt.sig` is offered but never installed. Keep a backup of the key: without it, no installed BananaSplit can update itself to a new release.
+**The release key** is kept off GitHub on purpose (not even as a secret), so the workflow can't sign. A release without `SHA256SUMS.txt.sig` is offered but never installed. Keep a backup of the key: without it, no installed BananaSplit can update itself to a new release. From 2.8.25 there is also a **backup key** (`BACKUP_SIGNING_KEY`), kept offline on a separate drive and never on the computer that signs releases. Its signature is accepted too, so if the release key is ever lost or leaked, the next release can be signed with the backup key and carry a new key pair.
 
 ## Contributing
 

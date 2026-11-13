@@ -600,7 +600,7 @@ pub fn download(
     let sums = fetch_text(src, &dir, sums, MAX_SUMS, stop)?;
     let sig = fetch_text(src, &dir, sig, MAX_SIG, stop)?;
     // before the big download: an unsigned release is not worth fetching
-    check_signature(&sums, &sig, &src.key)?;
+    check_release(&sums, &sig, &src.keys(), &offer.version)?;
     let file = dir.join(&offer.asset.name);
     fetch(src, &offer.asset.url, &file, offer.asset.size, false, stop, progress)
         .map_err(|e| format!("downloading {}: {e}", offer.asset.name))?;

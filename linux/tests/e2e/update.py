@@ -94,7 +94,11 @@ TAMPERED = bytes(TAMPERED)
 KEY = os.path.join(WORK, "key.pem")
 subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", KEY], check=True, capture_output=True)
 PUBKEY = subprocess.run(["openssl", "pkey", "-in", KEY, "-pubout", "-outform", "DER"], check=True, capture_output=True).stdout[-32:].hex()
-SUMS = f"{hashlib.sha256(TGZ).hexdigest()}  {TGZ_NAME}\n".encode()
+# as sign-release.sh writes them from 2.8.25: the version the list is for and
+# the day it was signed, above the checksums
+SUMS = f"# BananaSplit {NEW}\n# signed 2026-11-14\n{hashlib.sha256(TGZ).hexdigest()}  {TGZ_NAME}\n".encode()
+# the same checksums, properly signed, but saying they are another release's
+SUMS_OTHER = SUMS.replace(f"# BananaSplit {NEW}".encode(), b"# BananaSplit 9.9.8")
 
 
 def sign(data, key=KEY):
@@ -109,6 +113,7 @@ SIG = sign(SUMS)
 OTHER_KEY = os.path.join(WORK, "other.pem")
 subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", OTHER_KEY], check=True, capture_output=True)
 FOREIGN_SIG = sign(SUMS, OTHER_KEY)
+OTHER_SIG = sign(SUMS_OTHER)
 
 
 class Fake:
@@ -147,7 +152,7 @@ class Fake:
                     body = TGZ if fake.mode != "tampered" else TAMPERED
                     return self.send(200, body)
                 if self.path == "/blob/SHA256SUMS.txt":
-                    return self.send(200, SUMS, "text/plain")
+                    return self.send(200, fake.sums(), "text/plain")
                 if self.path == "/blob/SHA256SUMS.txt.sig":
                     return self.send(200, fake.sig(), "text/plain")
                 self.send(404, b"not found", "text/plain")
@@ -169,7 +174,7 @@ class Fake:
             return r
         if self.mode == "old":
             return [rel("v2.0.0", [("bananasplit-2.0.0-linux-x86_64.tar.gz", b"old")])]
-        signed = [("SHA256SUMS.txt", SUMS)] + ([] if self.mode == "unsigned" else [("SHA256SUMS.txt.sig", self.sig())])
+        signed = [("SHA256SUMS.txt", self.sums())] + ([] if self.mode == "unsigned" else [("SHA256SUMS.txt.sig", self.sig())])
         return [
             rel("v10.0.0", [("bananasplit-10.0.0-linux-x86_64.tar.gz", b"draft")], draft=True),
             rel("v9.10.0", [("bananasplit-9.10.0-linux-x86_64.tar.gz", b"pre")], pre=True),
@@ -177,8 +182,11 @@ class Fake:
             rel("v2.0.0", [("bananasplit-2.0.0-linux-x86_64.tar.gz", b"old")]),
         ]
 
+    def sums(self):
+        return SUMS_OTHER if self.mode == "otherversion" else SUMS
+
     def sig(self):
-        return FOREIGN_SIG if self.mode == "foreign" else SIG
+        return FOREIGN_SIG if self.mode == "foreign" else OTHER_SIG if self.mode == "otherversion" else SIG
 
     def api_calls(self):
         return [p for p, _, _ in self.log if p.startswith("/repos/")]
@@ -334,6 +342,16 @@ try:
         check("not signed" in u["message"], f"and says why: {u['message']}")
         check(same(m.app, binary), "the program was not touched")
         check(not any(p.endswith(TGZ_NAME) for p, _, _ in fake.log[n:]), f"the package itself was not even downloaded: {fake.log[n:]}")
+    # ---- a properly signed list that names another release ----------------------
+    fake.mode = "otherversion"
+    m.post(op="update", a="check")
+    m.until(lambda u: u["phase"] == "available", "a release whose signed list names another version is still found")
+    n = len(fake.log)
+    m.post(op="update", a="install")
+    u = m.until(lambda u: u["phase"] == "failed", "but not installed")
+    check(f"is for BananaSplit 9.9.8, not {NEW}" in u["message"], f"and says why: {u['message']}")
+    check(same(m.app, binary), "the program was not touched")
+    check(not any(p.endswith(TGZ_NAME) for p, _, _ in fake.log[n:]), f"the package itself was not downloaded: {fake.log[n:]}")
     # (the signed release again: what the next Install gets)
     fake.mode = "good"
     m.post(op="update", a="check")

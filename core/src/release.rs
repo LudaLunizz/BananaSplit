@@ -40,6 +40,10 @@ pub struct Source {
     pub https: bool,
     /// The public key `SHA256SUMS.txt` must be signed with.
     pub key: [u8; 32],
+    /// A second key whose signature is accepted too: the backup release key,
+    /// kept offline apart from the first, to replace it if it is lost or
+    /// leaked (none for a test source with its own key).
+    pub backup: Option<[u8; 32]>,
 }
 
 impl Source {
@@ -50,6 +54,7 @@ impl Source {
             pages: format!("https://github.com/{REPO}/releases/"),
             https: true,
             key: release_key(),
+            backup: Some(backup_key()),
         }
     }
 
@@ -58,6 +63,12 @@ impl Source {
     /// else is accepted), with its own key ([`KEY_ENV`]) if one is given.
     pub fn from_env() -> Source {
         std::env::var(SOURCE_ENV).ok().and_then(|b| Source::local(&b)).unwrap_or_else(Source::github)
+    }
+
+    /// The keys a release may be signed with: the release key, then the
+    /// backup key.
+    pub fn keys(&self) -> Vec<[u8; 32]> {
+        std::iter::once(self.key).chain(self.backup).collect()
     }
 
     pub fn local(base: &str) -> Option<Source> {
@@ -69,12 +80,14 @@ impl Source {
         {
             return None;
         }
+        let test_key = std::env::var(KEY_ENV).ok().and_then(|k| parse_hex32(k.trim()));
         Some(Source {
             api: format!("{base}/repos/{REPO}/releases?per_page=30"),
             download: format!("{base}/{REPO}/releases/download/"),
             pages: format!("{base}/{REPO}/releases/"),
             https: false,
-            key: std::env::var(KEY_ENV).ok().and_then(|k| parse_hex32(k.trim())).unwrap_or_else(release_key),
+            key: test_key.unwrap_or_else(release_key),
+            backup: if test_key.is_some() { None } else { Some(backup_key()) },
         })
     }
 
@@ -636,11 +649,20 @@ pub fn sha512(pieces: &[&[u8]]) -> [u8; 64] {
 /// The public key of the releases (`packaging/sign-release.sh` signs with
 /// its private half).
 pub const SIGNING_KEY: &str = "eb6afcb3176c1f908744169710381148c6dde645a669a6f3f04c61e383056e8a";
+/// The public key of the backup release key (made 13 Nov 2026, kept offline
+/// apart from the first). A release signed with it is accepted as well, so
+/// the release key can be replaced if it is ever lost or leaked: the next
+/// release is signed with this one and carries a new pair.
+pub const BACKUP_SIGNING_KEY: &str = "b4c486f3f8e8833248501dd78f9afcfc54e2f509031e00b0e33d92bae9f1b7b8";
 /// Tests only, with [`SOURCE_ENV`]: the public key of the test releases.
 pub const KEY_ENV: &str = "BANANASPLIT_UPDATE_KEY";
 
 pub fn release_key() -> [u8; 32] {
     parse_hex32(SIGNING_KEY).expect("SIGNING_KEY is 64 hexadecimal digits")
+}
+
+pub fn backup_key() -> [u8; 32] {
+    parse_hex32(BACKUP_SIGNING_KEY).expect("BACKUP_SIGNING_KEY is 64 hexadecimal digits")
 }
 
 /// A number modulo 2^255 - 19, in five 51-bit limbs.
@@ -921,13 +943,46 @@ pub fn parse_sig(text: &str) -> Option<[u8; 64]> {
     Some(out)
 }
 
-/// Is `sums` (a release's SHA256SUMS.txt) signed by `key`?
-pub fn check_signature(sums: &str, sig: &str, key: &[u8; 32]) -> Result<(), String> {
+/// Is `sums` (a release's SHA256SUMS.txt) signed by one of `keys`?
+pub fn check_signature(sums: &str, sig: &str, keys: &[[u8; 32]]) -> Result<(), String> {
     let s = parse_sig(sig).ok_or("the release's SHA256SUMS.txt.sig is not a signature")?;
-    if ed25519_verify(key, sums.as_bytes(), &s) {
+    if keys.iter().any(|k| ed25519_verify(k, sums.as_bytes(), &s)) {
         Ok(())
     } else {
         Err("the release's SHA256SUMS.txt is not signed with BananaSplit's release key (not an official release); nothing was changed".into())
+    }
+}
+
+/// The version a signed `SHA256SUMS.txt` is for: its `# BananaSplit 2.8.25`
+/// line, which sign-release.sh writes above the checksums (from 2.8.25).
+/// `sha256sum --check` skips lines that start with `#`.
+pub fn signed_version(sums: &str) -> Option<&str> {
+    sums.lines().find_map(|l| l.strip_prefix("# BananaSplit ")).map(str::trim)
+}
+
+/// The day a signed `SHA256SUMS.txt` was signed: its `# signed 2026-11-14`
+/// line (from 2.8.25). For people reading the file; the updater does not
+/// decide with it.
+pub fn signed_date(sums: &str) -> Option<&str> {
+    sums.lines().find_map(|l| l.strip_prefix("# signed ")).map(str::trim)
+}
+
+/// Everything the signature of a release must prove before its file is
+/// downloaded: `sums` is signed with one of `keys`, and it names the release
+/// it belongs to, `version`. Without the version inside the signed text,
+/// the checksum list of one release could be served for another; every
+/// release this updater can be offered is newer than 2.8.24, so every one
+/// has the line.
+pub fn check_release(sums: &str, sig: &str, keys: &[[u8; 32]], version: &str) -> Result<(), String> {
+    check_signature(sums, sig, keys)?;
+    match signed_version(sums) {
+        Some(v) if parse_version(v).is_some() && !newer(v, version) && !newer(version, v) => Ok(()),
+        Some(v) => Err(format!(
+            "the release's signed SHA256SUMS.txt is for BananaSplit {v}, not {version}; nothing was changed"
+        )),
+        None => {
+            Err("the release's signed SHA256SUMS.txt does not say which version it is for; nothing was changed".into())
+        }
     }
 }
 
@@ -1327,10 +1382,83 @@ mod tests {
         let key = parse_hex32(vectors_key()).unwrap();
         let sums = "BananaSplit release\n";
         let sig = "8d607a29ea4326a46154a5518336a1380271109f319a0bdf694af1f7b206fd21ebd634d1fd822e9451dc87b9a0042095eda14685df28c54782c264db81b77f08\n";
-        assert!(check_signature(sums, sig, &key).is_ok());
-        assert!(check_signature("BananaSplit release!\n", sig, &key).unwrap_err().contains("not signed"));
-        assert!(check_signature(sums, &sig[..100], &key).unwrap_err().contains("not a signature"));
-        assert!(check_signature(sums, sig, &parse_hex32(SIGNING_KEY).unwrap()).is_err(), "another key");
+        assert!(check_signature(sums, sig, &[key]).is_ok());
+        assert!(check_signature("BananaSplit release!\n", sig, &[key]).unwrap_err().contains("not signed"));
+        assert!(check_signature(sums, &sig[..100], &[key]).unwrap_err().contains("not a signature"));
+        assert!(check_signature(sums, sig, &[release_key()]).is_err(), "another key");
+        // any one of the keys will do, in either place
+        assert!(check_signature(sums, sig, &[release_key(), key]).is_ok(), "the second key");
+        assert!(check_signature(sums, sig, &[key, backup_key()]).is_ok(), "the first key");
+        assert!(check_signature(sums, sig, &[release_key(), backup_key()]).is_err(), "neither");
+        assert!(check_signature(sums, sig, &[]).is_err(), "no keys");
+    }
+
+    #[test]
+    fn github_trusts_the_release_key_and_the_backup_key() {
+        assert_ne!(release_key(), backup_key());
+        assert_eq!(Source::github().keys(), vec![release_key(), backup_key()]);
+    }
+
+    /// A list sign-release.sh writes from 2.8.25, signed with a test key.
+    fn signed_list(key_pem: &str, sums: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("bs-signed-list-{}-{}", std::process::id(), sums.len()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (k, m, s) = (dir.join("k.pem"), dir.join("m"), dir.join("s"));
+        std::fs::write(&k, key_pem).unwrap();
+        std::fs::write(&m, sums).unwrap();
+        let ok = std::process::Command::new("openssl")
+            .args(["pkeyutl", "-sign", "-rawin", "-inkey"])
+            .arg(&k)
+            .arg("-in")
+            .arg(&m)
+            .arg("-out")
+            .arg(&s)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "openssl signs");
+        let sig: String = std::fs::read(&s).unwrap().iter().map(|b| format!("{b:02x}")).collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        sig
+    }
+
+    /// RFC 8032 test 3's secret key as PEM, so openssl signs with [`vectors_key`].
+    const TEST_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIMWqjfQ/n4N77bdELzHct7Fm04U1B28JS4XOOi4LRFj3\n-----END PRIVATE KEY-----\n";
+
+    #[test]
+    fn a_signed_list_belongs_to_one_version() {
+        if std::process::Command::new("openssl").arg("version").output().is_err() {
+            return; // no openssl on this system: the vectors above still run
+        }
+        let key = parse_hex32(vectors_key()).unwrap();
+        let sums = "# BananaSplit 2.8.25\n# signed 2026-11-14\nab  bananasplit-2.8.25-linux-x86_64.tar.gz\n";
+        let sig = signed_list(TEST_PEM, sums);
+        assert_eq!(signed_version(sums), Some("2.8.25"));
+        assert_eq!(signed_date(sums), Some("2026-11-14"));
+        assert!(check_release(sums, &sig, &[key], "2.8.25").is_ok());
+        assert!(check_release(sums, &sig, &[key], "2.8.25.0").is_ok(), "the same version written longer");
+        let e = check_release(sums, &sig, &[key], "2.8.26").unwrap_err();
+        assert!(e.contains("is for BananaSplit 2.8.25, not 2.8.26"), "{e}");
+        assert!(check_release(sums, &sig, &[backup_key()], "2.8.25").unwrap_err().contains("not signed"));
+        // signed, but no version line (as up to 2.8.24): refused
+        let old = "ab  bananasplit-2.8.24-linux-x86_64.tar.gz\n";
+        let e = check_release(old, &signed_list(TEST_PEM, old), &[key], "2.8.24").unwrap_err();
+        assert!(e.contains("does not say which version"), "{e}");
+        // a version line that is not a version
+        let odd = "# BananaSplit two\nab  x\n";
+        assert!(check_release(odd, &signed_list(TEST_PEM, odd), &[key], "2.8.25").is_err());
+    }
+
+    /// 2.8.24 and older read the new lists with sum_for, which must skip the
+    /// two `#` lines and still find every file.
+    #[test]
+    fn older_updaters_still_read_the_new_lists() {
+        let h = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let sums = format!("# BananaSplit 2.8.25\n# signed 2026-11-14\n{h}  a.tar.gz\n{h} *b.deb\n");
+        assert_eq!(sum_for(&sums, "a.tar.gz"), parse_hex32(h));
+        assert_eq!(sum_for(&sums, "b.deb"), parse_hex32(h));
+        assert_eq!(sum_for(&sums, "2.8.25"), None);
+        assert_eq!(sum_for(&sums, "2026-11-14"), None);
     }
 
     fn vectors_key() -> &'static str {
