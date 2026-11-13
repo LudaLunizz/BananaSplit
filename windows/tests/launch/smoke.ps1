@@ -507,7 +507,8 @@ class H(http.server.BaseHTTPRequestHandler):
         with open(log, "a") as f:
             f.write(self.path + "\n")
         base = "http://127.0.0.1:%d" % self.server.server_address[1]
-        sums = ("%s  %s\n" % (hashlib.sha256(data).hexdigest(), NAME)).encode()
+        # as sign-release.sh writes it from 2.8.25: the version line is required
+        sums = ("# BananaSplit 9.9.9\n# signed 2026-11-14\n%s  %s\n" % (hashlib.sha256(data).hexdigest(), NAME)).encode()
         sig = (sign(TEST_SECRET, sums).hex() + "\n").encode()
         if self.path.startswith("/repos/%s/releases" % REPO):
             dl = base + "/%s/releases/download/v9.9.9/" % REPO
