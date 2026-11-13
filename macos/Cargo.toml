@@ -5,6 +5,7 @@ edition = "2024"
 description = "6-strip, 5-bus low-latency virtual audio mixer for macOS (Core Audio), with EQ, a recorder and player, scenes and Voicemeeter-compatible VBAN"
 license = "GPL-3.0-or-later"
 rust-version = "1.88"
+publish = false
 
 # Core Audio, CoreFoundation and the few libc calls use hand-declared FFI
 # (src/mac/ffi.rs, src/mac/sys.rs). The app window uses Tao/Wry and the
