@@ -13,6 +13,12 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  V2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    V1 ── V3 B1 B2
 ```
 
+## What's new in 2.8.26
+
+* **A refused page says why** (#128): when BananaSplit can't read the system's list of connections, the page and the API stay closed (as in 2.8.25), but the window now names the list, says why it is closed and that the mixer keeps running, instead of a bare refusal. All three systems.
+* **Bus cards: keys for the other buses** (#129): with a bus card selected, keys 1–6 switch the inputs into it and **7 8 9 0** the other four buses (bus-to-bus sends), in the order of its FROM row. A send that would make a loop is refused, as with a click.
+* **wry 0.57.2** on Windows and macOS (the window library, Dependabot #119, #120).
+
 ## What's new in 2.8.25
 
 * **Routing: V1–V3 in the middle, B1 = mic out, B2 = system out** (#123): buses A1–A3 are now called **V1–V3**, the mixes between the inputs and the outputs. B1 is the mic out (the microphone Discord and OBS pick), B2 the system out (what you hear): a new setup plays B2 on the default output. Something you want to hear but not stream goes to B2 and not to B1. Old settings, scenes, recordings and API calls with `A1`–`A3` still work, and the device names other apps remember (`bananasplit_out_a1`, the JACK ports, Splitter's endpoints) don't change. A 2.8.25 settings file can't be read by 2.8.24.
