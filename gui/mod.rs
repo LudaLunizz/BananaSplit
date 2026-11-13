@@ -764,7 +764,14 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
             let p = &sh.strips[r];
             let _ = write!(o, ",\"solo\":{},\"routes\":{}", p.solo.load(Relaxed), p.routes.load(Relaxed));
         } else {
-            let _ = write!(o, ",\"routes\":{}", sh.bus_routes()[r - NUM_STRIPS]);
+            let src = sh.sources(r - NUM_STRIPS);
+            let _ = write!(
+                o,
+                ",\"routes\":{},\"from\":{},\"via\":{}",
+                sh.bus_routes()[r - NUM_STRIPS],
+                src.direct,
+                src.through
+            );
         }
         o.push_str(",\"m\":[");
         jnum(&mut o, f.meters[r][0] as f64, 1);
@@ -1743,7 +1750,10 @@ mod tests {
         assert!(json.contains(r#""rtt":8.00"#) && json.contains(r#""cpu":0.0"#));
         assert!(json.contains(r#""id":"1","name""#) && json.contains(r#""id":"B2""#));
         assert!(json.contains(&format!(r#""link":true,"solo":false,"routes":8,"m":[-60.0,-12.5],"mi":[-30.0,-31.5],"conn":"Firefox","dev":"Yeti {lt}USB{gt}","cable":true,"eq":{{"on":false,"b":[[1,"lowshelf",100,0.0,0.71],[1,"bell",250,0.0,1.00],"#)), "{json}");
-        assert!(json.contains(r#""id":"B1","name":"Mic out","strip":false,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"routes":1,"m":"#), "{json}");
+        assert!(json.contains(r#""id":"B1","name":"Mic out","strip":false,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"routes":1,"from":1,"via":0,"m":"#), "{json}");
+        // V1 gets strip 1 through B1 (strip 1 → B1 → V1), and B1 straight
+        assert!(json.contains(r#""id":"V1","name""#), "{json}");
+        assert!(json.contains(&format!(r#""routes":0,"from":{},"via":1,"m":"#, 1 << (NUM_STRIPS + 3))), "{json}");
         assert!(json.contains(r#""cables":8,"devRev":42,"#));
         assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]},"dyn":{"gate":false,"g":[-50.0,-80.0,1.0,100.0,200.0],"comp":false,"c":[-18.0,3.0,6.0,10.0,150.0,0.0],"ggr":0.0,"cgr":0.0}},{"id":"2""#), "{json}");
         assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]}},{"id":"V2""#), "a bus has no dyn: {json}");

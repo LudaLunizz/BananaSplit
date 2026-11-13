@@ -233,6 +233,12 @@ impl Shared {
         array::from_fn(|b| self.buses[b].routes.load(Relaxed) & ALL_BUSES & !(1 << b))
     }
 
+    /// What reaches bus `bus` now (see [`sources`]).
+    pub fn sources(&self, bus: usize) -> Sources {
+        let routes: [u8; NUM_STRIPS] = array::from_fn(|s| self.strips[s].routes.load(Relaxed));
+        sources(&routes, &self.bus_routes(), bus)
+    }
+
     /// Would bus `from` feeding bus `to` close a loop (or is it the same bus)?
     pub fn send_loops(&self, from: usize, to: usize) -> bool {
         from == to || reach(&self.bus_routes(), to) & (1 << from) != 0
@@ -309,6 +315,45 @@ fn sanitize(x: f32) -> f32 {
 #[inline(always)]
 fn ramp(v0: f32, v1: f32, i: usize, n: usize) -> f32 {
     if i + 1 >= n { v1 } else { v0 + (v1 - v0) * ((i + 1) as f32 / n as f32) }
+}
+
+/// What reaches one bus, as channel bits: strips 1..6 are bits 0..5, bus
+/// `b` is bit `NUM_STRIPS + b` (the channel numbers of the API).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Sources {
+    /// Routed (a strip) or sent (a bus) straight into it.
+    pub direct: u16,
+    /// Reaching it only through other buses (e.g. strip 2 → V1 → B1).
+    pub through: u16,
+}
+
+/// What reaches bus `bus`, from the strips' routes and the buses' sends.
+/// A send that would close a loop is never made, but one in `sends` is
+/// harmless here: every bus is looked at once.
+pub fn sources(strip_routes: &[u8; NUM_STRIPS], sends: &[u8; NUM_BUSES], bus: usize) -> Sources {
+    let bit = 1u8 << bus;
+    let sends: [u8; NUM_BUSES] = array::from_fn(|b| sends[b] & ALL_BUSES & !(1 << b));
+    // the other buses whose sound gets to `bus`
+    let feeders: u8 = (0..NUM_BUSES).filter(|&b| b != bus && reach(&sends, b) & bit != 0).fold(0, |m, b| m | 1 << b);
+    let mut direct = 0u16;
+    let mut any = 0u16;
+    for (s, &r) in strip_routes.iter().enumerate() {
+        if r & bit != 0 {
+            direct |= 1 << s;
+        }
+        if r & (bit | feeders) != 0 {
+            any |= 1 << s;
+        }
+    }
+    for b in (0..NUM_BUSES).filter(|&b| b != bus) {
+        if sends[b] & bit != 0 {
+            direct |= 1 << (NUM_STRIPS + b);
+        }
+        if feeders & (1 << b) != 0 {
+            any |= 1 << (NUM_STRIPS + b);
+        }
+    }
+    Sources { direct, through: any & !direct }
 }
 
 /// The buses reachable from bus `from` through `sends` (itself included).
@@ -757,6 +802,33 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_reaches_a_bus() {
+        const V1: usize = 0;
+        const V2: usize = 1;
+        const B1: usize = 3;
+        const B2: usize = 4;
+        let ch = |b: usize| 1u16 << (NUM_STRIPS + b);
+        // strip 1 → V1, strip 2 → B2, strip 3 → V1 and B2; V1 → B2, V2 → V1
+        let routes = [1 << V1, 1 << B2, 1 << V1 | 1 << B2, 0, 0, 0];
+        let mut sends = [0u8; NUM_BUSES];
+        sends[V1] = 1 << B2;
+        sends[V2] = 1 << V1;
+        let s = sources(&routes, &sends, B2);
+        assert_eq!(s.direct, 0b10 | 0b100 | ch(V1), "strips 2, 3 and V1 go straight in");
+        assert_eq!(s.through, 0b1 | ch(V2), "strip 1 and V2 only through V1");
+        let s = sources(&routes, &sends, V1);
+        assert_eq!(s.direct, 0b101 | ch(V2));
+        assert_eq!(s.through, 0);
+        assert_eq!(sources(&routes, &sends, B1), Sources::default(), "nothing reaches B1");
+        // a bus's own bit and a loop in the sends don't confuse it
+        let mut looped = sends;
+        looped[B2] = 1 << V1 | 1 << B2;
+        let s = sources(&routes, &looped, B2);
+        assert_eq!(s.direct & ch(B2), 0, "not its own source");
+        assert_eq!(s.direct, 0b110 | ch(V1));
+    }
 
     const N: usize = 128;
 
