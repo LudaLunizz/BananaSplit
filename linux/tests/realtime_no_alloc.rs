@@ -69,6 +69,8 @@ fn process_never_allocates() {
         // bus sends, loops included (the engine must keep them open), and
         // the server changing its sample rate under the EQs
         sh.buses[cycle % NUM_BUSES].routes.store((cycle.wrapping_mul(13) % 32) as u8, SeqCst);
+        // bus limiters switching on, off and moving
+        sh.buses[cycle % NUM_BUSES].limit.store([-6.0, -30.0, 12.0, 0.0, -0.5][cycle % 5]);
         if cycle % 250 == 0 {
             sh.sample_rate.store([44_100, 48_000, 96_000, 0][cycle / 250 % 4], SeqCst);
             sh.strips[s].eq.on.store(true, SeqCst);

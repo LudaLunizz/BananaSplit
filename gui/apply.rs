@@ -45,6 +45,10 @@ pub fn apply(hub: &Hub, cmd: Cmd) -> Result<String, ApiError> {
             }
             Ok(format!("gain {db:+.1} dB"))
         }
+        Cmd::Limit { bus, db } => {
+            sh.buses[bus].limit.store(db);
+            Ok(if bananasplit::limiter::is_off(db) { "limit off".into() } else { format!("limit {db:+.1} dB") })
+        }
         Cmd::Pan { ch, pan } => {
             if ch < NUM_STRIPS {
                 sh.strips[ch].pan.store(pan)

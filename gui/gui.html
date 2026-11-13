@@ -41,6 +41,7 @@
   --focus: #7aa7ff;
   --overlay: rgba(6, 10, 13, .78);
   --seg-muted: #66737b;    /* a muted channel's input level */
+  --limit: #e9d75a;        /* a bus limiter's line (kept faint) */
   --sw: 108px;             /* narrowest strip */
   --swmax: 168px;          /* widest strip */
   --font: "Inter", "Cantarell", "Ubuntu", "Noto Sans", "Segoe UI", system-ui, sans-serif;
@@ -54,6 +55,7 @@
   --cap: #ffffff; --cap-edge: #8e9da5; --text: #0f171c; --muted: #56656d; --dim: #a4b0b7;
   --green: #17945f; --teal: #0e9585; --purple: #9147cf; --blue: #2c6fcb; --amber: #b67a07; --red: #d6303f;
   --sel: #0b9a6f; --focus: #2f6fed; --overlay: rgba(231, 236, 239, .82); --wave-dim: #a8cfca; --seg-muted: #9aa6ad;
+  --limit: #a38c00;
   color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
@@ -64,6 +66,7 @@
     --cap: #ffffff; --cap-edge: #8e9da5; --text: #0f171c; --muted: #56656d; --dim: #a4b0b7;
     --green: #17945f; --teal: #0e9585; --purple: #9147cf; --blue: #2c6fcb; --amber: #b67a07; --red: #d6303f;
     --sel: #0b9a6f; --focus: #2f6fed; --overlay: rgba(231, 236, 239, .82); --wave-dim: #a8cfca; --seg-muted: #9aa6ad;
+    --limit: #a38c00;
     color-scheme: light;
   }
 }
@@ -215,6 +218,22 @@ button { cursor: pointer; }
   background: var(--cap); border-radius: 4px; box-shadow: 0 1px 0 var(--cap-edge), 0 2px 6px rgba(0, 0, 0, .35);
 }
 .fader .capf::after { content: ""; position: absolute; left: 6px; right: 6px; top: 7px; height: 1px; background: rgba(0, 0, 0, .25); }
+/* A bus's limiter: a faint yellow line across its fader and meter, moved by
+   the small tab on the fader's right. Brighter while it is holding the
+   level down; only the tab (dim, at the top) while it is off. */
+.meter { position: relative; }
+.meter .lim { position: absolute; left: 2px; right: 2px; height: 0; border-top: 1px solid var(--limit); opacity: .5; pointer-events: none; }
+.fader .lim { position: absolute; left: 6px; right: 8px; height: 0; border-top: 1px solid var(--limit); opacity: .45; pointer-events: none; transition: opacity .25s; }
+.fader .limgrip { position: absolute; right: -3px; width: 13px; height: 14px; margin-bottom: -7px; cursor: ns-resize; touch-action: none; border-radius: 3px; }
+.fader .limgrip::before { content: ""; position: absolute; right: 3px; top: 3px; border-style: solid; border-color: transparent; border-width: 4px 5px 4px 0; border-right-color: var(--limit); opacity: .55; transition: opacity .25s; }
+.fader .limgrip:hover::before, .fader .limgrip:focus-visible::before { opacity: 1; }
+.fader .limval { position: absolute; right: 12px; margin-bottom: 2px; font-size: 8px; line-height: 9px; color: var(--limit); opacity: 0; pointer-events: none; white-space: nowrap; transition: opacity .15s; }
+.fader .limgrip:hover + .limval, .fader.limdrag .limval { opacity: .9; }
+.fader.limoff .lim, .meter.limoff .lim { display: none; }
+.fader.limoff .limgrip::before { opacity: .3; }
+.fader.limiting .lim { opacity: .9; }
+.meter.limiting .lim { opacity: .85; }
+.fader.limiting .limgrip::before { opacity: .95; }
 .pkrow { display: flex; justify-content: space-between; align-items: flex-start; margin-top: 10px; padding: 0 2px; min-height: 30px; }
 .pk { display: flex; flex-direction: column; gap: 6px; font-size: 7.5px; }
 .pk small { font-size: 7.5px; letter-spacing: .1em; color: var(--muted); font-weight: 600; }
@@ -824,6 +843,8 @@ const NUM_STRIPS = 6, NUM_CH = 11;
 const BUSES = ["V1", "V2", "V3", "B1", "B2"];
 const IDS = ["1", "2", "3", "4", "5", "6", ...BUSES];
 const MIN_DB = -60, MAX_DB = 12, TRIM_MIN = -24, TRIM_MAX = 24;
+// A bus limiter's range (dBFS); the top is off.
+const LIM_MIN = -40, LIM_OFF = 12;
 // The window size the console is drawn for at 100% zoom (CSS pixels): it is
 // scaled to fit any window, and stretches (taller faders, wider strips) to
 // fill the window's shape. Below MIN_W x MIN_H it would not fit; there the
@@ -1099,6 +1120,7 @@ function buildStrip(ch) {
   u.cap = el("i", "capf");
   fader.append(u.cap);
   u.fader = fader;
+  if (!strip) buildLimiter(u, id, meter, fader);
   lvl.append(meter, fader);
   root.append(lh, lvl);
 
@@ -1186,6 +1208,7 @@ function buildStrip(ch) {
   }
 
   wireFader(u);
+  if (!strip) wireLimiter(u);
   wireReadout(u);
   u.root = root;
   ui[ch] = u;
@@ -1239,6 +1262,83 @@ function wireFader(u) {
     else if (e.key === "Home") setGain(u, MAX_DB);
     else if (e.key === "End") setGain(u, MIN_DB);
     else if (e.key === "0") setGain(u, 0);
+    else return;
+    e.preventDefault(); e.stopPropagation();
+  });
+}
+// ---- bus limiter ----------------------------------------------------------------
+// Nothing leaves the bus louder than its limit, whatever the fader says (the
+// fader may go higher). The top of the fader (+12 dB) is off.
+function buildLimiter(u, id, meter, fader) {
+  u.limLine = el("i", "lim");
+  u.limGrip = el("i", "limgrip");
+  u.limGrip.tabIndex = 0;
+  u.limGrip.setAttribute("role", "slider");
+  u.limGrip.setAttribute("aria-label", id + " limiter");
+  u.limGrip.setAttribute("aria-valuemin", LIM_MIN);
+  u.limGrip.setAttribute("aria-valuemax", LIM_OFF);
+  u.limVal = el("span", "limval num");
+  u.limMeter = el("i", "lim");
+  fader.append(u.limLine, u.limGrip, u.limVal);
+  meter.append(u.limMeter);
+  u.limit = null;
+  showLimit(u, LIM_OFF);
+}
+const fmtLimit = (db) => (db >= LIM_OFF ? "off" : fmtFader(db));
+function showLimit(u, db) {
+  if (u.limit === db) return;
+  u.limit = db;
+  const off = db >= LIM_OFF, at = `calc(${dbToPos(db).toFixed(4)} * (100% - 15px) + 7.5px)`;
+  u.limLine.style.bottom = at;
+  u.limGrip.style.bottom = at;
+  u.limVal.style.bottom = at;
+  // on the meter: just above the last segment that can still light
+  const k = SEGS.filter((s) => s <= db).length;
+  u.limMeter.style.bottom = `calc(6px + ${(k / SEGS.length).toFixed(4)} * (100% - 12px) - 2px)`;
+  u.fader.classList.toggle("limoff", off);
+  u.meter.classList.toggle("limoff", off || k >= SEGS.length);
+  setText(u.limVal, off ? "LIMIT OFF" : "LIMIT " + fmtFader(db));
+  const id = IDS[u.ch];
+  u.limGrip.setAttribute("aria-valuenow", db.toFixed(1));
+  u.limGrip.setAttribute("aria-valuetext", off ? "off" : fmtDb(db) + " dB");
+  u.limGrip.title = off
+    ? `Limiter of ${id}: off. Drag the tab down to set a level ${id} never goes over.`
+    : `Limiter of ${id}: ${fmtDb(db)} dB. Nothing leaves ${id} louder than this, whatever the fader says. Drag to move; double-click or Home: off.`;
+}
+function setLimit(u, db) {
+  db = round1(clamp(db, LIM_MIN, LIM_OFF));
+  if (db > LIM_OFF - 0.5) db = LIM_OFF; // the last half dB snaps to off
+  showLimit(u, db);
+  sendThrottled(u, "limit", { op: "limit", ch: u.ch, v: db });
+}
+function wireLimiter(u) {
+  const g = u.limGrip, f = u.fader;
+  const posFromY = (y) => {
+    const r = f.getBoundingClientRect();
+    const scale = r.height / f.offsetHeight || 1, capH = 15 * scale;
+    return 1 - (y - r.top - capH / 2) / (r.height - capH);
+  };
+  g.addEventListener("pointerdown", (e) => {
+    e.stopPropagation(); // not the fader's
+    if (e.button !== 0) return;
+    g.setPointerCapture(e.pointerId);
+    u.limDragging = true;
+    f.classList.add("limdrag");
+    e.preventDefault();
+    g.focus();
+  });
+  g.addEventListener("pointermove", (e) => { if (u.limDragging) setLimit(u, posToDb(posFromY(e.clientY))); });
+  const end = () => { if (!u.limDragging) return; u.limDragging = false; f.classList.remove("limdrag"); hold("limit" + u.ch, 600); };
+  g.addEventListener("pointerup", end);
+  g.addEventListener("pointercancel", end);
+  g.addEventListener("dblclick", (e) => { e.stopPropagation(); setLimit(u, LIM_OFF); });
+  g.addEventListener("keydown", (e) => {
+    const fine = e.shiftKey ? 0.1 : 1, cur = u.limit;
+    const k = { ArrowUp: fine, ArrowRight: fine, ArrowDown: -fine, ArrowLeft: -fine, PageUp: 6, PageDown: -6 }[e.key];
+    if (k !== undefined) setLimit(u, cur >= LIM_OFF && k < 0 ? 0 : cur + k); // from off, down starts at 0 dB
+    else if (e.key === "Home" || e.key === "Delete") setLimit(u, LIM_OFF);
+    else if (e.key === "End") setLimit(u, LIM_MIN);
+    else if (e.key === "0") setLimit(u, 0);
     else return;
     e.preventDefault(); e.stopPropagation();
   });
@@ -2091,6 +2191,12 @@ function render(S) {
       }
     }
     if (!u.dragging && !held("gain" + ch)) showGain(u, c.gain);
+    if (!c.strip && typeof c.limit === "number") {
+      if (!u.limDragging && !held("limit" + ch)) showLimit(u, c.limit);
+      const limiting = c.limit < LIM_OFF && c.limGr > 0.5;
+      u.fader.classList.toggle("limiting", limiting);
+      u.meter.classList.toggle("limiting", limiting);
+    }
     if (!held("trim" + ch)) { u.trim.show(c.trim); setText(u.trimVal, fmtTrim(c.trim)); }
     if (!held("pan" + ch)) { u.pan.show(c.pan); setText(u.panVal, fmtPan(c.pan)); }
     // meters

@@ -7,5 +7,5 @@
 //! the WASAPI backend, VB-Audio cable handling, the GUI (`--gui`) and the updater.
 
 pub use bananasplit_core::{
-    DECK_PAGE, config, dynamics, engine, eq, mp3, player, recorder, release, ring, scenes, tui, vban,
+    DECK_PAGE, config, dynamics, engine, eq, limiter, mp3, player, recorder, release, ring, scenes, tui, vban,
 };

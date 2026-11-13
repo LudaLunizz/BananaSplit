@@ -23,6 +23,7 @@ pub mod config;
 pub mod dynamics;
 pub mod engine;
 pub mod eq;
+pub mod limiter;
 pub mod mp3;
 pub mod player;
 pub mod recorder;

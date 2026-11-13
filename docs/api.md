@@ -94,6 +94,7 @@ number.
 | `gain` | `ch`, `v` dB | The channel's fader, -60 to +12 dB (clamped), to 0.1. | `-3.5 dB` |
 | `trim` | `ch`, `v` dB | Input gain, -24 to +24 dB (clamped), to 0.1. | `gain +6.0 dB` |
 | `pan` | `ch`, `v` | Pan (balance on a bus), -1 to 1 (clamped), to 0.01. | `L25`, `C`, `R100` |
+| `limit` | `ch` (a bus), `v` dB or `off` | The bus's brickwall limiter (from 2.8.27): nothing leaves the bus louder than this, -40 to +12 dBFS (clamped), to 0.1; +12 or `off` = off. Strips have none. Not part of a scene. | `limit -6.0 dB`, `limit off` |
 | `mute`, `mono` | `ch`, `v` flag | | `ok` |
 | `solo` | `ch` (a strip), `v` flag | Buses have no solo. | `ok` |
 | `route` | `ch`, `bus`, `v` flag | A strip or bus feeds a bus. A bus cannot feed itself or make a loop of sends. | `ok` |
@@ -201,6 +202,7 @@ A channel in `ch`:
 | `gain`, `trim`, `pan` | dB, dB, -1 to 1. `mute`, `mono`; `link`: it is recorded; `solo` (strips only). |
 | `routes` | A bit mask over the buses (bit 0 = V1 ... bit 4 = B2): the buses a strip feeds, or a bus sends to. |
 | `from`, `via` | Buses only (from 2.8.25): what reaches the bus, as a bit mask over the channels (bits 0 to 5 = strips 1 to 6, bit 6 = V1 ... bit 10 = B2). `from`: routed or sent straight into it; `via`: reaching it only through other buses (strip 2 → V1 → B1 sets bit 1 of B1's `via`). |
+| `limit`, `limGr` | Buses only (from 2.8.27): the limiter's setting in dBFS (12 = off), and its gain reduction now in dB (0 = not limiting; it falls back about 20 dB a second). |
 | `m`, `mi` | Output and input level `[left, right]` in dB (about -60: silence). |
 | `conn` | What it is connected to, as text. `dev` is what the menu button says. `cable`: it has a virtual cable. |
 | `eq` | `on`, and `b`: six bands, each `[on (0 or 1), type, Hz, dB, Q]`. |

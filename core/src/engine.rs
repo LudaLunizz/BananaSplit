@@ -8,8 +8,8 @@
 //!                                                                                                                    ├─► ...       ├─► bus sum ─►
 //!                                                                                                                    └─► route B2 ─┘
 //!  (+ player, on the buses it is routed to)
-//!  (+ other buses routed here) ─► [mono] ─► EQ ─► gain × fader × balance, mute ─► meter ─┬─► out
-//!                                                                                      └─► other buses (sends)
+//!  (+ other buses routed here) ─► [mono] ─► EQ ─► gain × fader × balance, mute ─► limiter ─► meter ─┬─► out
+//!                                                                                                  └─► other buses (sends)
 //! ```
 //!
 //! A bus can feed other buses ("sends", e.g. B1 into V1 to hear the stream
@@ -42,6 +42,10 @@
 //!   or syscalls (see [`crate::recorder`]).
 //! * **EQ.** Every strip and bus has a 6-band parametric EQ ([`crate::eq`]);
 //!   off (the default) or flat, it leaves the signal bit for bit unchanged.
+//! * **Limiter.** Every bus ends in a brickwall limiter ([`crate::limiter`]):
+//!   nothing leaves it (device, cable, sends, recorder, VBAN) over its limit,
+//!   whatever the fader says. Off (the default), it leaves the signal bit for
+//!   bit unchanged.
 //! * **Gate and compressor.** Every strip has both, before its EQ
 //!   ([`crate::dynamics`]); their detectors read the level after the input
 //!   gain. Off (the default), they leave the signal bit for bit unchanged.
@@ -62,6 +66,7 @@
 
 use crate::dynamics::{DynParams, DynRt};
 use crate::eq::{EqParams, EqRt};
+use crate::limiter::{LimitParams, LimitRt};
 use crate::player::{PlayRt, PlayTap};
 use crate::recorder::{RecRt, RecTap};
 use crate::vban::{VbanRt, VbanTap};
@@ -187,12 +192,14 @@ pub struct BusParams {
     /// Bit `d` set => this bus feeds bus `d` after its fader (its own bit
     /// is ignored, and so is a send that would close a loop).
     pub routes: AtomicU8,
-    /// Level after the fader (what leaves the bus).
+    /// Level after the fader and the limiter (what leaves the bus).
     pub peak: [PeakMeter; 2],
     /// Level of the bus sum (after mono and the input gain, before EQ,
     /// balance and fader), also while the bus is muted.
     pub input_peak: [PeakMeter; 2],
     pub eq: EqParams,
+    /// Brickwall limiter, the bus's last stage (after the fader).
+    pub limit: LimitParams,
 }
 
 /// State shared between the audio thread and the control/UI thread.
@@ -452,6 +459,7 @@ pub struct Engine {
     /// Strips 0..5, then buses.
     eq: [EqRt; NUM_STRIPS + NUM_BUSES],
     dynamics: [DynRt; NUM_STRIPS],
+    limiters: [LimitRt; NUM_BUSES],
     /// The rate the EQs are tuned for.
     rate: u32,
     /// The rate last told to the taps (0 = none yet).
@@ -476,6 +484,7 @@ impl Engine {
             send_gain: [[0.0; NUM_BUSES]; NUM_BUSES],
             eq: array::from_fn(|_| EqRt::new(48_000)),
             dynamics: array::from_fn(|_| DynRt::new(48_000)),
+            limiters: array::from_fn(|_| LimitRt::new(48_000)),
             rate: 48_000,
             tap_rate: 0,
             rec: None,
@@ -497,6 +506,9 @@ impl Engine {
         }
         for d in &mut self.dynamics {
             d.set_sample_rate(sample_rate);
+        }
+        for l in &mut self.limiters {
+            l.set_sample_rate(sample_rate);
         }
     }
 
@@ -741,16 +753,18 @@ impl Engine {
                 p.input_peak[0].push(in_l * trim);
                 p.input_peak[1].push(in_r * trim);
                 self.eq[NUM_STRIPS + b].process(&p.eq, bl, br);
-                let mut pk_l = 0.0f32;
-                let mut pk_r = 0.0f32;
                 // (and once more after the bus EQ and fader, which can push it over too)
                 for i in 0..n {
-                    let a = sanitize(bl[i] * ramp(g0[0], target[0], i, n));
-                    let c = sanitize(br[i] * ramp(g0[1], target[1], i, n));
-                    bl[i] = a;
-                    br[i] = c;
-                    pk_l = pk_l.max(a.abs());
-                    pk_r = pk_r.max(c.abs());
+                    bl[i] = sanitize(bl[i] * ramp(g0[0], target[0], i, n));
+                    br[i] = sanitize(br[i] * ramp(g0[1], target[1], i, n));
+                }
+                // last: the limiter, so nothing leaves the bus over its limit
+                self.limiters[b].process(&p.limit, bl, br);
+                let mut pk_l = 0.0f32;
+                let mut pk_r = 0.0f32;
+                for i in 0..n {
+                    pk_l = pk_l.max(bl[i].abs());
+                    pk_r = pk_r.max(br[i].abs());
                 }
                 p.peak[0].push(pk_l);
                 p.peak[1].push(pk_r);
@@ -1448,5 +1462,43 @@ mod tests {
         assert!((db_to_gain(-6.0206) - 0.5).abs() < 1e-4);
         assert!((gain_to_db(0.5) + 6.0206).abs() < 1e-3);
         assert_eq!(gain_to_db(0.0), -120.0);
+    }
+
+    #[test]
+    fn bus_limiter_holds_whatever_the_fader_and_sends_do() {
+        use crate::limiter::LIMIT_OFF_DB;
+        let (mut rig, sh) = Rig::new();
+        // every strip into V1 at +12 dB with +24 dB input gain, V2 (fader
+        // +12) sends into V1 too; V1 limited at -6 dB, V2 at -20 dB
+        for s in 0..NUM_STRIPS {
+            sh.strips[s].routes.store(0b11, Relaxed);
+            sh.strips[s].gain_db.store(MAX_GAIN_DB);
+            sh.strips[s].trim_db.store(MAX_TRIM_DB);
+        }
+        for b in 0..2 {
+            sh.buses[b].gain_db.store(MAX_GAIN_DB);
+            sh.buses[b].trim_db.store(MAX_TRIM_DB);
+        }
+        sh.buses[1].routes.store(0b1, Relaxed);
+        sh.buses[0].limit.store(-6.0);
+        sh.buses[1].limit.store(-20.0);
+        let (c1, c2) = (db_to_gain(-6.0), db_to_gain(-20.0));
+        for k in 0..40 {
+            rig.run(N, |s, c, i| (((i * 7 + s * 13 + c * 5 + k) % 23) as f32 - 11.0) * 0.5);
+            for c in 0..2 {
+                assert!(rig.bus(0, c).iter().all(|x| x.abs() <= c1), "V1 cycle {k}");
+                assert!(rig.bus(1, c).iter().all(|x| x.abs() <= c2), "V2 cycle {k}");
+            }
+            let pk = sh.buses[0].peak[0].take();
+            assert!(pk <= c1, "meter {pk}");
+        }
+        assert!(sh.buses[0].limit.gr.load() > 20.0);
+        // V3 has no limit: same input, far over full scale, untouched
+        sh.strips[0].routes.store(0b100, Relaxed);
+        sh.buses[2].gain_db.store(MAX_GAIN_DB);
+        rig.run(N, |_, _, _| 2.0);
+        rig.run(N, |_, _, _| 2.0);
+        assert_eq!(sh.buses[2].limit.load(), LIMIT_OFF_DB);
+        assert!(rig.bus(2, 0).iter().all(|&x| x > 2.0), "{}", rig.bus(2, 0)[0]);
     }
 }

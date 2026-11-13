@@ -11,6 +11,7 @@ use bananasplit::config::{Theme, parse_pan, parse_trim, parse_zoom};
 use bananasplit::dynamics::{COMP, GATE};
 use bananasplit::engine::{NUM_BUSES, NUM_STRIPS, clamp_db};
 use bananasplit::eq::{self, BANDS, Kind};
+use bananasplit::limiter;
 use bananasplit::recorder::{self, Format, Mode, NUM_SOURCES};
 use bananasplit::scenes;
 use bananasplit::vban::{self, FromAddr, NUM_IN, NUM_OUT, SampleFormat};
@@ -169,6 +170,11 @@ pub enum Cmd {
     Pan {
         ch: usize,
         pan: f32,
+    },
+    /// A bus's limiter, dBFS (`LIMIT_OFF_DB` = off); `bus` is 0..4.
+    Limit {
+        bus: usize,
+        db: f32,
     },
     Mute {
         ch: usize,
@@ -352,6 +358,13 @@ impl Cmd {
             }
             "trim" => Cmd::Trim { ch: f.ch()?, db: parse_trim(f.req("v")?)? },
             "pan" => Cmd::Pan { ch: f.ch()?, pan: parse_pan(f.req("v")?)? },
+            "limit" => {
+                let ch = f.ch()?;
+                if ch < NUM_STRIPS {
+                    return Err("only buses have a limiter".into());
+                }
+                Cmd::Limit { bus: ch - NUM_STRIPS, db: limiter::parse_limit(f.req("v")?)? }
+            }
             "mute" => Cmd::Mute { ch: f.ch()?, on: f.flag()? },
             "mono" => Cmd::Mono { ch: f.ch()?, on: f.flag()? },
             "solo" => {
@@ -527,6 +540,11 @@ mod tests {
             "within the fader"
         );
         assert_eq!(p("op=trim&ch=1&v=6"), Ok(Cmd::Trim { ch: 1, db: 6.0 }));
+        assert_eq!(p("op=limit&ch=9&v=-6.04"), Ok(Cmd::Limit { bus: 3, db: -6.0 }));
+        assert_eq!(p("op=limit&ch=6&v=off"), Ok(Cmd::Limit { bus: 0, db: limiter::LIMIT_OFF_DB }));
+        assert_eq!(p("op=limit&ch=10&v=-99"), Ok(Cmd::Limit { bus: 4, db: limiter::LIMIT_MIN_DB }));
+        assert!(p("op=limit&ch=2&v=-6").is_err(), "strips have none");
+        assert!(p("op=limit&ch=7&v=nan").is_err());
         assert_eq!(p("op=mute&ch=10&v=1"), Ok(Cmd::Mute { ch: 10, on: true }));
         assert_eq!(p("op=mono&ch=0&v=off"), Ok(Cmd::Mono { ch: 0, on: false }));
         assert_eq!(p("op=solo&ch=3&v=true"), Ok(Cmd::Solo { strip: 3, on: true }));

@@ -7,7 +7,7 @@
 //! the Core Audio backend, virtual cable handling, the app (`--gui`) and the updater.
 
 pub use bananasplit_core::{
-    DECK_PAGE, config, dynamics, engine, eq, mp3, player, recorder, release, ring, scenes, tui, vban,
+    DECK_PAGE, config, dynamics, engine, eq, limiter, mp3, player, recorder, release, ring, scenes, tui, vban,
 };
 
 /// The Core Audio backend's decisions as plain functions (tested on every

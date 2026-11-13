@@ -4,6 +4,8 @@
 //! input gain, pan, mute, solo, mono, routing (a bus's sends to other buses
 //! too), EQ, each strip's gate and compressor, and which channels are linked to the recorder. It does not hold names, device connections,
 //! VBAN or recorder settings, so loading a scene never rewires anything.
+//! Nor does it hold the buses' limiters: a limit stays where it was put
+//! until it is moved, whatever scene is loaded.
 //! Loading goes through the same click-free ramps as moving a fader.
 //!
 //! Scenes are small INI files in `scenes/` next to the config file
@@ -192,7 +194,11 @@ impl SceneStore {
     pub fn load(&self, name: &str, sh: &Shared) -> Result<(), String> {
         let path = self.path(name)?;
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let cfg = parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut cfg = parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        // the limiters stay where they are
+        for (b, p) in cfg.buses.iter_mut().zip(&sh.buses) {
+            b.limit_db = p.limit.load();
+        }
         cfg.apply(sh);
         Ok(())
     }
@@ -295,6 +301,29 @@ mod tests {
         assert!(store.save("mine", &sh2).unwrap_err().contains("not a BananaSplit scene"));
         assert!(store.delete("mine").is_err());
         assert_eq!(std::fs::read_to_string(dir.join("mine.ini")).unwrap(), "[global]\nclient_name = x\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn limiters_stay_where_they_are() {
+        let dir = std::env::temp_dir().join(format!("bs-scenes-limit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = SceneStore::new(dir.clone());
+        let sh = Shared::new();
+        sh.buses[3].limit.store(-9.0);
+        sh.buses[3].gain_db.store(-4.0);
+        store.save("talk", &sh).unwrap();
+        assert!(!std::fs::read_to_string(dir.join("talk.ini")).unwrap().contains("limit"));
+        // another limit now: loading the scene moves the fader, not the limit
+        let sh2 = Shared::new();
+        sh2.buses[3].limit.store(-3.0);
+        sh2.buses[0].limit.store(-12.0);
+        store.load("talk", &sh2).unwrap();
+        assert_eq!(sh2.buses[3].gain_db.load(), -4.0);
+        assert_eq!(sh2.buses[3].limit.load(), -3.0);
+        assert_eq!(sh2.buses[0].limit.load(), -12.0);
+        // and a scene file may not set one
+        assert!(parse("[bus.B1]\nlimit_db = -6\n").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
