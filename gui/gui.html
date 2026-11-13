@@ -218,22 +218,29 @@ button { cursor: pointer; }
   background: var(--cap); border-radius: 4px; box-shadow: 0 1px 0 var(--cap-edge), 0 2px 6px rgba(0, 0, 0, .35);
 }
 .fader .capf::after { content: ""; position: absolute; left: 6px; right: 6px; top: 7px; height: 1px; background: rgba(0, 0, 0, .25); }
-/* A bus's limiter: a faint yellow line across its fader and meter, moved by
-   the small tab on the fader's right. Brighter while it is holding the
-   level down; only the tab (dim, at the top) while it is off. */
+/* A bus's limiter, like Voicemeeter's "Lim": a yellow-edged box on the meter
+   that you drag up and down; its lower edge is the limit (a thin line), the
+   segments it covers are the ones the bus can no longer reach. The same
+   level shows as a thin line on the fader. Brighter while it holds the
+   sound down; dim at the top of the meter while it is off. */
 .meter { position: relative; }
-.meter .lim { position: absolute; left: 2px; right: 2px; height: 0; border-top: 1px solid var(--limit); opacity: .5; pointer-events: none; }
-.fader .lim { position: absolute; left: 6px; right: 8px; height: 0; border-top: 1px solid var(--limit); opacity: .45; pointer-events: none; transition: opacity .25s; }
-.fader .limgrip { position: absolute; right: -3px; width: 13px; height: 14px; margin-bottom: -7px; cursor: ns-resize; touch-action: none; border-radius: 3px; }
-.fader .limgrip::before { content: ""; position: absolute; right: 3px; top: 3px; border-style: solid; border-color: transparent; border-width: 4px 5px 4px 0; border-right-color: var(--limit); opacity: .55; transition: opacity .25s; }
-.fader .limgrip:hover::before, .fader .limgrip:focus-visible::before { opacity: 1; }
-.fader .limval { position: absolute; right: 12px; margin-bottom: 2px; font-size: 8px; line-height: 9px; color: var(--limit); opacity: 0; pointer-events: none; white-space: nowrap; transition: opacity .15s; }
-.fader .limgrip:hover + .limval, .fader.limdrag .limval { opacity: .9; }
+.meter .lim { position: absolute; left: 1px; right: 1px; height: 0; border-top: 1px solid var(--limit); opacity: .7; pointer-events: none; transition: opacity .25s; }
+.meter .limbox {
+  position: absolute; left: -5px; right: -5px; height: 28px; z-index: 1;
+  bottom: min(var(--lb, 0px), calc(100% - 29px));
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  border: 1px solid var(--limit); border-radius: 4px; background: color-mix(in srgb, var(--sunk) 82%, transparent);
+  color: var(--limit); font-size: 7.5px; line-height: 9px; font-weight: 600; letter-spacing: .04em;
+  cursor: ns-resize; touch-action: none; opacity: .75; transition: opacity .2s;
+}
+.meter .limbox b { font-weight: 700; font-size: 9px; letter-spacing: 0; }
+.meter .limbox:hover, .meter .limbox:focus-visible, .meter.limdrag .limbox { opacity: 1; }
+.meter.limoff .limbox { opacity: .4; border-style: dashed; }
+.meter.limoff .limbox:hover, .meter.limoff .limbox:focus-visible { opacity: .8; }
+.fader .lim { position: absolute; left: 6px; right: 6px; height: 0; border-top: 1px solid var(--limit); opacity: .45; pointer-events: none; transition: opacity .25s; }
 .fader.limoff .lim, .meter.limoff .lim { display: none; }
-.fader.limoff .limgrip::before { opacity: .3; }
 .fader.limiting .lim { opacity: .9; }
-.meter.limiting .lim { opacity: .85; }
-.fader.limiting .limgrip::before { opacity: .95; }
+.meter.limiting .lim, .meter.limiting .limbox { opacity: 1; }
 .pkrow { display: flex; justify-content: space-between; align-items: flex-start; margin-top: 10px; padding: 0 2px; min-height: 30px; }
 .pk { display: flex; flex-direction: column; gap: 6px; font-size: 7.5px; }
 .pk small { font-size: 7.5px; letter-spacing: .1em; color: var(--muted); font-weight: 600; }
@@ -1268,74 +1275,104 @@ function wireFader(u) {
 }
 // ---- bus limiter ----------------------------------------------------------------
 // Nothing leaves the bus louder than its limit, whatever the fader says (the
-// fader may go higher). The top of the fader (+12 dB) is off.
+// fader may go higher). Dragged on the meter, in the meter's own scale: the
+// segment edges are the SEGS levels, the top is 0 dB; dragged past the top,
+// it is off.
+const LIM_PTS = SEGS.map((d, k) => [k / SEGS.length, d]).concat([[1, 0]]);
+function meterToDb(p) {
+  if (p <= 0) return LIM_PTS[0][1];
+  for (let i = 1; i < LIM_PTS.length; i++) {
+    const [p0, d0] = LIM_PTS[i - 1], [p1, d1] = LIM_PTS[i];
+    if (p <= p1) return d0 + (d1 - d0) * (p - p0) / (p1 - p0);
+  }
+  return 0;
+}
+function dbToMeter(db) {
+  if (db <= LIM_PTS[0][1]) return 0;
+  for (let i = 1; i < LIM_PTS.length; i++) {
+    const [p0, d0] = LIM_PTS[i - 1], [p1, d1] = LIM_PTS[i];
+    if (db <= d1) return p0 + (p1 - p0) * (db - d0) / (d1 - d0);
+  }
+  return 1;
+}
 function buildLimiter(u, id, meter, fader) {
   u.limLine = el("i", "lim");
-  u.limGrip = el("i", "limgrip");
-  u.limGrip.tabIndex = 0;
-  u.limGrip.setAttribute("role", "slider");
-  u.limGrip.setAttribute("aria-label", id + " limiter");
-  u.limGrip.setAttribute("aria-valuemin", LIM_MIN);
-  u.limGrip.setAttribute("aria-valuemax", LIM_OFF);
-  u.limVal = el("span", "limval num");
+  fader.append(u.limLine);
   u.limMeter = el("i", "lim");
-  fader.append(u.limLine, u.limGrip, u.limVal);
-  meter.append(u.limMeter);
+  u.limBox = el("div", "limbox");
+  u.limBox.tabIndex = 0;
+  u.limBox.setAttribute("role", "slider");
+  u.limBox.setAttribute("aria-label", id + " limiter");
+  u.limBox.setAttribute("aria-valuemin", LIM_MIN);
+  u.limBox.setAttribute("aria-valuemax", LIM_OFF);
+  u.limVal = el("b", "num");
+  u.limBox.append(el("span", null, "LIM"), u.limVal);
+  meter.append(u.limMeter, u.limBox);
   u.limit = null;
   showLimit(u, LIM_OFF);
 }
-const fmtLimit = (db) => (db >= LIM_OFF ? "off" : fmtFader(db));
 function showLimit(u, db) {
   if (u.limit === db) return;
   u.limit = db;
-  const off = db >= LIM_OFF, at = `calc(${dbToPos(db).toFixed(4)} * (100% - 15px) + 7.5px)`;
-  u.limLine.style.bottom = at;
-  u.limGrip.style.bottom = at;
-  u.limVal.style.bottom = at;
-  // on the meter: just above the last segment that can still light
-  const k = SEGS.filter((s) => s <= db).length;
-  u.limMeter.style.bottom = `calc(6px + ${(k / SEGS.length).toFixed(4)} * (100% - 12px) - 2px)`;
+  const off = db >= LIM_OFF;
+  u.limLine.style.bottom = `calc(${dbToPos(db).toFixed(4)} * (100% - 15px) + 7.5px)`;
+  const mp = off ? 1 : dbToMeter(db);
+  const at = `calc(6px + ${mp.toFixed(4)} * (100% - 12px))`;
+  u.limMeter.style.bottom = at;
+  u.limBox.style.setProperty("--lb", at);
   u.fader.classList.toggle("limoff", off);
-  u.meter.classList.toggle("limoff", off || k >= SEGS.length);
-  setText(u.limVal, off ? "LIMIT OFF" : "LIMIT " + fmtFader(db));
+  u.meter.classList.toggle("limoff", off);
+  setText(u.limVal, off ? "off" : (db < 0 ? "−" : "") + Math.abs(db).toFixed(Math.abs(db) < 10 ? 1 : 0));
   const id = IDS[u.ch];
-  u.limGrip.setAttribute("aria-valuenow", db.toFixed(1));
-  u.limGrip.setAttribute("aria-valuetext", off ? "off" : fmtDb(db) + " dB");
-  u.limGrip.title = off
-    ? `Limiter of ${id}: off. Drag the tab down to set a level ${id} never goes over.`
-    : `Limiter of ${id}: ${fmtDb(db)} dB. Nothing leaves ${id} louder than this, whatever the fader says. Drag to move; double-click or Home: off.`;
+  u.limBox.setAttribute("aria-valuenow", db.toFixed(1));
+  u.limBox.setAttribute("aria-valuetext", off ? "off" : fmtDb(db) + " dB");
+  u.limBox.title = off
+    ? `Limiter of ${id}: off. Drag it down the meter to set a level ${id} never goes over.`
+    : `Limiter of ${id}: ${fmtDb(db)} dB. Nothing leaves ${id} louder than this, whatever the fader says. Drag on the meter or scroll; double-click, Home or Delete: off.`;
 }
 function setLimit(u, db) {
-  db = round1(clamp(db, LIM_MIN, LIM_OFF));
-  if (db > LIM_OFF - 0.5) db = LIM_OFF; // the last half dB snaps to off
+  db = db >= LIM_OFF ? LIM_OFF : round1(clamp(db, LIM_MIN, 0));
   showLimit(u, db);
   sendThrottled(u, "limit", { op: "limit", ch: u.ch, v: db });
 }
 function wireLimiter(u) {
-  const g = u.limGrip, f = u.fader;
-  const posFromY = (y) => {
-    const r = f.getBoundingClientRect();
-    const scale = r.height / f.offsetHeight || 1, capH = 15 * scale;
-    return 1 - (y - r.top - capH / 2) / (r.height - capH);
+  const b = u.limBox, m = u.meter;
+  let grab = 0;
+  const geo = () => {
+    const r = m.getBoundingClientRect(), sc = r.height / m.offsetHeight || 1;
+    return { bottom: r.bottom - 6 * sc, span: r.height - 12 * sc };
   };
-  g.addEventListener("pointerdown", (e) => {
-    e.stopPropagation(); // not the fader's
+  const lineY = () => { const g = geo(); return g.bottom - (u.limit >= LIM_OFF ? 1 : dbToMeter(u.limit)) * g.span; };
+  const dbAt = (y) => {
+    const g = geo(), p = (g.bottom - (y - grab)) / g.span;
+    return p > 1.02 ? LIM_OFF : meterToDb(p);
+  };
+  b.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
     if (e.button !== 0) return;
-    g.setPointerCapture(e.pointerId);
+    b.setPointerCapture(e.pointerId);
     u.limDragging = true;
-    f.classList.add("limdrag");
+    m.classList.add("limdrag");
+    // keep the point grabbed under the pointer (the box's lower edge is the limit)
+    grab = e.clientY - lineY();
     e.preventDefault();
-    g.focus();
+    b.focus();
   });
-  g.addEventListener("pointermove", (e) => { if (u.limDragging) setLimit(u, posToDb(posFromY(e.clientY))); });
-  const end = () => { if (!u.limDragging) return; u.limDragging = false; f.classList.remove("limdrag"); hold("limit" + u.ch, 600); };
-  g.addEventListener("pointerup", end);
-  g.addEventListener("pointercancel", end);
-  g.addEventListener("dblclick", (e) => { e.stopPropagation(); setLimit(u, LIM_OFF); });
-  g.addEventListener("keydown", (e) => {
+  b.addEventListener("pointermove", (e) => { if (u.limDragging) setLimit(u, dbAt(e.clientY)); });
+  const end = () => { if (!u.limDragging) return; u.limDragging = false; m.classList.remove("limdrag"); hold("limit" + u.ch, 600); };
+  b.addEventListener("pointerup", end);
+  b.addEventListener("pointercancel", end);
+  b.addEventListener("dblclick", (e) => { e.stopPropagation(); setLimit(u, LIM_OFF); });
+  m.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const step = (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 0.1 : 0.5);
+    if (u.limit >= LIM_OFF) { if (step < 0) setLimit(u, 0); return; }
+    setLimit(u, u.limit + step > 0 ? LIM_OFF : u.limit + step);
+  }, { passive: false });
+  b.addEventListener("keydown", (e) => {
     const fine = e.shiftKey ? 0.1 : 1, cur = u.limit;
     const k = { ArrowUp: fine, ArrowRight: fine, ArrowDown: -fine, ArrowLeft: -fine, PageUp: 6, PageDown: -6 }[e.key];
-    if (k !== undefined) setLimit(u, cur >= LIM_OFF && k < 0 ? 0 : cur + k); // from off, down starts at 0 dB
+    if (k !== undefined) setLimit(u, cur >= LIM_OFF ? (k < 0 ? 0 : LIM_OFF) : cur + k > 0 ? LIM_OFF : cur + k);
     else if (e.key === "Home" || e.key === "Delete") setLimit(u, LIM_OFF);
     else if (e.key === "End") setLimit(u, LIM_MIN);
     else if (e.key === "0") setLimit(u, 0);
