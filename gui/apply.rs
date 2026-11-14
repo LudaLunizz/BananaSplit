@@ -350,6 +350,10 @@ pub fn apply(hub: &Hub, cmd: Cmd) -> Result<String, ApiError> {
             hub.request(Request::Zoom(z));
             ok()
         }
+        Cmd::Listen(d) => {
+            hub.request(Request::Listen(d));
+            ok()
+        }
         Cmd::Autostart(on) => {
             let msg = crate::gui_platform::set_autostart(on)?;
             hub.autostart.store(crate::gui_platform::autostart_enabled(), SeqCst);

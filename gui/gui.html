@@ -42,6 +42,7 @@
   --overlay: rgba(6, 10, 13, .78);
   --seg-muted: #66737b;    /* a muted channel's input level */
   --limit: #e9d75a;        /* a bus limiter's line (kept faint) */
+  --listen: #4f9dff;       /* border of the buses you listen on */
   --sw: 108px;             /* narrowest strip */
   --swmax: 168px;          /* widest strip */
   --font: "Inter", "Cantarell", "Ubuntu", "Noto Sans", "Segoe UI", system-ui, sans-serif;
@@ -55,7 +56,7 @@
   --cap: #ffffff; --cap-edge: #8e9da5; --text: #0f171c; --muted: #56656d; --dim: #a4b0b7;
   --green: #17945f; --teal: #0e9585; --purple: #9147cf; --blue: #2c6fcb; --amber: #b67a07; --red: #d6303f;
   --sel: #0b9a6f; --focus: #2f6fed; --overlay: rgba(231, 236, 239, .82); --wave-dim: #a8cfca; --seg-muted: #9aa6ad;
-  --limit: #a38c00;
+  --limit: #a38c00; --listen: #1f6fd8;
   color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
@@ -66,7 +67,7 @@
     --cap: #ffffff; --cap-edge: #8e9da5; --text: #0f171c; --muted: #56656d; --dim: #a4b0b7;
     --green: #17945f; --teal: #0e9585; --purple: #9147cf; --blue: #2c6fcb; --amber: #b67a07; --red: #d6303f;
     --sel: #0b9a6f; --focus: #2f6fed; --overlay: rgba(231, 236, 239, .82); --wave-dim: #a8cfca; --seg-muted: #9aa6ad;
-    --limit: #a38c00;
+    --limit: #a38c00; --listen: #1f6fd8;
     color-scheme: light;
   }
 }
@@ -148,7 +149,17 @@ button { cursor: pointer; }
 }
 .strip.busA { --acc: var(--blue); }
 .strip.busB { --acc: var(--purple); }
+/* a bus playing to the device you listen on (MENU ▸ Listening on): a blue
+   border, like the green one of the selected channel */
+.strip.bus.listen { border-color: var(--listen); box-shadow: 0 0 0 1px var(--listen); }
 .strip.sel { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel); }
+.strip.bus.listen.sel { box-shadow: 0 0 0 1px var(--sel), 0 0 0 3px var(--listen); }
+#listendlg { width: min(460px, calc(100vw - 32px)); }
+.lslist { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 4px; }
+.lslist label { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; background: var(--row); cursor: pointer; }
+.lslist label:has(input:checked) { box-shadow: inset 0 0 0 1px var(--listen); }
+.lslist small { display: block; color: var(--muted); font-size: 10px; }
+.lslist input { accent-color: var(--listen); }
 .strip.dim > :not(.sh) { opacity: .45; }
 .sh { display: flex; gap: 8px; align-items: flex-start; min-height: 22px; cursor: default; }
 .sh .bar { width: 3px; height: 18px; border-radius: 2px; background: var(--acc); flex: none; }
@@ -600,6 +611,7 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
         <button class="mi" role="menuitemcheckbox" id="m-autostart" aria-checked="false"><span class="chk"></span>Start with the system</button>
         <button class="mi" role="menuitemcheckbox" id="m-tray" aria-checked="true"><span class="chk"></span>Closing the window keeps it running</button>
         <button class="mi" role="menuitem" id="m-install" hidden><span class="chk"></span>Add BananaSplit to the app menu</button>
+        <button class="mi" role="menuitem" id="m-listen"><span class="chk"></span>Listening on…<span class="kb" id="m-listenkb"></span></button>
         <button class="mi" role="menuitem" id="m-cables" data-only="windows macos"><span class="chk"></span>Virtual cables…</button>
         <button class="mi" role="menuitem" id="m-update"><span class="chk"></span><span id="m-updtxt">Check for updates…</span><span class="kb" id="m-updkb"></span></button>
         <div class="msep"></div>
@@ -708,6 +720,15 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
     <table class="vtable" id="vbanin"><thead><tr><th>On</th><th>Stream name</th><th>From IP (or any)</th><th>Into strip</th><th>Reserve ms</th><th>Status</th></tr></thead><tbody></tbody></table>
     <h4>Outgoing streams</h4>
     <table class="vtable" id="vbanout"><thead><tr><th>On</th><th>Stream name</th><th>Source</th><th>To IP</th><th>Port</th><th>Format</th><th>Channels</th><th>Status</th></tr></thead><tbody></tbody></table>
+  </div>
+</dialog>
+
+<dialog id="listendlg" aria-labelledby="ls-h">
+  <div class="dlg-head"><h3 id="ls-h">Which output do you listen on?</h3></div>
+  <div class="dlg-body">
+    <p class="vnote" style="margin:0">Your headphones or speakers. The buses that play to it get a blue border, so you see at once where your sound comes from. You can change this later in MENU ▸ Listening on.</p>
+    <div class="lslist" id="lslist" role="radiogroup" aria-labelledby="ls-h"></div>
+    <div class="dlg-foot"><button class="tool" type="button" id="lsnone">Don't mark any</button><button class="tool" type="button" id="lslater">Ask me later</button><button class="tool primary" type="button" id="lsok">OK</button></div>
   </div>
 </dialog>
 
@@ -2068,6 +2089,46 @@ function openUpdates() {
   if (last) renderUpdate(last);
 }
 $("m-update").addEventListener("click", openUpdates);
+
+// ---- the output you listen on -------------------------------------------------
+// Asked once (until answered); the buses playing to it get a blue border.
+let listenAsked = false;
+async function openListen(auto) {
+  closeMenus();
+  let devs = [];
+  try {
+    const r = await fetch("/api/devices", { headers: { "Accept": "application/json" } });
+    if (r.ok) devs = ((await r.json()).bus || []).filter((d) => d.kind === "device");
+  } catch (e) { /* no list: nothing to choose from */ }
+  const cur = last && last.app ? last.app.listen : null;
+  if (cur && !devs.some((d) => d.client === cur)) devs.unshift({ client: cur, label: cur + " (not connected now)" });
+  if (!devs.length) { if (!auto) toast("No output devices found", true); return; }
+  if (auto && document.querySelector("dialog[open]")) { listenAsked = false; return; }
+  const pick = cur || (devs.find((d) => d.default) || devs[0]).client;
+  const list = $("lslist");
+  list.replaceChildren(...devs.map((d) => {
+    const row = el("label"), r = el("input"), t = el("span");
+    r.type = "radio"; r.name = "listen"; r.value = d.client; r.checked = d.client === pick;
+    t.append(d.label || d.client);
+    if (d.label && d.label !== d.client) t.append(el("small", null, d.client));
+    row.append(r, t);
+    row.addEventListener("dblclick", () => { r.checked = true; $("lsok").click(); });
+    return row;
+  }));
+  if (!$("listendlg").open) $("listendlg").showModal();
+  const sel = list.querySelector("input:checked");
+  if (sel) sel.focus();
+}
+function setListen(v) {
+  $("listendlg").close();
+  if (last && last.app) last.app.listen = v;
+  hold("listen", 1500);
+  send({ op: "listen", v }, true);
+}
+$("m-listen").addEventListener("click", () => openListen(false));
+$("lsok").addEventListener("click", () => { const r = $("lslist").querySelector("input:checked"); setListen(r ? r.value : ""); });
+$("lsnone").addEventListener("click", () => setListen(""));
+$("lslater").addEventListener("click", () => $("listendlg").close());
 $("updclose").addEventListener("click", () => $("upddlg").close());
 // disabled until the state says what happened (no double click)
 $("upd-check").addEventListener("click", () => { $("upd-check").disabled = true; send({ op: "update", a: "check" }, true); });
@@ -2206,6 +2267,8 @@ function render(S) {
   }
   // the first start: the "Virtual cables" window opens by itself, once
   if (S.app.welcome && !welcomed) { welcomed = true; $("cab-welcome").hidden = false; openCables(); }
+  if (S.app.listen === null && !listenAsked && !held("listen") && !document.querySelector("dialog[open]")) { listenAsked = true; openListen(true); }
+  setText($("m-listenkb"), S.app.listen ? S.app.listen.replace(/ (Analog|Digital) Stereo.*$/, "").slice(0, 22) : S.app.listen === "" ? "none" : "");
 
   // strips and buses
   S.ch.forEach((c, ch) => {
@@ -2271,6 +2334,15 @@ function render(S) {
       }
     }
     if (!u.dragging && !held("gain" + ch)) showGain(u, c.gain);
+    if (!c.strip) {
+      // plays to the device you listen on: a blue border
+      const L = S.app.listen;
+      const on = !!L && (c.conn || "").split(" + ").includes(L);
+      if (u.root.classList.contains("listen") !== on) {
+        u.root.classList.toggle("listen", on);
+        u.root.setAttribute("aria-description", on ? "plays to the output you listen on" : "");
+      }
+    }
     if (!c.strip && typeof c.limit === "number") {
       if (!u.limDragging && !held("limit" + ch)) showLimit(u, c.limit);
       const limiting = c.limit < LIM_OFF && c.limGr > 0.5;

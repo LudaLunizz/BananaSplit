@@ -80,7 +80,7 @@ async function until(pred, what, ms = 4000) {
   const rec = path.join(home, "rec");
   fs.mkdirSync(path.join(home, ".config/bananasplit"), { recursive: true });
   fs.writeFileSync(path.join(home, ".config/bananasplit/bananasplit.ini"),
-    `[global]\ncreate_cables = false\n[recorder]\nfolder = ${rec}\nlinks = A1\n`);
+    `[global]\ncreate_cables = false\n[gui]\nlisten =\n[recorder]\nfolder = ${rec}\nlinks = A1\n`);
   // A stand-in for GitHub's releases (the updater): one newer version.
   const asset = Buffer.from("not a real package");
   const releases = (base) => JSON.stringify([{

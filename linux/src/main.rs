@@ -1341,6 +1341,7 @@ fn run_gui(
                     cfg.gui.zoom = z;
                     hub.set_look(cfg.gui.theme, cfg.gui.zoom);
                 }
+                gui::Request::Listen(d) => cfg.gui.listen = Some(d),
                 gui::Request::CloseToTray(on) => {
                     cfg.gui.close_to_tray = on;
                     window.send(gui::ToWindow::CloseToTray(on));
