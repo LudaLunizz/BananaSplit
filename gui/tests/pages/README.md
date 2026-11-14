@@ -27,3 +27,10 @@ pages; a difference you meant to make shows up as exactly that.
 
 Used for step 4 of the GUI-layer work (one `gui.html`): the merged page matched the
 three old pages in all 26 scenarios.
+
+## The README screenshots
+
+`readme_shots.py OUTDIR` renders the five pictures in `docs/screenshots/` (dark, light, a strip menu, a bus
+menu, VBAN) from the current `gui.html` with the same fake backend, but a lived-in mixer (limits, rings, a take in
+the player). Run it and copy the PNGs over when the page changes visibly. The names, addresses and take times
+in it are made up.
