@@ -13,6 +13,12 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  V2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    V1 ── V3 B1 B2
 ```
 
+## What's new in 2.8.27
+
+* **A limiter on every bus** (#133): a brickwall limiter is the last stage of each bus, so nothing leaves it (device, cable, sends, recorder, VBAN) louder than its limit, even with the fader higher. Set it with the yellow-edged **LIM box on the bus meter** (like Voicemeeter's Lim), dragged up and down; a thin yellow line shows the same level on the fader, and both brighten while it limits. Top of the meter = off (bit for bit as before). Saved in the config; scenes leave it alone. API: `op=limit`, state `limit` and `limGr`.
+* **Ctrl + drag moves a whole group** (#133, #135): hold Ctrl while dragging a LIM box, a fader or a GAIN knob and all buses (or all strips) jump to that level and follow it. Ctrl also works with the arrow keys and double-click.
+* **Borders that say what a channel does** (#137, #140): **blue** on the buses that play to the output you listen on (BananaSplit asks once; MENU ▸ Listening on…), **red** on channels being recorded, **yellow** on buses an app (Discord, OBS) takes sound from (Linux), next to the green of the selected channel; several stack as rings. API: `op=listen`, state `app.listen`, `apps`.
+
 ## What's new in 2.8.26
 
 * **A refused page says why** (#128): when BananaSplit can't read the system's list of connections, the page and the API stay closed (as in 2.8.25), but the window now names the list, says why it is closed and that the mixer keeps running, instead of a bare refusal. All three systems.
