@@ -434,7 +434,7 @@ pub fn views(cfg: &Config) -> Vec<crate::gui::ChanView> {
         };
         let parts: Vec<&str> = connect.iter().chain(label).map(|x| route::short_name(x)).collect();
         let dev = if parts.is_empty() { "(nothing connected)".to_string() } else { parts.join(" + ") };
-        v.push(crate::gui::ChanView { dev, cable: cable.is_some() });
+        v.push(crate::gui::ChanView { dev, cable: cable.is_some(), apps: Vec::new() });
     }
     v
 }
