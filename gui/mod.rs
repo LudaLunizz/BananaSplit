@@ -123,6 +123,8 @@ pub enum Request {
     Theme(Theme),
     CloseToTray(bool),
     Zoom(f32),
+    /// The output device the user listens on ("" = none).
+    Listen(String),
     /// The current scene ("" = none).
     Scene(String),
     /// Automatic updates on or off.
@@ -905,10 +907,15 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     let welcome = x.welcome.map(|w| format!(",\"welcome\":{w}")).unwrap_or_default();
     let _ = write!(
         o,
-        "],\"app\":{{\"theme\":\"{}\",\"closeToTray\":{},\"zoom\":{},\"autostart\":{},\"installed\":{},\"window\":\"{}\",\"tray\":{},\"platform\":\"{}\"{welcome}}}",
+        "],\"app\":{{\"theme\":\"{}\",\"closeToTray\":{},\"zoom\":{},\"listen\":{},\"autostart\":{},\"installed\":{},\"window\":\"{}\",\"tray\":{},\"platform\":\"{}\"{welcome}}}",
         g.theme.as_str(),
         g.close_to_tray,
         g.zoom,
+        g.listen.as_deref().map_or("null".to_string(), |l| {
+            let mut s = String::new();
+            jstr(&mut s, l);
+            s
+        }),
         x.autostart,
         x.installed,
         x.window,
@@ -1788,7 +1795,7 @@ mod tests {
         );
         assert!(json.contains(r#","player":{"state":"stopped","take":null,"pos":0.00,"dur":0.00,"underruns":0,"error":null},"playTo":1,"takes":{"rev":3,"count":2,"newest":"2026-10-21_14-03-05"},"disk":{"total":64000000000,"free":52000000000},"#), "{json}");
         let os = crate::gui_platform::PLATFORM;
-        assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","closeToTray":true,"zoom":1,"autostart":false,"installed":true,"window":"app","tray":true,"platform":"{os}"}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
+        assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","closeToTray":true,"zoom":1,"listen":null,"autostart":false,"installed":true,"window":"app","tray":true,"platform":"{os}"}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
         // Windows and macOS add whether the cables welcome is still to come, and nothing else.
         let welcome = render(&Extra { welcome: Some(false), ..extra(&ps, &scene_list) });
         assert!(
@@ -1859,6 +1866,7 @@ mod tests {
         command(&h, "op=theme&v=light").unwrap();
         command(&h, "op=closetray&v=0").unwrap();
         command(&h, "op=zoom&v=1.25").unwrap();
+        command(&h, "op=listen&v=Starship%2FMatisse").unwrap();
         command(&h, "op=show&token=abc%0A%20d").unwrap();
         assert!(command(&h, "op=theme&v=pink").is_err());
         assert!(command(&h, "op=zoom&v=9").is_err());
@@ -1871,6 +1879,7 @@ mod tests {
                 Request::Theme(Theme::Light),
                 Request::CloseToTray(false),
                 Request::Zoom(1.25),
+                Request::Listen("Starship/Matisse".into()),
                 Request::Show("abcd".into()),
             ]
         );
@@ -2125,6 +2134,7 @@ mod tests {
             "theme",
             "closetray",
             "zoom",
+            "listen",
             "autostart",
             "install",
             "save",

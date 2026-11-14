@@ -300,6 +300,11 @@ pub struct GuiConfig {
     /// two days old (off: only when the user asks). Written only when on,
     /// so an older BananaSplit can still read the file.
     pub auto_update: bool,
+    /// The output device the user listens on (its client name, as in a
+    /// bus's connections): the buses playing to it are marked on the page.
+    /// `None` = not asked yet (the page asks once); `Some("")` = none.
+    /// Written only once chosen, so an older BananaSplit can still read the file.
+    pub listen: Option<String>,
 }
 
 impl Default for GuiConfig {
@@ -311,6 +316,7 @@ impl Default for GuiConfig {
             window: None,
             scene: String::new(),
             auto_update: false,
+            listen: None,
         }
     }
 }
@@ -328,6 +334,16 @@ pub fn parse_window_size(v: &str) -> Result<Option<(u32, u32)>, String> {
         return Err(bad());
     }
     Ok(Some((w, h)))
+}
+
+/// The device the user listens on: a client name (or "" = none), one line,
+/// at most 320 bytes.
+pub fn parse_listen(v: &str) -> Result<String, String> {
+    let v = v.trim();
+    if v.len() > 320 || v.chars().any(char::is_control) {
+        return Err("bad device name".into());
+    }
+    Ok(v.into())
 }
 
 pub fn parse_zoom(v: &str) -> Result<f32, String> {
@@ -650,6 +666,7 @@ impl Config {
                         cfg.gui.scene = v.into();
                     }
                     "auto_update" => cfg.gui.auto_update = parse_bool(v).map_err(err)?,
+                    "listen" => cfg.gui.listen = Some(parse_listen(v).map_err(err)?),
                     _ => return Err(err(format!("unknown key {k:?} in [gui]"))),
                 },
                 Section::Strip(i) => {
@@ -823,6 +840,9 @@ impl Config {
         let _ = writeln!(o, "scene = {}", g.scene);
         if g.auto_update {
             let _ = writeln!(o, "auto_update = true");
+        }
+        if let Some(l) = &g.listen {
+            let _ = writeln!(o, "listen = {l}");
         }
         for (i, s) in self.strips.iter().enumerate() {
             let _ = writeln!(o, "\n[strip{}]", i + 1);
@@ -1252,6 +1272,7 @@ mod tests {
             window: Some((1600, 900)),
             scene: "Live Room 06".into(),
             auto_update: false,
+            listen: None,
         };
         let text = c.to_ini();
         assert_eq!(Config::parse(&text).unwrap(), c);
@@ -1259,6 +1280,15 @@ mod tests {
             "\n[gui]\ntheme = auto\nclose_to_tray = false\nzoom = 1.25\nwindow = 1600x900\nscene = Live Room 06\n"
         ));
         assert!(!text.contains("auto_update"), "off (the default) is not written: an older BananaSplit reads the file");
+        assert!(!text.contains("listen"), "not asked yet: not written");
+        // the device the user listens on: kept as written, "" = none chosen
+        for l in ["Starship/Matisse HD Audio Controller Analog Stereo", ""] {
+            let mut d = c.clone();
+            d.gui.listen = Some(l.into());
+            let t = d.to_ini();
+            assert!(t.contains(&format!("\nlisten = {l}\n")) || (l.is_empty() && t.contains("\nlisten =")), "{t}");
+            assert_eq!(Config::parse(&t).unwrap().gui.listen.as_deref(), Some(l));
+        }
         assert_eq!(Config::parse("[gui]\nwindow =\n").unwrap().gui.window, None);
         assert!(Config::parse("[gui]\nwindow = 10x10\n").is_err());
         assert!(text.contains("play_to = V1,B1\n"));
