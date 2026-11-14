@@ -395,7 +395,7 @@ pub fn views_of(cfg: &Config, s: &Snapshot, cables: &Cables) -> Vec<ChanView> {
             let mut parts = connected(cfg, ch, devs, def, cable);
             parts.extend(cable);
             let dev = if parts.is_empty() { "Not connected".to_string() } else { parts.join(" · ") };
-            ChanView { dev, cable: cable.is_some() }
+            ChanView { dev, cable: cable.is_some(), apps: Vec::new() }
         })
         .collect()
 }
@@ -406,7 +406,7 @@ pub fn views(cfg: &Config) -> Vec<ChanView> {
             let c = current(cfg, &s.caps, &s.rens);
             views_of(cfg, &s, &c)
         }
-        Err(_) => vec![ChanView { dev: "Not connected".into(), cable: false }; NUM_CHANNELS],
+        Err(_) => vec![ChanView { dev: "Not connected".into(), cable: false, apps: Vec::new() }; NUM_CHANNELS],
     }
 }
 
@@ -540,11 +540,11 @@ mod tests {
         cfg.buses[1].connect = vec!["External Headphones".into()];
         let c = plan(&cfg, &s.caps, &s.rens, &NONE);
         let v = views_of(&cfg, &s, &c);
-        assert_eq!(v[0], ChanView { dev: "MacBook Pro Microphone · BlackHole 2ch".into(), cable: true });
-        assert_eq!(v[1], ChanView { dev: "BlackHole 16ch".into(), cable: true });
-        assert_eq!(v[2], ChanView { dev: "Not connected".into(), cable: false });
+        assert_eq!(v[0], ChanView { dev: "MacBook Pro Microphone · BlackHole 2ch".into(), cable: true, apps: Vec::new() });
+        assert_eq!(v[1], ChanView { dev: "BlackHole 16ch".into(), cable: true, apps: Vec::new() });
+        assert_eq!(v[2], ChanView { dev: "Not connected".into(), cable: false, apps: Vec::new() });
         // V1 has no device of its own by default; B2 (system out) plays to the default output
-        assert_eq!(v[NUM_STRIPS], ChanView { dev: "Not connected".into(), cable: false });
+        assert_eq!(v[NUM_STRIPS], ChanView { dev: "Not connected".into(), cable: false, apps: Vec::new() });
         assert_eq!(v[NUM_STRIPS + 1].dev, "External Headphones");
         assert_eq!(v[NUM_STRIPS + 4].dev, "MacBook Pro Speakers");
     }
