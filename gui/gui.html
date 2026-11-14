@@ -983,36 +983,41 @@ function makeKnob({ cls, label, min, max, def, step, fine, fmt, onChange }) {
     k.setAttribute("aria-valuenow", String(v));
     k.setAttribute("aria-valuetext", fmt(v));
   };
-  const set = (v, snap) => {
+  // `all` (Ctrl held): the knob's whole group follows (if onChange groups)
+  const set = (v, snap, all) => {
     const q = snap ? step : fine;
     v = clamp(Math.round(v / q) * q, min, max);
     v = Math.round(v * 100) / 100;
-    if (v !== st.v) { show(v); onChange(v); }
+    if (v !== st.v || all) { show(v); onChange(v, !!all); }
   };
-  let y0 = 0, v0 = 0;
+  let y0 = 0, v0 = 0, linked = false;
   k.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     k.setPointerCapture(e.pointerId);
     st.dragging = true; y0 = e.clientY; v0 = st.v;
+    linked = e.ctrlKey || e.metaKey;
+    if (linked) onChange(st.v, true); // the group jumps to this one's value
     k.focus(); e.preventDefault();
   });
   k.addEventListener("pointermove", (e) => {
     if (!st.dragging) return;
     const scale = k.getBoundingClientRect().height / k.offsetHeight || 1;
     const dy = (y0 - e.clientY) / scale;
-    set(v0 + dy * (max - min) / (e.shiftKey ? 800 : 200), !e.shiftKey);
+    set(v0 + dy * (max - min) / (e.shiftKey ? 800 : 200), !e.shiftKey, linked);
   });
-  const end = () => { st.dragging = false; };
+  const end = () => { st.dragging = false; linked = false; };
   k.addEventListener("pointerup", end);
   k.addEventListener("pointercancel", end);
-  k.addEventListener("dblclick", () => set(def, true));
-  k.addEventListener("wheel", (e) => { e.preventDefault(); set(st.v + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? fine : step), false); }, { passive: false });
+  k.addEventListener("dblclick", (e) => set(def, true, e.ctrlKey || e.metaKey));
+  k.addEventListener("wheel", (e) => { if (e.ctrlKey || e.metaKey) return; e.preventDefault(); set(st.v + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? fine : step), false); }, { passive: false });
   k.addEventListener("keydown", (e) => {
+    const all = e.ctrlKey || e.metaKey;
+    if (all && ["0", "-", "=", "+"].includes(e.key)) return; // (the page's zoom)
     const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
-    if (d) set(st.v + d * (e.shiftKey ? fine : step), false);
-    else if (e.key === "Home") set(max, false);
-    else if (e.key === "End") set(min, false);
-    else if (e.key === "0" || e.key === "Delete") set(def, false);
+    if (d) set(st.v + d * (e.shiftKey ? fine : step), false, all);
+    else if (e.key === "Home") set(max, false, all);
+    else if (e.key === "End") set(min, false, all);
+    else if (e.key === "0" || e.key === "Delete") set(def, false, all);
     else return;
     e.preventDefault(); e.stopPropagation();
   });
@@ -1094,7 +1099,14 @@ function buildStrip(ch) {
   u.trimVal = el("span", "kval num", "0 dB");
   u.trim = makeKnob({
     label: id + " input gain", min: TRIM_MIN, max: TRIM_MAX, def: 0, step: 0.5, fine: 0.1, fmt: fmtTrim,
-    onChange: (v) => { setText(u.trimVal, fmtTrim(v)); sendThrottled(u, "trim", { op: "trim", ch, v }); },
+    // Ctrl: every strip's (or every bus's) input gain follows
+    onChange: (v, all) => {
+      for (const x of all ? group(u) : [u]) {
+        if (x !== u) x.trim.show(v);
+        setText(x.trimVal, fmtTrim(v));
+        sendThrottled(x, "trim", { op: "trim", ch: x.ch, v });
+      }
+    },
   });
   gr.append(u.trim.el, u.trimVal);
   root.append(gl, gr);
@@ -1233,41 +1245,57 @@ function showGain(u, db) {
     if (u.readout.value !== t) u.readout.value = t;
   }
 }
-function setGain(u, db) {
+// The channels of the same kind: all 6 strips, or all 5 buses.
+const group = (u) => ui.filter((x) => x && (x.ch < NUM_STRIPS) === (u.ch < NUM_STRIPS));
+// `all` (Ctrl held): the whole group goes to this level
+function setGain(u, db, all) {
   db = round1(clamp(db, MIN_DB, MAX_DB));
-  showGain(u, db);
-  sendThrottled(u, "gain", { op: "gain", ch: u.ch, v: db });
+  for (const x of all ? group(u) : [u]) {
+    showGain(x, db);
+    sendThrottled(x, "gain", { op: "gain", ch: x.ch, v: db });
+  }
 }
 function wireFader(u) {
   const f = u.fader;
-  let grab = 0;
+  let grab = 0, linked = false;
   const posFromY = (y) => {
     const r = f.getBoundingClientRect();
     const scale = r.height / f.offsetHeight || 1, capH = 15 * scale;
     return 1 - (y - grab - r.top - capH / 2) / (r.height - capH);
   };
+  // Ctrl held when grabbing: every strip (or every bus) jumps to this
+  // fader's level and follows it
+  const dragging = () => (linked ? group(u) : [u]);
   f.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     f.setPointerCapture(e.pointerId);
-    u.dragging = true;
+    linked = e.ctrlKey || e.metaKey;
+    for (const x of dragging()) x.dragging = true;
     const c = u.cap.getBoundingClientRect();
     grab = e.target === u.cap ? e.clientY - (c.top + c.height / 2) : 0;
-    if (e.target !== u.cap) setGain(u, posToDb(posFromY(e.clientY)));
+    if (e.target !== u.cap) setGain(u, posToDb(posFromY(e.clientY)), linked);
+    else if (linked) setGain(u, u.gain, true);
     e.preventDefault();
     f.focus();
   });
-  f.addEventListener("pointermove", (e) => { if (u.dragging) setGain(u, posToDb(posFromY(e.clientY))); });
-  const end = () => { u.dragging = false; hold("gain" + u.ch, 600); };
+  f.addEventListener("pointermove", (e) => { if (u.dragging) setGain(u, posToDb(posFromY(e.clientY)), linked); });
+  const end = () => {
+    if (!u.dragging) return;
+    for (const x of dragging()) { x.dragging = false; hold("gain" + x.ch, 600); }
+    linked = false;
+  };
   f.addEventListener("pointerup", end);
   f.addEventListener("pointercancel", end);
-  f.addEventListener("dblclick", () => setGain(u, 0));
-  f.addEventListener("wheel", (e) => { e.preventDefault(); setGain(u, u.gain + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 0.1 : 0.5)); }, { passive: false });
+  f.addEventListener("dblclick", (e) => setGain(u, 0, e.ctrlKey || e.metaKey));
+  f.addEventListener("wheel", (e) => { if (e.ctrlKey || e.metaKey) return; e.preventDefault(); setGain(u, u.gain + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 0.1 : 0.5)); }, { passive: false });
   f.addEventListener("keydown", (e) => {
+    const all = e.ctrlKey || e.metaKey;
+    if (all && ["0", "-", "=", "+"].includes(e.key)) return; // (the page's zoom)
     const fine = e.shiftKey ? 0.1 : 1;
     const k = { ArrowUp: fine, ArrowRight: fine, ArrowDown: -fine, ArrowLeft: -fine, PageUp: 6, PageDown: -6 }[e.key];
-    if (k !== undefined) setGain(u, u.gain + k);
-    else if (e.key === "Home") setGain(u, MAX_DB);
-    else if (e.key === "End") setGain(u, MIN_DB);
+    if (k !== undefined) setGain(u, u.gain + k, all);
+    else if (e.key === "Home") setGain(u, MAX_DB, all);
+    else if (e.key === "End") setGain(u, MIN_DB, all);
     else if (e.key === "0") setGain(u, 0);
     else return;
     e.preventDefault(); e.stopPropagation();
