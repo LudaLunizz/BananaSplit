@@ -337,6 +337,16 @@ pub enum Cmd {
     Save,
     Reconnect,
     Quit,
+    // ---- MIDI ----
+    /// Learning on or off.
+    MidiLearn(bool),
+    /// The ports by name (`None`: unchanged, `""`: none).
+    MidiPort {
+        input: Option<String>,
+        output: Option<String>,
+    },
+    MidiBind(super::midi::Binding),
+    MidiUnbind(super::midi::Src),
     /// An op only one system has (`gui_platform::command` knows it, or nobody does).
     Platform {
         op: String,
@@ -516,6 +526,31 @@ impl Cmd {
             "save" => Cmd::Save,
             "reconnect" => Cmd::Reconnect,
             "quit" => Cmd::Quit,
+            "midi" => match f.req("a")? {
+                "learn" => Cmd::MidiLearn(true),
+                "stop" => Cmd::MidiLearn(false),
+                a => return Err(format!("unknown MIDI action {a:?}").into()),
+            },
+            "midiport" => {
+                let name = |k: &str| -> Result<Option<String>, String> {
+                    match f.get(k) {
+                        None => Ok(None),
+                        Some(n) if n.len() > 256 || n.chars().any(char::is_control) => {
+                            Err(format!("bad {k} port name"))
+                        }
+                        Some(n) => Ok(Some(n.to_string())),
+                    }
+                };
+                Cmd::MidiPort { input: name("in")?, output: name("out")? }
+            }
+            "midibind" => {
+                use super::midi::{Action, Binding, Mode, Src};
+                let src = Src::parse(f.req("src")?)?;
+                let action = Action::parse(f.req("target")?)?;
+                let mode = f.get("mode").filter(|m| !m.is_empty()).map(Mode::parse).transpose()?;
+                Cmd::MidiBind(Binding::new(src, action, mode, f.bool_of("takeover")?, f.bool_of("feedback")?)?)
+            }
+            "midiunbind" => Cmd::MidiUnbind(super::midi::Src::parse(f.req("src")?)?),
             op => Cmd::Platform { op: op.to_string(), form: f },
         })
     }

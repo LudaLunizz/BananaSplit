@@ -6,6 +6,8 @@
 //! Nothing here allocates except the functions that build text, so the
 //! ones the IOProcs or the device setup call stay cheap.
 
+pub mod midi;
+
 use crate::ring::MAX_RATIO;
 use std::fmt::Write as _;
 

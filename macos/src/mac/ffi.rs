@@ -8,10 +8,10 @@ use std::ffi::{c_char, c_void};
 use std::mem::{MaybeUninit, size_of};
 use std::ptr::null;
 
-type CFStringRef = *const c_void;
+pub type CFStringRef = *const c_void;
 type CFIndex = isize;
 /// `kCFStringEncodingUTF8`.
-const UTF8: u32 = 0x0800_0100;
+pub const UTF8: u32 = 0x0800_0100;
 /// `kCFNotFound`.
 const NOT_FOUND: CFIndex = -1;
 
@@ -72,8 +72,8 @@ unsafe extern "C" {
     fn CFStringGetLength(s: CFStringRef) -> CFIndex;
     fn CFStringGetMaximumSizeForEncoding(length: CFIndex, encoding: u32) -> CFIndex;
     fn CFStringGetCString(s: CFStringRef, buffer: *mut c_char, size: CFIndex, encoding: u32) -> u8;
-    fn CFStringCreateWithCString(alloc: *const c_void, c_str: *const c_char, encoding: u32) -> CFStringRef;
-    fn CFRelease(cf: *const c_void);
+    pub fn CFStringCreateWithCString(alloc: *const c_void, c_str: *const c_char, encoding: u32) -> CFStringRef;
+    pub fn CFRelease(cf: *const c_void);
 }
 
 #[link(name = "AVFoundation", kind = "framework")]
@@ -154,7 +154,7 @@ fn get_string(object: AudioObjectID, selector: u32, scope: u32) -> Option<String
 
 /// # Safety
 /// `s` is a live CFString.
-unsafe fn string_of(s: CFStringRef) -> Option<String> {
+pub unsafe fn string_of(s: CFStringRef) -> Option<String> {
     // SAFETY: the caller's promise.
     unsafe {
         let max = CFStringGetMaximumSizeForEncoding(CFStringGetLength(s), UTF8);

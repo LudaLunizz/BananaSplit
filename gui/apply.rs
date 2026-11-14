@@ -404,6 +404,24 @@ pub fn apply(hub: &Hub, cmd: Cmd) -> Result<String, ApiError> {
             hub.request(Request::Quit);
             Ok("quitting".into())
         }
+        Cmd::MidiLearn(on) => {
+            hub.midi()?.learn(on);
+            Ok(if on { "move a control on your MIDI controller" } else { "learning stopped" }.into())
+        }
+        Cmd::MidiPort { input, output } => {
+            hub.midi()?.set_ports(input.as_deref(), output.as_deref())?;
+            ok()
+        }
+        Cmd::MidiBind(b) => {
+            let msg = format!("{} → {}", b.src.name(), b.action.label(&lock(&hub.names)));
+            hub.midi()?.bind(b)?;
+            Ok(msg)
+        }
+        Cmd::MidiUnbind(src) => Ok(if hub.midi()?.unbind(src)? {
+            format!("{} unbound", src.name())
+        } else {
+            format!("{} was not bound", src.name())
+        }),
         Cmd::Platform { op, form } => crate::gui_platform::command(hub, &op, &form)
             .map_or_else(|| Err(format!("unknown op {op:?}").into()), |r| r.map_err(ApiError::from)),
     }

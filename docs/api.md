@@ -177,6 +177,15 @@ number.
 | `reconnect` | | Connect to the audio server again. | `reconnecting` |
 | `quit` | | Save and quit. | `quitting` |
 
+**MIDI controllers** (from 2.9.0; see [API v1](#api-v1) for the paths a binding drives)
+
+| `op` | Fields | Does | Answers |
+|---|---|---|---|
+| `midiport` | any of `in`, `out` (a port name from `midi.ins` / `midi.outs`, empty: none) | The port the controller sends on and the one it listens on (LEDs, motor faders). Opened as soon as it is there, again after it was unplugged. | `ok` |
+| `midi` | `a` (`learn`, `stop`) | Learning: the next control moved on the controller is caught (`midi.learn`); nothing is changed while learning. Stops by itself after 60 s. | `move a control on your MIDI controller`, `learning stopped` |
+| `midibind` | `src`, `target`, any of `mode`, `takeover` flag, `feedback` flag | Bind a control to a value, or replace its binding. `src`: `cc:CH:N`, `cc14:CH:N` (N 0 to 31, its LSB on N+32), `note:CH:N`, `pb:CH` (pitch bend), `nrpn:CH:N`, `pc:CH:N` (program change); CH 1 to 16. `target`: an API v1 path, or `scene:<name>`. `mode`: `abs`, `rel2` (1 up, 127 down), `rel64` (65 up, 63 down), `relsign` (1 up, 65 down), `toggle`, `momentary`, `trigger`; left out: the first that fits. A button cannot set a number. `takeover` (soft-takeover, default on for absolute controls except pitch bend) and `feedback` (send the value back, default on except for scenes and program changes). At most 256. | `CC 7 · ch 1 → Strip 1: fader` |
+| `midiunbind` | `src` | Remove a control's binding. | `CC 7 · ch 1 unbound`, `... was not bound` |
+
 **Windows and macOS only:** `cables` with `a` = `page` (the cable download page), `sound` (the
 system's sound settings), `seen` (the first-start welcome was shown), and `splitter` (Windows) or
 `midi` (macOS, Audio MIDI Setup). Any other `op` is refused: *unknown op "zzz"*.
@@ -202,6 +211,7 @@ times a second while there is something to show). It is one JSON object:
 | `disk` | `total` and `free` bytes where recordings go, or `null`. |
 | `scene`, `scenes` | The current scene's name (empty: none) and the saved scenes. |
 | `app` | `theme`, `closeToTray`, `zoom`, `listen` (from 2.8.27: the device you listen on, `""` = none, `null` = not asked yet), `autostart`, `installed` (in the application menu), `window` (`app`: its own window, `browser`, `none`), `tray`, `platform` (*new*: `linux`, `windows` or `macos`) and, on Windows and macOS only, `welcome` (the first-start cables window is still to be shown). |
+| `midi` | From 2.9.0, once MIDI runs: `available` (false: no MIDI on this system, `error` says why), `in`, `out` (the chosen ports, `""` = none), `inOpen`, `outOpen`, `ins`, `outs` (the ports there are now), `error` (`null` or why a port did not open), `last` (the last message received, as text), `learn` (`null`, or `src`, `name` and the suggested `mode` of the control caught, each `null` until one is moved), `bindings` (each `src`, `name`, `target`, `label`, `mode`, `takeover`, `feedback`). |
 | `update` | `null` (no updater), or `auto`, `phase` (`idle`, `checking`, `current`, `available`, `downloading`, `prepared`, `installing`, `ready`, `failed`), `current`, `latest`, `installed` (versions, or `null`), `message`, `got`, `total` (bytes), `method` (`replace`, `package`, `manual`), `canInstall`, `checkedAgo` (seconds or `null`), `rev`. |
 
 A channel in `ch`:
