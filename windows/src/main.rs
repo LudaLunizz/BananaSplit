@@ -438,6 +438,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                     cfg.gui.zoom = z;
                     hub.set_look(cfg.gui.theme, cfg.gui.zoom);
                 }
+                Request::Listen(d) => cfg.gui.listen = Some(d),
                 Request::Scene(name) => cfg.gui.scene = name,
                 Request::AutoUpdate(on) => {
                     cfg.gui.auto_update = on;

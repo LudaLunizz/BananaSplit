@@ -7,7 +7,7 @@
 
 use super::MAX_NAME;
 use super::api::ApiError;
-use bananasplit::config::{Theme, parse_pan, parse_trim, parse_zoom};
+use bananasplit::config::{Theme, parse_listen, parse_pan, parse_trim, parse_zoom};
 use bananasplit::dynamics::{COMP, GATE};
 use bananasplit::engine::{NUM_BUSES, NUM_STRIPS, clamp_db};
 use bananasplit::eq::{self, BANDS, Kind};
@@ -324,6 +324,8 @@ pub enum Cmd {
     Theme(Theme),
     CloseToTray(bool),
     Zoom(f32),
+    /// The output device the user listens on ("" = none).
+    Listen(String),
     Autostart(bool),
     Install,
     AutoUpdate(bool),
@@ -496,6 +498,7 @@ impl Cmd {
             "theme" => Cmd::Theme(Theme::parse(f.req("v")?)?),
             "closetray" => Cmd::CloseToTray(f.flag()?),
             "zoom" => Cmd::Zoom(parse_zoom(f.req("v")?)?),
+            "listen" => Cmd::Listen(parse_listen(f.get("v").unwrap_or(""))?),
             "autostart" => Cmd::Autostart(f.flag()?),
             "install" => Cmd::Install,
             "autoupdate" => Cmd::AutoUpdate(f.flag()?),
@@ -540,6 +543,10 @@ mod tests {
             "within the fader"
         );
         assert_eq!(p("op=trim&ch=1&v=6"), Ok(Cmd::Trim { ch: 1, db: 6.0 }));
+        assert_eq!(p("op=listen&v=Starship%2FMatisse%20HD"), Ok(Cmd::Listen("Starship/Matisse HD".into())));
+        assert_eq!(p("op=listen&v="), Ok(Cmd::Listen(String::new())));
+        assert_eq!(p("op=listen"), Ok(Cmd::Listen(String::new())));
+        assert!(p("op=listen&v=a%0Ab").is_err());
         assert_eq!(p("op=limit&ch=9&v=-6.04"), Ok(Cmd::Limit { bus: 3, db: -6.0 }));
         assert_eq!(p("op=limit&ch=6&v=off"), Ok(Cmd::Limit { bus: 0, db: limiter::LIMIT_OFF_DB }));
         assert_eq!(p("op=limit&ch=10&v=-99"), Ok(Cmd::Limit { bus: 4, db: limiter::LIMIT_MIN_DB }));

@@ -37,7 +37,8 @@ function check(ok, what) {
 async function start(ini, extraEnv, port) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "bs-fix-ui-"));
   fs.mkdirSync(path.join(home, ".config/bananasplit"), { recursive: true });
-  fs.writeFileSync(path.join(home, ".config/bananasplit/bananasplit.ini"), ini.replace(/\$HOME/g, home));
+  // (listen set: the first-start "which output do you listen on" question stays away)
+  fs.writeFileSync(path.join(home, ".config/bananasplit/bananasplit.ini"), ini.replace(/\$HOME/g, home) + "\n[gui]\nlisten =\n");
   const env = Object.assign({}, process.env, {
     HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local/share"),
     LD_LIBRARY_PATH: MOCK, MOCKJACK_REPORT: path.join(home, "report.txt"), MOCKJACK_REALTIME: "1", MOCKJACK_CYCLES: "100000000",
