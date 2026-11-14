@@ -36,6 +36,19 @@ CABLES = {
               'output': {'name': 'MacBook Pro Speakers', 'cable': False}, 'input': {'name': 'MacBook Pro Microphone', 'cable': False}},
 }
 mode = {'welcome': False, 'nocables': False}
+# What the MIDI window shows (2.9.0): a controller, two bindings, a control just caught by Learn.
+MIDI = {'available': True, 'in': 'X-TOUCH MINI MIDI 1', 'out': 'X-TOUCH MINI MIDI 1', 'inOpen': True, 'outOpen': True,
+        'ins': ['X-TOUCH MINI MIDI 1', 'Midi Through Port-0'], 'outs': ['X-TOUCH MINI MIDI 1', 'Midi Through Port-0'],
+        'error': None, 'last': 'CC 1 = 74 · ch 11',
+        'learn': {'src': 'cc:11:1', 'name': 'CC 1 · ch 11', 'mode': None},
+        'bindings': [
+            {'src': 'cc:11:7', 'name': 'CC 7 · ch 11', 'target': '/strips/1/gain_db', 'label': 'Strip 1 (Mic): fader', 'mode': 'abs', 'takeover': True, 'feedback': True},
+            {'src': 'note:11:8', 'name': 'Note 8 · ch 11', 'target': '/strips/1/mute', 'label': 'Strip 1 (Mic): mute', 'mode': 'toggle', 'takeover': False, 'feedback': True}]}
+PATHS = [{'path': f'/strips/{n}/{k}', 'label': f'Strip {n}: {t}', 'kind': kind, 'value': 0} for n in range(1, 7)
+         for k, t, kind in [('gain_db', 'fader', 'number'), ('mute', 'mute', 'flag')]] + \
+        [{'path': f'/buses/{b}/{k}', 'label': f'{b}: {t}', 'kind': kind, 'value': 0} for b in ['V1', 'V2', 'V3', 'B1', 'B2']
+         for k, t, kind in [('gain_db', 'fader', 'number'), ('mute', 'mute', 'flag')]] + \
+        [{'path': '/recorder/recording', 'label': 'Recorder: recording', 'kind': 'flag', 'value': False}]
 
 
 def state_json():
@@ -43,6 +56,7 @@ def state_json():
     s['app']['platform'] = platform
     if platform != 'linux':
         s['app']['welcome'] = mode['welcome']
+    s['midi'] = MIDI
     return json.dumps(s, separators=(',', ':'))
 
 
@@ -96,6 +110,7 @@ class H(BaseHTTPRequestHandler):
         elif p == '/api/update': self.send(200, 'application/json', open(f'{HERE}/canned/update.json').read())
         elif p == '/api/cables' and platform in CABLES: self.send(200, 'application/json', json.dumps(CABLES[platform]))
         elif p == '/api/ping': self.send(200, 'text/plain', 'bananasplit-gui')
+        elif p == '/api/v1/paths': self.send(200, 'application/json', json.dumps({'api': 1, 'paths': PATHS}))
         else: self.send(404, 'text/plain', 'not found')
 
 
@@ -165,6 +180,10 @@ try:
     js('document.getElementById("vbanclose").click()')
     js('document.getElementById("menubtn").click()'); js('document.getElementById("m-update").click()'); time.sleep(0.4); snap('update', '#upddlg')
     js('document.getElementById("updclose").click()')
+    if js('return !!document.getElementById("m-midi")'):  # pages from 2.9.0 on
+        js('document.getElementById("menubtn").click()'); js('document.getElementById("m-midi").click()')
+        wait('document.querySelector("#midibindings tbody tr td")', 'the MIDI bindings'); snap('midi', '#mididlg')
+        js('document.getElementById("midiclose").click()')
     load(); js('toggleChanMenu(0)'); wait('document.querySelector("#cmenu .ci")', 'the strip menu'); snap('chanmenu-strip', '#cmenu')
     load(); js('toggleChanMenu(7)'); wait('document.querySelector("#cmenu .ci")', 'the bus menu'); snap('chanmenu-bus', '#cmenu')
     if platform != 'linux':

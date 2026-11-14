@@ -12,6 +12,7 @@ mod gui;
 mod gui_platform;
 mod jack;
 mod lowlat;
+mod midi;
 mod shell;
 mod sys;
 use bananasplit::tui;
@@ -1236,6 +1237,7 @@ fn run_gui(
     let updater = update::Updater::start();
     hub.set_updater(updater.clone());
     let port = gui::start(hub.clone(), opts.port, opts.explicit)?;
+    gui::start_midi(&hub, midi::io());
     let url = gui::url(port);
     gui::note_port(&backend.client_name, port);
     for n in &notes {

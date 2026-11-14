@@ -13,6 +13,7 @@ pub mod catypes;
 pub mod chanmenu;
 pub mod coreaudio;
 pub mod ffi;
+pub mod midi;
 pub mod route;
 
 use bananasplit::config::Config;

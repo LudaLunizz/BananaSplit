@@ -282,6 +282,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
     hub.set_updater(updater.clone());
 
     let port = gui::start(hub.clone(), opts.port, opts.explicit_port)?;
+    gui::start_midi(&hub, mac::midi::io());
     gui::note_port(&cfg.client_name, port);
     let url = gui::url(port);
     let mut notes = notes;
