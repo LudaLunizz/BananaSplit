@@ -112,6 +112,33 @@ try:
     check(all({'id','cable','conn','connect'} == set(c) for c in dv['ch']), 'devices ch: id, cable, conn, connect')
     h, b = req('GET', '/api/update'); check(h.startswith('HTTP/1.1 200') and set(json.loads(b)) == {'page','notes','manual','rev'}, 'update keys')
     check(st['update'] is None or set(st['update']) >= {'auto','phase'}, 'state.update')
+    # --- API v1: the documented paths, answers and examples
+    J = {**X, 'Content-Type': 'application/json'}
+    def v1(body, path='/api/v1/command'):
+        h, b = req('POST', path, body, J); check('application/json' in h, f'{path} answers JSON'); return int(h.split()[1]), json.loads(b)
+    v1st = json.loads(req('GET', '/api/v1/state')[1])
+    check(v1st['api'] == 1 and isinstance(v1st['rev'], int) and set(v1st) - {'api', 'rev'} == set(st), 'v1 state = api, rev + the state')
+    v1doc = doc[doc.index('## API v1'):doc.index('## Errors')]
+    paths = json.loads(req('GET', '/api/v1/paths')[1])['paths']
+    check(len(paths) == 151, f'151 v1 paths (got {len(paths)})')
+    for pth in paths:
+        tail = pth['path'].split('/')[-1] if '/sends/' not in pth['path'] else 'sends'
+        check(f'`{tail}`' in v1doc or f'/{tail}`' in v1doc or f'{tail}/' in v1doc, f'v1 path {pth["path"]} is documented')
+        check({'path', 'label', 'kind', 'value'} <= set(pth) and (pth['kind'] == 'flag' or {'min', 'max', 'step', 'unit'} <= set(pth)), f'{pth["path"]} fields')
+    code, r = v1('{"cmd":"set","path":"/strips/1/gain_db","value":-6}')
+    check((code, r) == (200, {'ok': True, 'text': '-6.0 dB', 'path': '/strips/1/gain_db', 'value': -6.0}), f'v1 set as documented (got {r})')
+    code, r = v1('{"cmd":"toggle","path":"/buses/B1/mute"}'); check(code == 200 and r['value'] in (True, False), 'v1 toggle')
+    code, r = v1('{"cmd":"step","path":"/strips/2/gain_db","by":3}'); check(code == 200 and r['value'] == 3.0, f'v1 step (got {r})')
+    code, r = v1('[{"cmd":"fade","path":"/buses/V1/gain_db","to":-20,"ms":500},{"cmd":"set","path":"/strips/3/sends/B1","value":true}]')
+    check(code == 200 and r['ok'] is True and len(r['results']) == 2, f'v1 batch (got {r})')
+    time.sleep(0.8)
+    check(json.loads(req('GET', '/api/v1/state')[1])['ch'][6]['gain'] == -20.0, 'v1 fade arrived')
+    code, r = v1('[{"cmd":"set","path":"/strips/4/mute","value":false},{"cmd":"set","path":"/nope","value":1}]')
+    check(code == 400 and r['error'].startswith('command 2: '), f'v1 batch checked whole (got {r})')
+    check(v1('{"cmd":"recall","scene":"Gone"}')[0] == 400, 'v1 recall of a missing scene is 400')
+    code, r = v1('', '/api/v1/recorder/stop'); check(code == 200 and r['value'] is False, f'v1 recorder/stop (got {r})')
+    h, b = req('POST', '/api/v1/command', '{"cmd":"toggle","path":"/strips/1/mute"}')
+    check(h.startswith('HTTP/1.1 403') and b == '{"error":"forbidden"}', 'v1 403 without X-BananaSplit, as JSON')
 finally:
     subprocess.run([binary, '--quit', '--gui-port', str(port)], env=env, capture_output=True, timeout=20)
     try: p.wait(timeout=10)

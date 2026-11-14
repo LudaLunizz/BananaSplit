@@ -6,8 +6,11 @@ computer, run by the same user, can use it the same way: set a fader, start a re
 meters.
 
 This describes BananaSplit 2.8.22 and the changes merged since: the `platform` field of the state
-and errors as JSON on request (both marked *new*). It is the API the page is written against; there
-is no promise yet that it never changes, and changes are named in the release notes.
+and errors as JSON on request (both marked *new*), and **API v1** (from 2.9.0): one versioned command
+model with paths, relative changes, fades and batches, which the MIDI bindings use too. `/api/cmd` is
+the API the page is written against; there is no promise yet that it never changes, and changes are
+named in the release notes. API v1 is the one to build on: it only grows, and anything that would
+change what it does gets a new version (`/api/v2/`).
 
 * [Reaching it](#reaching-it)
 * [What it checks](#what-it-checks)
@@ -15,6 +18,7 @@ is no promise yet that it never changes, and changes are named in the release no
 * [`POST /api/cmd`: the commands](#post-apicmd-the-commands)
 * [The state](#the-state)
 * [Other answers](#other-answers)
+* [API v1](#api-v1)
 * [Errors](#errors)
 * [Examples](#examples)
 
@@ -65,6 +69,11 @@ except the event stream.
 | `GET /api/update` | The updater's release page and notes (JSON). |
 | `GET /api/cables` | Windows and macOS only: the virtual cables found and the system's defaults (JSON). 404 on Linux. |
 | `POST /api/cmd` | One change, form-encoded: [the commands](#post-apicmd-the-commands). |
+| `GET /api/v1/state` | The state with the API's version and `rev`: [API v1](#api-v1). |
+| `GET /api/v1/paths` | Every value API v1 can change, with its range and value now. |
+| `POST /api/v1/command` | One command or a batch, as JSON. |
+| `POST /api/v1/scenes/{name}/recall` | Load a saved scene. |
+| `POST /api/v1/recorder/start`, `.../stop` | Start or stop recording. |
 
 Anything else under a known method is a 404; other methods are 405 (`Allow: GET, POST`).
 
@@ -240,6 +249,76 @@ main loop is busy.
 (VB-Audio cables), `voicemeeter`, `output` and `input` (the system's defaults: `name`, `cable`).
 macOS: `cables`, `output`, `input`. 503 with the reason if the system's devices cannot be listed.
 
+## API v1
+
+A versioned layer over the same commands: every change it makes is one of the commands of
+`POST /api/cmd`, checked and done by the same code, so the two cannot disagree. What it adds:
+a **path** for every value, changes relative to the value now, fades, and several commands in one
+request. Its answers, errors included, are always JSON. The checks of [What it checks](#what-it-checks)
+apply unchanged: a `POST` needs `X-BananaSplit: 1`.
+
+**Paths**
+
+| Path | Kind |
+|---|---|
+| `/strips/{1-6}/gain_db` | Fader, -60 to +12 dB, to 0.1 |
+| `/strips/{1-6}/trim_db` | Input gain (GAIN knob), -24 to +24 dB, to 0.1 |
+| `/strips/{1-6}/pan` | -1 to 1, to 0.01 |
+| `/strips/{1-6}/mute`, `mono`, `solo`, `record`, `eq`, `gate`, `comp` | on/off (`record`: linked to the recorder) |
+| `/strips/{1-6}/sends/{bus}` | on/off: the strip feeds the bus |
+| `/buses/{bus}/gain_db`, `trim_db`, `pan` | as for strips (`pan` is the balance) |
+| `/buses/{bus}/limit_db` | The limiter, -40 to +12 dBFS, to 0.1 (+12 = off) |
+| `/buses/{bus}/mute`, `mono`, `record`, `eq` | on/off |
+| `/buses/{bus}/sends/{bus}` | on/off: the bus feeds another bus (not itself, no loops) |
+| `/recorder/recording` | on/off: recording now |
+
+`{bus}` is `V1`, `V2`, `V3`, `B1` or `B2` (the old `A1` to `A3` are read too, in any case). Values
+given outside their range are clamped and rounded as `/api/cmd` does.
+
+**`GET /api/v1/state`.** The [state](#the-state) with two fields in front: `api` (1) and `rev`, a
+number that goes up with every new state, so a client can tell whether anything changed since it last
+looked.
+
+**`GET /api/v1/paths`.** `{"api": 1, "paths": [...]}`, each `{"path", "label", "kind", "value"}` and,
+for a number, `min`, `max`, `step` and `unit`. `kind` is `number` or `flag`; `value` is the value now
+(`true`/`false` for a flag). `label` names the channel as the page does (`Strip 1 (Mic): fader`,
+`B1: to V1`).
+
+**`POST /api/v1/command`.** The body is one command object, or a list of 1 to 64 of them:
+
+| `cmd` | Fields | Does |
+|---|---|---|
+| `set` | `path`, `value` | Set it. A number for a number; `true`/`false` (or `1`/`0`) for a flag. |
+| `toggle` | `path` | Flip a flag. |
+| `step` | `path`, `by` | Add `by` (may be negative) to a number. |
+| `fade` | `path`, `to`, `ms` (0 to 60000) | Move a number to `to` over `ms` milliseconds. A gain moves evenly along the fader, as a hand would. A `set` or `step` on the same path, another fade on it, or a scene stops it. |
+| `recall` | `scene` | Load a saved scene (the name as in `op=scene`). |
+
+One command answers 200 with `{"ok": true, "text": "<what the page shows>", "path": ..., "value": ...}`
+(`path` and `value`: the value after the change; `recall` has neither), or its error, as below.
+
+A list is checked whole first: if any command in it is wrong (an unknown path, a missing field) the
+answer is 400, `{"error": "command 3: ..."}`, and nothing is done. Then the commands run in order, and
+the answer is 200 with `{"ok": <all worked>, "results": [...]}`, one result per command, each like the
+answer to a single command or `{"ok": false, "error": "..."}` for one the mixer refused (a bus send
+that would loop, a scene that is gone).
+
+**`POST /api/v1/scenes/{name}/recall`** is `recall` with that name (percent-encoded in the path; `+`
+is a plus). **`POST /api/v1/recorder/start`** and **`/stop`** set `/recorder/recording`. Both need no body.
+
+```sh
+P=8790; H='X-BananaSplit: 1'; J='Content-Type: application/json'
+curl -s localhost:$P/api/v1/paths
+curl -s -H "$H" -H "$J" --data '{"cmd":"set","path":"/strips/1/gain_db","value":-6}' localhost:$P/api/v1/command
+    # {"ok":true,"text":"-6.0 dB","path":"/strips/1/gain_db","value":-6.0}
+curl -s -H "$H" -H "$J" --data '{"cmd":"toggle","path":"/buses/B1/mute"}' localhost:$P/api/v1/command
+curl -s -H "$H" -H "$J" --data '{"cmd":"step","path":"/strips/2/gain_db","by":3}' localhost:$P/api/v1/command
+curl -s -H "$H" -H "$J" --data '[{"cmd":"fade","path":"/buses/V1/gain_db","to":-20,"ms":500},
+  {"cmd":"set","path":"/strips/3/sends/B1","value":true}]' localhost:$P/api/v1/command
+curl -s -H "$H" -X POST localhost:$P/api/v1/scenes/Live/recall
+curl -s -H "$H" -X POST localhost:$P/api/v1/recorder/start
+```
+
 ## Errors
 
 A request that cannot be done is answered with a 4xx or 5xx status and its message:
@@ -247,7 +326,8 @@ A request that cannot be done is answered with a 4xx or 5xx status and its messa
 * **As plain text** (`Content-Type: text/plain; charset=utf-8`), the message alone, for a client that
   does not ask for anything. This is what curl and scripts get.
 * ***New:* as JSON** (`application/json`), `{"error":"<message>"}`, for a client that names it in its
-  `Accept` header (`Accept: application/json`; `*/*` does not count). The page and the touch deck do.
+  `Accept` header (`Accept: application/json`; `*/*` does not count). The page and the touch deck do,
+  and everything under `/api/v1/` always answers this way.
   A refusal that comes before the request has been read (the other end is another user, a request
   that cannot be read) is always plain text.
 

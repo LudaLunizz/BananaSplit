@@ -84,6 +84,9 @@ pub mod portdir;
 pub mod api;
 mod apply;
 mod cmd;
+// API v1: paths, set/toggle/step/fade, batches (`v1`), on a small JSON reader (`json`).
+pub mod json;
+pub mod v1;
 pub use api::ApiError;
 pub use apply::command;
 pub use cmd::Form;
@@ -210,6 +213,8 @@ pub struct Hub {
     routing: Mutex<()>,
     /// The updater (the GUI has one; tests may not).
     updater: Mutex<Option<Arc<crate::gui_platform::Updater>>>,
+    /// API v1 fades running now.
+    pub fades: v1::Fades,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -249,6 +254,7 @@ impl Hub {
             client: Mutex::new(String::new()),
             routing: Mutex::new(()),
             updater: Mutex::new(None),
+            fades: v1::Fades::default(),
         })
     }
 
@@ -298,6 +304,16 @@ impl Hub {
     pub fn close(&self) {
         self.closing.store(true, SeqCst);
         self.cond.notify_all();
+        self.fades.wake();
+    }
+
+    pub fn is_closing(&self) -> bool {
+        self.closing.load(SeqCst)
+    }
+
+    /// The 11 channel names as last set.
+    pub fn names(&self) -> Vec<String> {
+        lock(&self.names).clone()
     }
 
     /// Theme and zoom of the page as it is served (no flash on load).
@@ -1109,7 +1125,8 @@ fn respond(s: &mut TcpStream, code: u16, ctype: &str, body: &[u8], extra: &str) 
 /// Refuse: the status and the message, as plain text; as `{"error": "..."}` if the
 /// request (when there is one yet) says `Accept: application/json`.
 fn fail(s: &mut TcpStream, req: Option<&Req>, e: &ApiError, extra: &str) {
-    if req.is_some_and(|r| api::accepts_json(r.header("accept"))) {
+    // API v1 always answers JSON
+    if req.is_some_and(|r| r.path.starts_with("/api/v1/") || api::accepts_json(r.header("accept"))) {
         respond(s, e.status, "application/json", e.json().as_bytes(), extra)
     } else {
         respond(s, e.status, "text/plain; charset=utf-8", e.msg.as_bytes(), extra)
@@ -1195,6 +1212,25 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
             respond(&mut s, 200, "application/json", json.as_bytes(), "")
         }
         ("GET", "/api/events") => stream(s, hub),
+        ("GET", "/api/v1/state") => {
+            let (rev, json) = lock(&hub.state).clone();
+            respond(&mut s, 200, "application/json", v1::state(rev, &json).as_bytes(), "")
+        }
+        ("GET", "/api/v1/paths") => {
+            respond(&mut s, 200, "application/json", v1::paths_json(hub, &hub.names()).as_bytes(), "")
+        }
+        ("POST", p) if p.starts_with("/api/v1/") => {
+            if !csrf_ok(&req, port) {
+                return fail(&mut s, Some(&req), &ApiError::new(403, "forbidden"), "");
+            }
+            let Ok(body) = std::str::from_utf8(&req.body) else {
+                return fail(&mut s, Some(&req), &ApiError::new(400, "body is not UTF-8"), "");
+            };
+            match v1_post(hub, p, body) {
+                Ok(j) => respond(&mut s, 200, "application/json", j.as_bytes(), ""),
+                Err(e) => fail(&mut s, Some(&req), &e, ""),
+            }
+        }
         ("POST", "/api/cmd") => {
             if !csrf_ok(&req, port) {
                 return fail(&mut s, Some(&req), &ApiError::new(403, "forbidden"), "");
@@ -1214,6 +1250,28 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
         },
         ("POST", _) => fail(&mut s, Some(&req), &ApiError::new(404, "not found"), ""),
         _ => fail(&mut s, Some(&req), &ApiError::new(405, "method not allowed"), "Allow: GET, POST\r\n"),
+    }
+}
+
+/// The `POST`s of API v1: the command endpoint and the two shortcuts.
+fn v1_post(hub: &Hub, path: &str, body: &str) -> Result<String, ApiError> {
+    let short = |c: &str| v1::command(hub, c);
+    match path {
+        "/api/v1/command" => v1::command(hub, body),
+        "/api/v1/recorder/start" => short(r#"{"cmd":"set","path":"/recorder/recording","value":true}"#),
+        "/api/v1/recorder/stop" => short(r#"{"cmd":"set","path":"/recorder/recording","value":false}"#),
+        p => {
+            let name = p.strip_prefix("/api/v1/scenes/").and_then(|n| n.strip_suffix("/recall"));
+            // a path keeps its '+' (only a form turns it into a space)
+            let Some(name) = name.and_then(|n| cmd::url_decode(&n.replace('+', "%2B"))).filter(|n| !n.contains('/'))
+            else {
+                return Err(ApiError::new(404, "not found"));
+            };
+            let mut c = String::from(r#"{"cmd":"recall","scene":"#);
+            jstr(&mut c, &name);
+            c.push('}');
+            short(&c)
+        }
     }
 }
 
@@ -1271,6 +1329,11 @@ pub fn start(hub: Arc<Hub>, port: u16, explicit: bool) -> Result<u16, String> {
         Err(e) => return Err(format!("cannot listen on 127.0.0.1:{port} for the GUI: {e}")),
     };
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let h = hub.clone();
+    std::thread::Builder::new()
+        .name("bs-fades".into())
+        .spawn(move || v1::Fades::run(&h))
+        .map_err(|e| format!("cannot start the fade thread: {e}"))?;
     std::thread::Builder::new()
         .name("bs-gui".into())
         .spawn(move || accept_loop(&listener, &hub, port))
@@ -2172,6 +2235,115 @@ mod tests {
     #[test]
     fn plain_strips_ansi() {
         assert_eq!(plain("\x1b[31;1msave failed\x1b[0m: x"), "save failed: x");
+    }
+
+    #[test]
+    fn api_v1_round_trip() {
+        let h = hub();
+        let port = start(h.clone(), 0, true).unwrap();
+        h.publish("{\"x\":1}".into());
+        let send = |method: &str, path: &str, body: &str, hdr: &str| -> (u16, String) {
+            let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+            write!(
+                s,
+                "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{hdr}Content-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            let mut out = String::new();
+            let _ = s.read_to_string(&mut out);
+            assert!(out.contains("Content-Type: application/json\r\n"), "v1 always answers JSON: {out}");
+            (out[9..12].parse().unwrap(), out.rsplit("\r\n\r\n").next().unwrap().to_string())
+        };
+        let post = |path: &str, body: &str| send("POST", path, body, "X-BananaSplit: 1\r\n");
+        let cmd = |body: &str| post("/api/v1/command", body);
+        let sh = &h.shared;
+
+        let (code, st) = send("GET", "/api/v1/state", "", "");
+        assert_eq!(code, 200);
+        assert!(st.starts_with("{\"api\":1,\"rev\":") && st.ends_with(",\"x\":1}"), "{st}");
+        let (_, paths) = send("GET", "/api/v1/paths", "", "");
+        assert!(paths.contains(r#"{"path":"/strips/1/gain_db","label":"Strip 1: fader","kind":"number","min":-60,"max":12,"step":0.1,"unit":"dB","value":0.0}"#), "{paths}");
+        assert!(paths.contains(r#"{"path":"/buses/B1/mute","label":"B1: mute","kind":"flag","value":false}"#));
+
+        assert_eq!(
+            cmd(r#"{"cmd":"set","path":"/strips/1/gain_db","value":-6.54}"#),
+            (200, r#"{"ok":true,"text":"-6.5 dB","path":"/strips/1/gain_db","value":-6.5}"#.into())
+        );
+        assert_eq!(sh.strips[0].gain_db.load(), -6.5);
+        assert_eq!(
+            cmd(r#"{"cmd":"toggle","path":"/buses/B1/mute"}"#).1,
+            r#"{"ok":true,"text":"ok","path":"/buses/B1/mute","value":true}"#
+        );
+        assert!(sh.buses[3].mute.load(Relaxed));
+        assert_eq!(cmd(r#"{"cmd":"step","path":"/strips/1/gain_db","by":-100}"#).1.rsplit(':').next(), Some("-60.0}"));
+        assert_eq!(cmd(r#"{"cmd":"set","path":"/strips/2/sends/V1","value":true}"#).0, 200);
+        assert_eq!(sh.strips[1].routes.load(Relaxed) & 1, 1);
+        assert_eq!(
+            cmd(r#"{"cmd":"set","path":"/buses/V2/limit_db","value":-3}"#).1,
+            r#"{"ok":true,"text":"limit -3.0 dB","path":"/buses/V2/limit_db","value":-3.0}"#
+        );
+        // the checks of /api/cmd still hold: a bus send that would loop is refused
+        assert_eq!(cmd(r#"{"cmd":"set","path":"/buses/V1/sends/B1","value":true}"#).0, 200);
+        assert_eq!(
+            cmd(r#"{"cmd":"set","path":"/buses/B1/sends/V1","value":true}"#),
+            (400, r#"{"error":"V1 already feeds B1 (through its sends): that would be a loop"}"#.into())
+        );
+
+        // a batch is checked whole first: one bad command and nothing happens
+        let (code, e) = cmd(
+            r#"[{"cmd":"set","path":"/strips/3/mute","value":true},{"cmd":"set","path":"/strips/9/mute","value":true}]"#,
+        );
+        assert_eq!((code, e.as_str()), (400, r#"{"error":"command 2: unknown path \"/strips/9/mute\""}"#));
+        assert!(!sh.strips[2].mute.load(Relaxed));
+        // ... and then each one runs, with its own result
+        let (code, r) = cmd(
+            r#"[{"cmd":"set","path":"/strips/3/mute","value":true},{"cmd":"set","path":"/buses/B1/sends/V1","value":true}]"#,
+        );
+        assert_eq!(code, 200);
+        assert!(
+            r.starts_with(r#"{"ok":false,"results":[{"ok":true,"#)
+                && r.contains(r#"{"ok":false,"error":"V1 already feeds B1"#),
+            "{r}"
+        );
+        assert!(sh.strips[2].mute.load(Relaxed));
+        assert_eq!(cmd("[]").0, 400);
+        assert_eq!(cmd("{nope").0, 400);
+
+        // a fade moves on its own and ends exactly on its value; a set stops it
+        assert_eq!(cmd(r#"{"cmd":"set","path":"/strips/4/gain_db","value":0}"#).0, 200);
+        assert_eq!(cmd(r#"{"cmd":"fade","path":"/strips/4/gain_db","to":-20,"ms":200}"#).0, 200);
+        std::thread::sleep(Duration::from_millis(80));
+        let mid = sh.strips[3].gain_db.load();
+        assert!(mid < 0.0 && mid > -20.0, "{mid}");
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!((sh.strips[3].gain_db.load(), h.fades.running()), (-20.0, 0));
+        assert_eq!(cmd(r#"{"cmd":"fade","path":"/strips/4/gain_db","to":0,"ms":5000}"#).0, 200);
+        assert_eq!(cmd(r#"{"cmd":"set","path":"/strips/4/gain_db","value":-30}"#).0, 200);
+        assert_eq!(h.fades.running(), 0);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(sh.strips[3].gain_db.load(), -30.0);
+
+        // the shortcuts
+        assert_eq!(
+            post("/api/v1/recorder/stop", "").1,
+            r#"{"ok":true,"text":"not recording","path":"/recorder/recording","value":false}"#
+        );
+        assert_eq!(post("/api/v1/scenes/No%20such/recall", "").0, 400);
+        h.scenes.save("A+B", sh).unwrap();
+        assert_eq!(post("/api/v1/scenes/A+B/recall", "").1, r#"{"ok":true,"text":"scene \"A+B\" loaded"}"#);
+        assert_eq!(post("/api/v1/scenes/x/y/recall", "").0, 404);
+        assert_eq!(post("/api/v1/nope", "").0, 404);
+
+        // the same guards as /api/cmd: no custom header, no change
+        assert_eq!(
+            send("POST", "/api/v1/command", r#"{"cmd":"set","path":"/strips/5/mute","value":true}"#, ""),
+            (403, r#"{"error":"forbidden"}"#.into())
+        );
+        assert!(!sh.strips[4].mute.load(Relaxed));
+        let (code, _) = send("GET", "/api/v1/state", "", "Origin: http://evil.example\r\n");
+        assert_eq!(code, 403);
+        h.close();
     }
 
     #[test]
