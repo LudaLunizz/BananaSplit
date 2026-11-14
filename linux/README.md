@@ -13,6 +13,11 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  V2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    V1 ── V3 B1 B2
 ```
 
+## What's new in 2.9.0
+
+* **MIDI controllers** (#144): MENU ▸ **MIDI controllers…** — choose your controller's ports, click **Learn a control**, move a fader, knob or button and pick what it drives (any fader, gain, pan, mute, solo, route, EQ, gate, limiter, record arm, recording, or loading a scene). Absolute faders and knobs, endless encoders (three relative kinds), 14-bit CCs, pitch-bend faders, NRPN, buttons that switch or work while held. **Pickup**: a fader that doesn't match the value does nothing until it reaches it, so nothing jumps. **LEDs and motor faders follow** every change, from the window, the deck, the API or a scene. Plug the controller in later and it is opened within seconds. Linux (ALSA sequencer, no new library), Windows (WinMM), macOS (CoreMIDI). Kept in `midi.json` next to the settings.
+* **API v1** (#143): one documented command model for scripts, decks and the MIDI bindings. Every value has a path (`/strips/1/gain_db`, `/buses/B1/mute`, `/strips/2/sends/V1`, `/recorder/recording`); `POST /api/v1/command` sets, toggles, steps or fades it, one command or a batch of up to 64. `GET /api/v1/state` (with `rev`), `GET /api/v1/paths`, scene recall and recorder start/stop shortcuts. See `docs/api.md`. `/api/cmd` keeps working.
+
 ## What's new in 2.8.27
 
 * **A limiter on every bus** (#133): a brickwall limiter is the last stage of each bus, so nothing leaves it (device, cable, sends, recorder, VBAN) louder than its limit, even with the fader higher. Set it with the yellow-edged **LIM box on the bus meter** (like Voicemeeter's Lim), dragged up and down; a thin yellow line shows the same level on the fader, and both brighten while it limits. Top of the meter = off (bit for bit as before). Saved in the config; scenes leave it alone. API: `op=limit`, state `limit` and `limGr`.
