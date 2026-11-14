@@ -26,7 +26,7 @@ fn hex(b: u8) -> Option<u8> {
     }
 }
 
-fn url_decode(s: &str) -> Option<String> {
+pub fn url_decode(s: &str) -> Option<String> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
