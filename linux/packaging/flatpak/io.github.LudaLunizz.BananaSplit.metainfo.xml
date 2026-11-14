@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.9.0" date="2026-11-14">
+      <description>
+        <p>MIDI controllers: learn a fader, knob or button and bind it to any control or a scene. Faders pick the value up instead of jumping, and LEDs and motor faders follow every change. A new versioned API (v1) lets scripts and decks set, toggle, step and fade any value by its path.</p>
+      </description>
+    </release>
     <release version="2.8.27" date="2026-11-14">
       <description>
         <p>Every bus has a limiter: drag the LIM box on its meter, and nothing leaves the bus louder than that. Ctrl + drag on a limiter, fader or GAIN knob moves the whole group. Coloured borders show the buses you listen on (blue), channels being recorded (red) and buses an app takes sound from (yellow).</p>
