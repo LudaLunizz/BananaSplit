@@ -137,6 +137,19 @@ try:
     check(code == 400 and r['error'].startswith('command 2: '), f'v1 batch checked whole (got {r})')
     check(v1('{"cmd":"recall","scene":"Gone"}')[0] == 400, 'v1 recall of a missing scene is 400')
     code, r = v1('', '/api/v1/recorder/stop'); check(code == 200 and r['value'] is False, f'v1 recorder/stop (got {r})')
+    # --- MIDI: the documented ops (no sequencer in the sandbox: bindings still work, ports do not)
+    for body, want in [('op=midibind&src=cc:1:7&target=/strips/1/gain_db', 'CC 7 · ch 1 → Strip 1 (Voice): fader'),
+                       ('op=midibind&src=note:1:16&target=/strips/1/mute', 'Note 16 · ch 1 → Strip 1 (Voice): mute'),
+                       ('op=midi&a=learn', 'move a control on your MIDI controller'), ('op=midi&a=stop', 'learning stopped'),
+                       ('op=midiunbind&src=note:1:16', 'Note 16 · ch 1 unbound'), ('op=midiport&in=&out=', 'ok')]:
+        code, b = cmd(body); check((code, b) == (200, want), f'{body} -> 200 {want!r} (got {code} {b!r})')
+    code, b = cmd('op=midibind&src=note:1:1&target=/strips/1/gain_db'); check(code == 400 and 'is a button' in b, 'a button cannot set a number')
+    time.sleep(0.2)
+    mst = json.loads(req('GET', '/api/state')[1])['midi']
+    midi_doc = state_doc[state_doc.index('| `midi` |'):]
+    midi_doc = midi_doc[:midi_doc.index('\n')]
+    for k in mst: check(f'`{k}`' in midi_doc, f'midi key {k!r} is documented')
+    check([b['src'] for b in mst['bindings']] == ['cc:1:7'], f'midi bindings (got {mst["bindings"]})')
     h, b = req('POST', '/api/v1/command', '{"cmd":"toggle","path":"/strips/1/mute"}')
     check(h.startswith('HTTP/1.1 403') and b == '{"error":"forbidden"}', 'v1 403 without X-BananaSplit, as JSON')
 finally:

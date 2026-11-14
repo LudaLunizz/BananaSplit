@@ -87,6 +87,9 @@ mod cmd;
 // API v1: paths, set/toggle/step/fade, batches (`v1`), on a small JSON reader (`json`).
 pub mod json;
 pub mod v1;
+// MIDI controllers: bindings to v1 paths, learn, takeover, feedback; the device
+// side is each app's `midi::io()`.
+pub mod midi;
 pub use api::ApiError;
 pub use apply::command;
 pub use cmd::Form;
@@ -215,6 +218,8 @@ pub struct Hub {
     updater: Mutex<Option<Arc<crate::gui_platform::Updater>>>,
     /// API v1 fades running now.
     pub fades: v1::Fades,
+    /// MIDI, once `start_midi` has run.
+    midi: std::sync::OnceLock<Arc<midi::Midi>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -255,6 +260,7 @@ impl Hub {
             routing: Mutex::new(()),
             updater: Mutex::new(None),
             fades: v1::Fades::default(),
+            midi: std::sync::OnceLock::new(),
         })
     }
 
@@ -283,8 +289,16 @@ impl Hub {
         *lock(&self.names) = names;
     }
 
-    /// New state for every connected page.
-    pub fn publish(&self, json: String) {
+    /// New state for every connected page (with MIDI's part, once it runs).
+    pub fn publish(&self, mut json: String) {
+        if let Some(m) = self.midi.get()
+            && json.ends_with('}')
+        {
+            json.pop();
+            json.push_str(if json.ends_with('{') { "\"midi\":" } else { ",\"midi\":" });
+            m.state_json(&mut json, &self.names());
+            json.push('}');
+        }
         let mut st = lock(&self.state);
         st.0 = st.0.wrapping_add(1);
         st.1 = Arc::new(json);
@@ -305,6 +319,14 @@ impl Hub {
         self.closing.store(true, SeqCst);
         self.cond.notify_all();
         self.fades.wake();
+        if let Some(m) = self.midi.get() {
+            m.wake();
+        }
+    }
+
+    /// MIDI, if it was started.
+    pub fn midi(&self) -> Result<&Arc<midi::Midi>, String> {
+        self.midi.get().ok_or_else(|| "MIDI is not running".to_string())
     }
 
     pub fn is_closing(&self) -> bool {
@@ -1366,6 +1388,19 @@ fn accept_loop(l: &TcpListener, hub: &Arc<Hub>, port: u16) {
     }
 }
 
+/// Start MIDI: the bindings from `midi.json` next to the config (beside the
+/// `scenes` folder), and the thread that reads the controller through `io`
+/// (each app's `midi::io()`; an error says why there is no MIDI here).
+pub fn start_midi(hub: &Arc<Hub>, io: Result<Box<dyn midi::Io>, String>) {
+    let dir = hub.scenes.dir().parent().map_or_else(PathBuf::new, |p| p.to_path_buf());
+    let m = Arc::new(midi::Midi::load(dir.join("midi.json")));
+    if hub.midi.set(m.clone()).is_err() {
+        return; // already running
+    }
+    let h = hub.clone();
+    let _ = std::thread::Builder::new().name("bs-midi".into()).spawn(move || midi::run(&h, &m, io));
+}
+
 pub fn url(port: u16) -> String {
     format!("http://127.0.0.1:{port}/")
 }
@@ -2236,6 +2271,134 @@ mod tests {
     fn plain_strips_ansi() {
         assert_eq!(plain("\x1b[31;1msave failed\x1b[0m: x"), "save failed: x");
     }
+
+    #[test]
+    fn midi_with_a_fake_controller() {
+        use midi::fake::Fake;
+        let h = hub();
+        let dev = Fake::default();
+        {
+            let mut d = dev.0.lock().unwrap();
+            d.ins = vec!["Pad".into()];
+            d.outs = vec!["Pad".into()];
+        }
+        start_midi(&h, Ok(Box::new(dev.clone())));
+        let sh = &h.shared;
+        let cmd = |b: &str| command(&h, b).map_err(|e| e.msg);
+        let wait = |what: &str, f: &dyn Fn() -> bool| {
+            let t = std::time::Instant::now();
+            while !f() {
+                assert!(t.elapsed() < Duration::from_secs(3), "timed out: {what}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let state = || {
+            h.publish("{}".into());
+            lock(&h.state).1.to_string()
+        };
+        assert!(state().starts_with(r#"{"midi":{"available":"#), "{}", state());
+
+        assert_eq!(cmd("op=midiport&in=Pad&out=Pad"), Ok("ok".into()));
+        wait("the ports open", &|| dev.0.lock().unwrap().inbox.is_some());
+        assert!(
+            state().contains(r#""in":"Pad","out":"Pad","inOpen":true,"outOpen":true,"ins":["Pad"],"outs":["Pad"]"#),
+            "{}",
+            state()
+        );
+        assert_eq!(cmd("op=midibind&src=cc:1:7&target=/strips/1/gain_db"), Ok("CC 7 · ch 1 → Strip 1: fader".into()));
+        assert_eq!(cmd("op=midibind&src=note:1:16&target=/strips/1/mute"), Ok("Note 16 · ch 1 → Strip 1: mute".into()));
+        assert_eq!(
+            cmd("op=midibind&src=cc:1:16&target=/buses/B1/gain_db&mode=rel2"),
+            Ok("CC 16 · ch 1 → B1: fader".into())
+        );
+        assert_eq!(cmd("op=midibind&src=note:1:17&target=/strips/2/solo&mode=momentary").map(|_| ()), Ok(()));
+        assert_eq!(cmd("op=midibind&src=pc:1:3&target=scene:Live").map(|_| ()), Ok(()));
+        assert!(cmd("op=midibind&src=note:1:1&target=/strips/1/gain_db").unwrap_err().contains("is a button"));
+        assert!(cmd("op=midibind&src=cc:1:7&target=/nope").is_err());
+
+        // an absolute fader at the value picks it up and moves it (0 dB = 0.8 of the travel = 102)
+        dev.play(&[0xb0, 7, 102]);
+        wait("the fader picks up", &|| {
+            sh.strips[0].gain_db.load() == v1::Target::parse("/strips/1/gain_db").unwrap().value_at(102.0 / 127.0)
+        });
+        dev.play(&[0xb0, 7, 64]);
+        wait("the fader moves", &|| sh.strips[0].gain_db.load() < -10.0);
+        // the page moves it far away: the fader does nothing until it gets there
+        cmd("op=gain&ch=0&v=6").unwrap();
+        dev.play(&[0xb0, 7, 20]);
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(sh.strips[0].gain_db.load(), 6.0, "soft-takeover");
+        dev.play(&[0xb0, 7, 120]); // crossed the value on its way up: picked up
+        wait("crossing picks up", &|| sh.strips[0].gain_db.load() > 6.0);
+
+        // relative encoder: three clicks up, one down
+        cmd("op=gain&ch=9&v=0").unwrap();
+        dev.play(&[0xb0, 16, 1, 16, 1, 16, 1, 16, 127]);
+        wait("the encoder steps", &|| sh.buses[3].gain_db.load() > 0.0);
+        // a button toggles, its release does nothing
+        dev.play(&[0x90, 16, 127, 0x90, 16, 0]);
+        wait("toggle", &|| sh.strips[0].mute.load(Relaxed));
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(sh.strips[0].mute.load(Relaxed), "the release does not toggle back");
+        // momentary: on while held
+        dev.play(&[0x90, 17, 100]);
+        wait("held", &|| sh.strips[1].solo.load(Relaxed));
+        dev.play(&[0x80, 17, 0]);
+        wait("released", &|| !sh.strips[1].solo.load(Relaxed));
+        // a program change loads a scene
+        h.scenes.save("Live", sh).unwrap();
+        cmd("op=mute&ch=5&v=1").unwrap();
+        dev.play(&[0xc0, 3]);
+        wait("the scene loads", &|| !sh.strips[5].mute.load(Relaxed));
+
+        // feedback: a change from the page lights the button's LED (Note On 127),
+        // and turning it off sends a velocity-0 Note On
+        std::thread::sleep(Duration::from_millis(ECHO_WAIT));
+        dev.0.lock().unwrap().sent.clear();
+        cmd("op=mute&ch=0&v=0").unwrap();
+        wait("LED off", &|| dev.0.lock().unwrap().sent.contains(&vec![0x90, 16, 0]));
+        cmd("op=gain&ch=0&v=0").unwrap();
+        wait("fader value sent", &|| dev.0.lock().unwrap().sent.contains(&vec![0xb0, 7, 102]));
+        // ... but what the controller itself just sent is not echoed back
+        dev.0.lock().unwrap().sent.clear();
+        dev.play(&[0x90, 16, 127]);
+        wait("toggle again", &|| sh.strips[0].mute.load(Relaxed));
+        std::thread::sleep(Duration::from_millis(midi::ECHO_MS + 100));
+        assert!(!dev.0.lock().unwrap().sent.iter().any(|m| m[..2] == [0x90, 16]), "{:?}", dev.0.lock().unwrap().sent);
+
+        // learning catches a control and changes nothing
+        assert_eq!(cmd("op=midi&a=learn"), Ok("move a control on your MIDI controller".into()));
+        let before = sh.strips[0].gain_db.load();
+        dev.play(&[0xb0, 7, 0]);
+        wait("learned", &|| state().contains(r#""learn":{"src":"cc:1:7","name":"CC 7 · ch 1","mode":null}"#));
+        assert_eq!(sh.strips[0].gain_db.load(), before, "learning changes nothing");
+        cmd("op=midi&a=stop").unwrap();
+        assert!(state().contains(r#""learn":null"#));
+        assert!(state().contains(r#"{"src":"cc:1:7","name":"CC 7 · ch 1","target":"/strips/1/gain_db","label":"Strip 1: fader","mode":"abs","takeover":true,"feedback":true}"#));
+
+        // the controller goes away and comes back: the port is opened again
+        dev.0.lock().unwrap().ins.clear();
+        wait("closed when gone", &|| state().contains(r#""inOpen":false"#));
+        dev.0.lock().unwrap().ins = vec!["Pad".into()];
+        wait("opened when back", &|| dev.0.lock().unwrap().opens >= 2);
+
+        // kept in midi.json, read back by the next start
+        assert_eq!(cmd("op=midiunbind&src=pc:1:3"), Ok("Program 3 · ch 1 unbound".into()));
+        assert_eq!(cmd("op=midiunbind&src=pc:1:3"), Ok("Program 3 · ch 1 was not bound".into()));
+        let file = h.scenes.dir().parent().unwrap().join("midi.json");
+        let again = midi::Midi::load(file.clone());
+        assert_eq!(again.bindings(), h.midi().unwrap().bindings());
+        assert_eq!(again.bindings().len(), 4);
+        assert!(
+            std::fs::read_to_string(&file)
+                .unwrap()
+                .starts_with(r#"{"in":"Pad","out":"Pad","bindings":[{"src":"cc:1:7","#)
+        );
+        h.close();
+    }
+
+    /// Longer than the echo window, so a test's own sends are not suppressed.
+    const ECHO_WAIT: u64 = midi::ECHO_MS + 50;
 
     #[test]
     fn api_v1_round_trip() {

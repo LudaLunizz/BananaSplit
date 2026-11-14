@@ -156,6 +156,14 @@ button { cursor: pointer; }
    that order from the inside out. */
 .strip.sel { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel); }
 #listendlg { width: min(460px, calc(100vw - 32px)); }
+#mididlg { width: min(860px, calc(100vw - 32px)); }
+.midiports { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.midiports select { min-width: 220px; }
+.midilearn { margin: 12px 0 6px; padding: 10px 12px; border-radius: 8px; background: var(--row); display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.midilearn select { max-width: 320px; }
+.midilearn .caught { font-weight: 600; }
+#midilast { font-variant-numeric: tabular-nums; }
+#midibindings input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--sel); }
 .lslist { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 4px; }
 .lslist label { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; background: var(--row); cursor: pointer; }
 .lslist label:has(input:checked) { box-shadow: inset 0 0 0 1px var(--listen); }
@@ -613,6 +621,7 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
         <button class="mi" role="menuitemcheckbox" id="m-tray" aria-checked="true"><span class="chk"></span>Closing the window keeps it running</button>
         <button class="mi" role="menuitem" id="m-install" hidden><span class="chk"></span>Add BananaSplit to the app menu</button>
         <button class="mi" role="menuitem" id="m-listen"><span class="chk"></span>Listening on…<span class="kb" id="m-listenkb"></span></button>
+        <button class="mi" role="menuitem" id="m-midi"><span class="chk"></span>MIDI controllers…<span class="kb" id="m-midikb"></span></button>
         <button class="mi" role="menuitem" id="m-cables" data-only="windows macos"><span class="chk"></span>Virtual cables…</button>
         <button class="mi" role="menuitem" id="m-update"><span class="chk"></span><span id="m-updtxt">Check for updates…</span><span class="kb" id="m-updkb"></span></button>
         <div class="msep"></div>
@@ -721,6 +730,30 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
     <table class="vtable" id="vbanin"><thead><tr><th>On</th><th>Stream name</th><th>From IP (or any)</th><th>Into strip</th><th>Reserve ms</th><th>Status</th></tr></thead><tbody></tbody></table>
     <h4>Outgoing streams</h4>
     <table class="vtable" id="vbanout"><thead><tr><th>On</th><th>Stream name</th><th>Source</th><th>To IP</th><th>Port</th><th>Format</th><th>Channels</th><th>Status</th></tr></thead><tbody></tbody></table>
+  </div>
+</dialog>
+
+<dialog id="mididlg" class="vban" aria-labelledby="mi-h">
+  <div class="dlg-head"><h3 id="mi-h">MIDI controllers</h3><button class="tool" id="midiclose">Close</button></div>
+  <div class="dlg-body">
+    <div class="midiports">
+      <label class="caps">From (input) <select id="midiin" aria-label="The MIDI port your controller sends on"></select></label>
+      <label class="caps">To (LEDs, motor faders) <select id="midiout" aria-label="The MIDI port your controller listens on"></select></label>
+    </div>
+    <p class="vnote" id="midistate"></p>
+    <p class="vnote">Last message: <span id="midilast">none yet</span></p>
+    <div class="midilearn" id="midilearn">
+      <button class="tool primary" id="midilearnbtn">Learn a control</button>
+      <span id="midilearntxt" class="vnote">Click, move a knob, fader or button on your controller, then choose what it drives.</span>
+      <span class="caught" id="midicaught" hidden></span>
+      <select id="miditarget" aria-label="What the control drives" hidden></select>
+      <select id="midimode" aria-label="How its messages are read" hidden></select>
+      <button class="tool primary" id="midibind" hidden>Bind</button>
+      <button class="tool" id="midicancel" hidden>Cancel</button>
+    </div>
+    <h4>Bindings</h4>
+    <table class="vtable" id="midibindings"><thead><tr><th>Control</th><th>Drives</th><th>Reads as</th><th title="An absolute knob or fader does nothing until it reaches the value, so nothing jumps">Pickup</th><th title="Send the value back: LEDs and motor faders follow every change">LED / motor</th><th></th></tr></thead><tbody></tbody></table>
+    <p class="vnote">A binding drives the same values as the window and the API (API v1 paths). Faders and knobs pick a value up only when they reach it, so a value moved here never jumps; buttons light up when their value is on. Kept in <code>midi.json</code> next to the settings.</p>
   </div>
 </dialog>
 
@@ -2407,6 +2440,7 @@ function render(S) {
   renderEq(S);
   renderDyn(S);
   renderVban(S);
+  renderMidi(S);
   renderUpdate(S);
   if (menuCh >= 0 && S.devRev !== menuRev && !menuLoading) loadChanMenu(false);
 }
@@ -3113,6 +3147,131 @@ function openCables() {
   loadCables();
 }
 $("m-cables").addEventListener("click", openCables);
+// ---- MIDI controllers --------------------------------------------------------
+const MIDI_MODES = {
+  abs: "Absolute (fader, knob)", rel2: "Relative: 1 up, 127 down", rel64: "Relative: 65 up, 63 down",
+  relsign: "Relative: 1 up, 65 down", toggle: "Button: press switches", momentary: "Button: on while held", trigger: "Button: press loads",
+};
+let midiPaths = [], midiSig = "", midiTargetSig = "";
+// The modes a control may have for a target (the server checks again).
+function midiModes(src, target) {
+  const k = src.split(":")[0];
+  if (target.startsWith("scene:")) return ["trigger"];
+  // the numbers of API v1; every other path is on or off
+  const num = /\/(gain_db|trim_db|pan|limit_db)$/.test(target);
+  if (num) return k === "cc" ? ["abs", "rel2", "rel64", "relsign"] : k === "note" || k === "pc" ? [] : ["abs"];
+  return k === "note" ? ["toggle", "momentary"] : k === "pc" ? ["toggle"] : ["toggle", "abs", "momentary"];
+}
+function midiModeSelect(sel, modes, cur) {
+  const sig = modes.join() + "|" + cur;
+  if (sel.dataset.sig === sig) return;
+  sel.dataset.sig = sig;
+  sel.replaceChildren(...modes.map((m) => { const o = el("option", "", MIDI_MODES[m]); o.value = m; return o; }));
+  if (cur && modes.includes(cur)) sel.value = cur;
+}
+function midiPortSelect(sel, list, want, none) {
+  const opts = [["", none], ...list.map((n) => [n, n])];
+  if (want && !list.includes(want)) opts.push([want, want + " (not connected)"]);
+  const sig = JSON.stringify(opts);
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.replaceChildren(...opts.map(([v, t]) => { const o = el("option", "", t); o.value = v; return o; }));
+  }
+  if (document.activeElement !== sel && !held("midi" + sel.id)) sel.value = want;
+}
+function midiTargets(S) {
+  const sig = midiPaths.length + "|" + (S.scenes || []).join("\n");
+  if (midiTargetSig === sig) return;
+  midiTargetSig = sig;
+  const sel = $("miditarget"), keep = sel.value;
+  const groups = [["Strips", (p) => p.path.startsWith("/strips/")], ["Buses", (p) => p.path.startsWith("/buses/")], ["Recorder", (p) => p.path.startsWith("/recorder/")]];
+  const kids = groups.map(([name, f]) => {
+    const g = document.createElement("optgroup"); g.label = name;
+    midiPaths.filter(f).forEach((p) => { const o = el("option", "", p.label); o.value = p.path; g.append(o); });
+    return g;
+  });
+  if ((S.scenes || []).length) {
+    const g = document.createElement("optgroup"); g.label = "Scenes";
+    S.scenes.forEach((n) => { const o = el("option", "", "Load scene " + n); o.value = "scene:" + n; g.append(o); });
+    kids.push(g);
+  }
+  sel.replaceChildren(...kids);
+  if (keep) sel.value = keep;
+}
+async function loadMidiPaths() {
+  try {
+    const r = await fetch("/api/v1/paths", { headers: { "Accept": "application/json" } });
+    if (r.ok) { midiPaths = (await r.json()).paths; midiTargetSig = ""; if (last) renderMidi(last); }
+  } catch (e) { /* the state shows why */ }
+}
+function midiBindRow(b) {
+  const tr = el("tr", "on");
+  tr.append(el("td", "", b.name), el("td", "", b.label));
+  const td = el("td"), sel = el("select");
+  midiModeSelect(sel, midiModes(b.src, b.target), b.mode);
+  sel.addEventListener("change", () => send({ op: "midibind", src: b.src, target: b.target, mode: sel.value, takeover: b.takeover ? 1 : 0, feedback: b.feedback ? 1 : 0 }, true));
+  td.append(sel); tr.append(td);
+  for (const [k, ok] of [["takeover", b.mode === "abs" && !b.target.startsWith("scene:")], ["feedback", !b.target.startsWith("scene:") && !b.src.startsWith("pc:")]]) {
+    const c = el("td"), box = document.createElement("input");
+    box.type = "checkbox"; box.checked = b[k]; box.disabled = !ok;
+    box.addEventListener("change", () => send({ op: "midibind", src: b.src, target: b.target, mode: b.mode, takeover: (k === "takeover" ? box.checked : b.takeover) ? 1 : 0, feedback: (k === "feedback" ? box.checked : b.feedback) ? 1 : 0 }, true));
+    c.append(box); tr.append(c);
+  }
+  const rm = el("button", "small-btn", "✕");
+  rm.title = "Remove this binding"; rm.setAttribute("aria-label", "Remove the binding of " + b.name);
+  rm.addEventListener("click", () => send({ op: "midiunbind", src: b.src }));
+  const t = el("td"); t.append(rm); tr.append(t);
+  return tr;
+}
+function renderMidi(S) {
+  const M = S.midi;
+  if (!M) { setText($("m-midikb"), ""); return; }
+  setText($("m-midikb"), M.inOpen ? (M.in.length > 18 ? M.in.slice(0, 17) + "…" : M.in) + " · " + M.bindings.length : M.in ? "not connected" : "");
+  if (!$("mididlg").open) return;
+  midiPortSelect($("midiin"), M.ins, M.in, "None");
+  midiPortSelect($("midiout"), M.outs, M.out, "None (no LEDs)");
+  setText($("midistate"), !M.available ? (M.error || "MIDI is not available here.") : M.error ? M.error :
+    !M.in ? "Choose the port your controller sends on." : M.inOpen ? "Listening to " + M.in + (M.outOpen ? ", sending to " + M.out + "." : ".") :
+    M.in + " is not connected: plug it in, BananaSplit opens it within a few seconds.");
+  setText($("midilast"), M.last || "none yet");
+  midiTargets(S);
+  const L = M.learn, caught = L && L.src;
+  setText($("midilearnbtn"), L ? "Learning…" : "Learn a control");
+  setPressed($("midilearnbtn"), !!L);
+  setText($("midilearntxt"), !L ? "Click, move a knob, fader or button on your controller, then choose what it drives." :
+    caught ? "Caught:" : "Move a knob, fader or button on your controller now… (nothing changes while learning)");
+  $("midicaught").hidden = !caught; $("miditarget").hidden = !caught; $("midimode").hidden = !caught;
+  $("midibind").hidden = !caught; $("midicancel").hidden = !L;
+  if (caught) {
+    setText($("midicaught"), L.name);
+    if (!$("miditarget").value && $("miditarget").options.length) $("miditarget").selectedIndex = 0;
+    const modes = midiModes(L.src, $("miditarget").value);
+    midiModeSelect($("midimode"), modes, $("midimode").dataset.user || L.mode || modes[0]);
+    $("midibind").disabled = !modes.length;
+    setTitle($("midibind"), modes.length ? "" : "A button can switch things on and off or load a scene, not set a fader");
+  }
+  const sig = JSON.stringify(M.bindings);
+  if (sig !== midiSig) {
+    midiSig = sig;
+    const rows = M.bindings.map(midiBindRow);
+    $("midibindings").tBodies[0].replaceChildren(...(rows.length ? rows : [(() => { const tr = el("tr"); const td = el("td", "vnote", "No bindings yet: use Learn a control."); td.colSpan = 6; tr.append(td); return tr; })()]));
+  }
+}
+$("m-midi").addEventListener("click", () => { closeMenus(); midiSig = ""; $("mididlg").showModal(); loadMidiPaths(); if (last) renderMidi(last); });
+$("midiclose").addEventListener("click", () => { if (last && last.midi && last.midi.learn) send({ op: "midi", a: "stop" }, true); $("mididlg").close(); });
+$("midiin").addEventListener("change", (e) => { hold("midimidiin", 1500); send({ op: "midiport", in: e.target.value }, true); });
+$("midiout").addEventListener("change", (e) => { hold("midimidiout", 1500); send({ op: "midiport", out: e.target.value }, true); });
+$("midilearnbtn").addEventListener("click", () => { delete $("midimode").dataset.user; send({ op: "midi", a: last && last.midi && last.midi.learn ? "stop" : "learn" }, true); });
+$("midicancel").addEventListener("click", () => send({ op: "midi", a: "stop" }, true));
+$("miditarget").addEventListener("change", () => { delete $("midimode").dataset.user; if (last) renderMidi(last); });
+$("midimode").addEventListener("change", (e) => { e.target.dataset.user = e.target.value; });
+$("midibind").addEventListener("click", () => {
+  const L = last && last.midi && last.midi.learn;
+  if (!L || !L.src) return;
+  delete $("midimode").dataset.user;
+  send({ op: "midibind", src: L.src, target: $("miditarget").value, mode: $("midimode").value });
+});
+
 $("cabclose").addEventListener("click", () => $("cabdlg").close());
 // the first start's welcome: shown once
 $("cabdlg").addEventListener("close", () => { if (!$("cab-welcome").hidden) { $("cab-welcome").hidden = true; send({ op: "cables", a: "seen" }, true); } });
