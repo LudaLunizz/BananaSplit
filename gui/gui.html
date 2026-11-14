@@ -148,7 +148,12 @@ button { cursor: pointer; }
 }
 .strip.busA { --acc: var(--blue); }
 .strip.busB { --acc: var(--purple); }
+.strip { transition: box-shadow .5s, border-color .5s; }
+/* a bus sending sound to a device it is connected to (speakers, headphones):
+   a soft glow in its own colour, so you see at once where you hear it from */
+.strip.bus.live { border-color: color-mix(in srgb, var(--acc) 50%, var(--card-edge)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--acc) 30%, transparent), 0 0 18px -4px color-mix(in srgb, var(--acc) 45%, transparent); }
 .strip.sel { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel); }
+.strip.bus.live.sel { box-shadow: 0 0 0 1px var(--sel), 0 0 18px -4px color-mix(in srgb, var(--acc) 45%, transparent); }
 .strip.dim > :not(.sh) { opacity: .45; }
 .sh { display: flex; gap: 8px; align-items: flex-start; min-height: 22px; cursor: default; }
 .sh .bar { width: 3px; height: 18px; border-radius: 2px; background: var(--acc); flex: none; }
@@ -852,6 +857,8 @@ const IDS = ["1", "2", "3", "4", "5", "6", ...BUSES];
 const MIN_DB = -60, MAX_DB = 12, TRIM_MIN = -24, TRIM_MAX = 24;
 // A bus limiter's range (dBFS); the top is off.
 const LIM_MIN = -40, LIM_OFF = 12;
+// A bus louder than this (dB) going to a device glows.
+const LIVE_DB = -50;
 // The window size the console is drawn for at 100% zoom (CSS pixels): it is
 // scaled to fit any window, and stretches (taller faders, wider strips) to
 // fill the window's shape. Below MIN_W x MIN_H it would not fit; there the
@@ -2271,6 +2278,18 @@ function render(S) {
       }
     }
     if (!u.dragging && !held("gain" + ch)) showGain(u, c.gain);
+    if (!c.strip) {
+      // glows while sound leaves it to a device it is connected to (and a
+      // moment after, so it doesn't flicker between words)
+      const now = performance.now();
+      const toDevice = !!c.conn && c.conn !== "(nothing connected)";
+      if (toDevice && !c.mute && meterDb(c.m) > LIVE_DB) u.liveUntil = now + 1200;
+      const live = now < (u.liveUntil || 0);
+      if (u.root.classList.contains("live") !== live) {
+        u.root.classList.toggle("live", live);
+        u.root.setAttribute("aria-description", live ? "sound going out to " + c.conn : "");
+      }
+    }
     if (!c.strip && typeof c.limit === "number") {
       if (!u.limDragging && !held("limit" + ch)) showLimit(u, c.limit);
       const limiting = c.limit < LIM_OFF && c.limGr > 0.5;
