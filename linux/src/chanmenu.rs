@@ -85,9 +85,16 @@ pub fn views(cables: &Cables, info: &PulseInfo, conns: &[Vec<String>]) -> Vec<Ch
             let rec = ch >= NUM_STRIPS;
             let mut parts: Vec<String> = conns.get(ch).into_iter().flatten().map(|c| short_label(info, c)).collect();
             let streams = if rec { &info.recording } else { &info.playing };
+            // (on a bus: the apps recording its virtual mic, Discord, OBS, ...)
+            let mut apps = Vec::new();
             for s in streams {
-                if channel_of(info, cables, s.target, rec) == Some(ch) && !parts.contains(&s.app) {
-                    parts.push(s.app.clone());
+                if channel_of(info, cables, s.target, rec) == Some(ch) {
+                    if !parts.contains(&s.app) {
+                        parts.push(s.app.clone());
+                    }
+                    if rec && !apps.contains(&s.app) {
+                        apps.push(s.app.clone());
+                    }
                 }
             }
             let cable = cables.live(ch).is_some();
@@ -98,7 +105,7 @@ pub fn views(cables: &Cables, info: &PulseInfo, conns: &[Vec<String>]) -> Vec<Ch
             } else {
                 "Not connected".into()
             };
-            ChanView { dev, cable }
+            ChanView { dev, cable, apps }
         })
         .collect()
 }

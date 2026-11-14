@@ -43,6 +43,7 @@
   --seg-muted: #66737b;    /* a muted channel's input level */
   --limit: #e9d75a;        /* a bus limiter's line (kept faint) */
   --listen: #4f9dff;       /* border of the buses you listen on */
+  --streamed: #f2d14b;     /* border of a bus an app takes sound from */
   --sw: 108px;             /* narrowest strip */
   --swmax: 168px;          /* widest strip */
   --font: "Inter", "Cantarell", "Ubuntu", "Noto Sans", "Segoe UI", system-ui, sans-serif;
@@ -56,7 +57,7 @@
   --cap: #ffffff; --cap-edge: #8e9da5; --text: #0f171c; --muted: #56656d; --dim: #a4b0b7;
   --green: #17945f; --teal: #0e9585; --purple: #9147cf; --blue: #2c6fcb; --amber: #b67a07; --red: #d6303f;
   --sel: #0b9a6f; --focus: #2f6fed; --overlay: rgba(231, 236, 239, .82); --wave-dim: #a8cfca; --seg-muted: #9aa6ad;
-  --limit: #a38c00; --listen: #1f6fd8;
+  --limit: #a38c00; --listen: #1f6fd8; --streamed: #b39100;
   color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
@@ -67,7 +68,7 @@
     --cap: #ffffff; --cap-edge: #8e9da5; --text: #0f171c; --muted: #56656d; --dim: #a4b0b7;
     --green: #17945f; --teal: #0e9585; --purple: #9147cf; --blue: #2c6fcb; --amber: #b67a07; --red: #d6303f;
     --sel: #0b9a6f; --focus: #2f6fed; --overlay: rgba(231, 236, 239, .82); --wave-dim: #a8cfca; --seg-muted: #9aa6ad;
-    --limit: #a38c00; --listen: #1f6fd8;
+    --limit: #a38c00; --listen: #1f6fd8; --streamed: #b39100;
     color-scheme: light;
   }
 }
@@ -149,11 +150,11 @@ button { cursor: pointer; }
 }
 .strip.busA { --acc: var(--blue); }
 .strip.busB { --acc: var(--purple); }
-/* a bus playing to the device you listen on (MENU ▸ Listening on): a blue
-   border, like the green one of the selected channel */
-.strip.bus.listen { border-color: var(--listen); box-shadow: 0 0 0 1px var(--listen); }
+/* Borders that say what a channel is doing (paintRing): green = selected,
+   red = being recorded, yellow = an app (Discord, OBS) takes sound from it,
+   blue = it plays to the output you listen on. Several at once: rings, in
+   that order from the inside out. */
 .strip.sel { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel); }
-.strip.bus.listen.sel { box-shadow: 0 0 0 1px var(--sel), 0 0 0 3px var(--listen); }
 #listendlg { width: min(460px, calc(100vw - 32px)); }
 .lslist { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 4px; }
 .lslist label { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; background: var(--row); cursor: pointer; }
@@ -983,7 +984,7 @@ const held = (k) => (holds.get(k) || 0) > performance.now();
 let selected = 0;
 function select(ch) {
   selected = clamp(ch, 0, NUM_CH - 1);
-  ui.forEach((u, i) => u.root.classList.toggle("sel", i === selected));
+  ui.forEach((u, i) => { u.root.classList.toggle("sel", i === selected); if (last) paintRing(u, last.ch[i], last); });
   qmEls.forEach((q, i) => q.classList.toggle("sel", i === selected));
 }
 
@@ -2119,6 +2120,27 @@ async function openListen(auto) {
   const sel = list.querySelector("input:checked");
   if (sel) sel.focus();
 }
+// The channel's borders: what it is doing (see the CSS above paintRing's
+// colours). Written only when they change.
+function paintRing(u, c, S) {
+  const L = S.app.listen;
+  const st = {
+    sel: u.root.classList.contains("sel"),
+    recording: !!(S.rec && S.rec.on && c.link),
+    streamed: !c.strip && (c.apps || []).length > 0,
+    listen: !c.strip && !!L && (c.conn || "").split(" + ").includes(L),
+  };
+  const key = [st.sel, st.recording, st.streamed, st.listen, (c.apps || []).join()].join();
+  if (u.ringKey === key) return;
+  u.ringKey = key;
+  for (const k of ["recording", "streamed", "listen"]) u.root.classList.toggle(k, st[k]);
+  const cols = [["sel", "--sel"], ["recording", "--red"], ["streamed", "--streamed"], ["listen", "--listen"]]
+    .filter(([k]) => st[k]).map(([, v]) => `var(${v})`);
+  u.root.style.borderColor = cols.length ? cols[0] : "";
+  u.root.style.boxShadow = cols.length ? cols.map((v, i) => `0 0 0 ${1 + 2 * i}px ${v}`).join(", ") : "";
+  const says = [st.recording && "being recorded", st.streamed && "sound taken by " + c.apps.join(", "), st.listen && "plays to the output you listen on"].filter(Boolean);
+  u.root.setAttribute("aria-description", says.join("; "));
+}
 function setListen(v) {
   $("listendlg").close();
   if (last && last.app) last.app.listen = v;
@@ -2334,15 +2356,7 @@ function render(S) {
       }
     }
     if (!u.dragging && !held("gain" + ch)) showGain(u, c.gain);
-    if (!c.strip) {
-      // plays to the device you listen on: a blue border
-      const L = S.app.listen;
-      const on = !!L && (c.conn || "").split(" + ").includes(L);
-      if (u.root.classList.contains("listen") !== on) {
-        u.root.classList.toggle("listen", on);
-        u.root.setAttribute("aria-description", on ? "plays to the output you listen on" : "");
-      }
-    }
+    paintRing(u, c, S);
     if (!c.strip && typeof c.limit === "number") {
       if (!u.limDragging && !held("limit" + ch)) showLimit(u, c.limit);
       const limiting = c.limit < LIM_OFF && c.limGr > 0.5;

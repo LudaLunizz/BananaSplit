@@ -560,6 +560,9 @@ pub struct ChanView {
     pub dev: String,
     /// Its virtual cable exists.
     pub cable: bool,
+    /// Apps taking sound from it right now (a bus's virtual mic: Discord,
+    /// OBS, ...). Known on Linux; empty where the system doesn't say.
+    pub apps: Vec<String>,
 }
 
 pub struct Frame<'a> {
@@ -793,7 +796,14 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
         let cv = f.chans.get(r).cloned().unwrap_or_default();
         o.push_str(",\"dev\":");
         jstr(&mut o, &cv.dev);
-        let _ = write!(o, ",\"cable\":{}", cv.cable);
+        let _ = write!(o, ",\"cable\":{},\"apps\":[", cv.cable);
+        for (k, a) in cv.apps.iter().enumerate() {
+            if k > 0 {
+                o.push(',');
+            }
+            jstr(&mut o, a);
+        }
+        o.push(']');
         // (last, so a naive reader of the fields above still finds them
         // before the first closing brace)
         let e = sh.eq(r);
@@ -1726,8 +1736,10 @@ mod tests {
         let scene_list = vec!["Live <Room>".to_string()];
         let x = extra(&ps, &scene_list);
         let in_meters = [[-30.0f32, -31.5]; ROWS];
-        let mut chans = vec![ChanView { dev: "Not connected".into(), cable: false }; ROWS];
-        chans[0] = ChanView { dev: "Yeti <USB>".into(), cable: true };
+        let mut chans = vec![ChanView { dev: "Not connected".into(), ..Default::default() }; ROWS];
+        chans[0] = ChanView { dev: "Yeti <USB>".into(), cable: true, apps: vec![] };
+        chans[9] =
+            ChanView { dev: "Vesktop".into(), cable: true, apps: vec!["Vesktop".into(), "OBS \"Studio\"".into()] };
         let ips = [crate::gui_platform::LocalIp {
             iface: "enp3s0".into(),
             ip: [192, 168, 1, 23].into(),
@@ -1762,7 +1774,7 @@ mod tests {
         assert!(json.contains(r#""status":"saved\nok""#));
         assert!(json.contains(r#""rtt":8.00"#) && json.contains(r#""cpu":0.0"#));
         assert!(json.contains(r#""id":"1","name""#) && json.contains(r#""id":"B2""#));
-        assert!(json.contains(&format!(r#""link":true,"solo":false,"routes":8,"m":[-60.0,-12.5],"mi":[-30.0,-31.5],"conn":"Firefox","dev":"Yeti {lt}USB{gt}","cable":true,"eq":{{"on":false,"b":[[1,"lowshelf",100,0.0,0.71],[1,"bell",250,0.0,1.00],"#)), "{json}");
+        assert!(json.contains(&format!(r#""link":true,"solo":false,"routes":8,"m":[-60.0,-12.5],"mi":[-30.0,-31.5],"conn":"Firefox","dev":"Yeti {lt}USB{gt}","cable":true,"apps":[],"eq":{{"on":false,"b":[[1,"lowshelf",100,0.0,0.71],[1,"bell",250,0.0,1.00],"#)), "{json}");
         assert!(json.contains(r#""id":"B1","name":"Mic out","strip":false,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"routes":1,"from":1,"via":0,"limit":-6.0,"limGr":0.0,"m":"#), "{json}");
         // V1 gets strip 1 through B1 (strip 1 → B1 → V1), and B1 straight
         assert!(json.contains(r#""id":"V1","name""#), "{json}");
@@ -1776,7 +1788,11 @@ mod tests {
         assert!(json.contains(r#""cables":8,"devRev":42,"#));
         assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]},"dyn":{"gate":false,"g":[-50.0,-80.0,1.0,100.0,200.0],"comp":false,"c":[-18.0,3.0,6.0,10.0,150.0,0.0],"ggr":0.0,"cgr":0.0}},{"id":"2""#), "{json}");
         assert!(json.contains(r#"[1,"highshelf",10000,0.0,0.71]]}},{"id":"V2""#), "a bus has no dyn: {json}");
-        assert!(json.contains(r#""id":"3","name":"Desktop","strip":true,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"solo":false,"routes":0,"m":[-60.0,-12.5],"mi":[-30.0,-31.5],"conn":"","dev":"Not connected","cable":false,"eq":{"on":true"#), "{json}");
+        assert!(json.contains(r#""id":"3","name":"Desktop","strip":true,"gain":0.0,"trim":0.0,"pan":0.00,"mute":false,"mono":false,"link":false,"solo":false,"routes":0,"m":[-60.0,-12.5],"mi":[-30.0,-31.5],"conn":"","dev":"Not connected","cable":false,"apps":[],"eq":{"on":true"#), "{json}");
+        assert!(
+            json.contains(r#""dev":"Vesktop","cable":true,"apps":["Vesktop","OBS \"Studio\""],"eq":"#),
+            "a bus's apps: {json}"
+        );
         assert!(json.contains(r#""id":"2","name":"Discord","strip":true,"gain":0.0,"trim":6.0,"pan":0.00,"#), "{json}");
         assert!(
             json.contains(r#""id":"B2","name":"System out","strip":false,"gain":0.0,"trim":0.0,"pan":-0.25,"#),
