@@ -1328,13 +1328,17 @@ function showLimit(u, db) {
   u.limBox.setAttribute("aria-valuetext", off ? "off" : fmtDb(db) + " dB");
   u.limBox.title = off
     ? `Limiter of ${id}: off. Drag it down the meter to set a level ${id} never goes over.`
-    : `Limiter of ${id}: ${fmtDb(db)} dB. Nothing leaves ${id} louder than this, whatever the fader says. Drag on the meter or scroll; double-click, Home or Delete: off.`;
+    : `Limiter of ${id}: ${fmtDb(db)} dB. Nothing leaves ${id} louder than this, whatever the fader says. Drag on the meter or scroll; double-click, Home or Delete: off. Hold Ctrl while dragging: every bus's limiter follows.`;
 }
-function setLimit(u, db) {
+// `all`: every bus's limiter goes to this level (Ctrl held), not just this one
+function setLimit(u, db, all) {
   db = db >= LIM_OFF ? LIM_OFF : round1(clamp(db, LIM_MIN, 0));
-  showLimit(u, db);
-  sendThrottled(u, "limit", { op: "limit", ch: u.ch, v: db });
+  for (const b of all ? busUis() : [u]) {
+    showLimit(b, db);
+    sendThrottled(b, "limit", { op: "limit", ch: b.ch, v: db });
+  }
 }
+const busUis = () => ui.slice(NUM_STRIPS).filter((b) => b && b.limBox);
 function wireLimiter(u) {
   const b = u.limBox, m = u.meter;
   let grab = 0;
@@ -1347,34 +1351,45 @@ function wireLimiter(u) {
     const g = geo(), p = (g.bottom - (y - grab)) / g.span;
     return p > 1.02 ? LIM_OFF : meterToDb(p);
   };
+  let linked = false;
+  const dragging = () => (linked ? busUis() : [u]);
   b.addEventListener("pointerdown", (e) => {
     e.stopPropagation();
     if (e.button !== 0) return;
     b.setPointerCapture(e.pointerId);
-    u.limDragging = true;
-    m.classList.add("limdrag");
+    // Ctrl: every limiter jumps to this one's level and follows it
+    linked = e.ctrlKey || e.metaKey;
+    for (const x of dragging()) { x.limDragging = true; x.meter.classList.add("limdrag"); }
+    if (linked) setLimit(u, u.limit, true);
     // keep the point grabbed under the pointer (the box's lower edge is the limit)
     grab = e.clientY - lineY();
     e.preventDefault();
     b.focus();
   });
-  b.addEventListener("pointermove", (e) => { if (u.limDragging) setLimit(u, dbAt(e.clientY)); });
-  const end = () => { if (!u.limDragging) return; u.limDragging = false; m.classList.remove("limdrag"); hold("limit" + u.ch, 600); };
+  b.addEventListener("pointermove", (e) => { if (u.limDragging) setLimit(u, dbAt(e.clientY), linked); });
+  const end = () => {
+    if (!u.limDragging) return;
+    for (const x of dragging()) { x.limDragging = false; x.meter.classList.remove("limdrag"); hold("limit" + x.ch, 600); }
+    linked = false;
+  };
   b.addEventListener("pointerup", end);
   b.addEventListener("pointercancel", end);
-  b.addEventListener("dblclick", (e) => { e.stopPropagation(); setLimit(u, LIM_OFF); });
+  b.addEventListener("dblclick", (e) => { e.stopPropagation(); setLimit(u, LIM_OFF, e.ctrlKey || e.metaKey); });
   m.addEventListener("wheel", (e) => {
+    if (e.ctrlKey || e.metaKey) return; // (the page's zoom)
     e.preventDefault();
     const step = (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 0.1 : 0.5);
     if (u.limit >= LIM_OFF) { if (step < 0) setLimit(u, 0); return; }
     setLimit(u, u.limit + step > 0 ? LIM_OFF : u.limit + step);
   }, { passive: false });
   b.addEventListener("keydown", (e) => {
+    const all = e.ctrlKey || e.metaKey; // Ctrl: every limiter to this one's new level
+    if (all && ["0", "-", "=", "+"].includes(e.key)) return; // (the page's zoom)
     const fine = e.shiftKey ? 0.1 : 1, cur = u.limit;
     const k = { ArrowUp: fine, ArrowRight: fine, ArrowDown: -fine, ArrowLeft: -fine, PageUp: 6, PageDown: -6 }[e.key];
-    if (k !== undefined) setLimit(u, cur >= LIM_OFF ? (k < 0 ? 0 : LIM_OFF) : cur + k > 0 ? LIM_OFF : cur + k);
-    else if (e.key === "Home" || e.key === "Delete") setLimit(u, LIM_OFF);
-    else if (e.key === "End") setLimit(u, LIM_MIN);
+    if (k !== undefined) setLimit(u, cur >= LIM_OFF ? (k < 0 ? 0 : LIM_OFF) : cur + k > 0 ? LIM_OFF : cur + k, all);
+    else if (e.key === "Home" || e.key === "Delete") setLimit(u, LIM_OFF, all);
+    else if (e.key === "End") setLimit(u, LIM_MIN, all);
     else if (e.key === "0") setLimit(u, 0);
     else return;
     e.preventDefault(); e.stopPropagation();
