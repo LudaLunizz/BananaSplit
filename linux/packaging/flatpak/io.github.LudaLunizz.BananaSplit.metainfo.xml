@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.9.2" date="2026-11-15">
+      <description>
+        <p>Fixes: no crash when started within seconds of boot; on Windows the Disk line shows the real free space again, and an audio stream in an unexpected state is rebuilt instead of stopping the mixer.</p>
+      </description>
+    </release>
     <release version="2.9.1" date="2026-11-15">
       <description>
         <p>Themes: choose the Classic look or the new Console theme, each in dark or light. MIDI fixes: motor faders and 14-bit controls work as buttons, 14-bit faders no longer overshoot, LEDs catch up after a send error, a quickly replugged controller reconnects on Linux, and lost messages are shown.</p>
