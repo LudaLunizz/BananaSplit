@@ -180,6 +180,13 @@ pub trait Io: Send {
     fn close_output(&mut self);
     /// One channel message (2 or 3 bytes).
     fn send(&mut self, msg: &[u8]) -> Result<(), String>;
+    /// Whether the open input and output are still connected. A controller
+    /// unplugged and plugged in again between two listings keeps its name,
+    /// so the listing alone cannot tell that the connection went with it.
+    /// `false` closes the port; the same scan opens it again.
+    fn alive(&mut self) -> (bool, bool) {
+        (true, true)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -480,19 +487,24 @@ impl Decoder {
             0xe0 => out.push((Src::Pitch { ch }, Input::Pos(((d2 as u16) << 7 | d1 as u16) as f32 / N14))),
             0xc0 => out.push((Src::Program { ch, prog: d1 }, Input::Press)),
             0xb0 => {
+                // As the MIDI spec says, a new MSB (and a new parameter) sets
+                // the LSB to 0: the old LSB belongs to another value, and
+                // keeping it made a fader overshoot by up to one 7-bit step.
                 match d1 {
                     99 => {
                         self.nrpn_param[c] = (d2 as u16) << 7 | (self.nrpn_param[c] & 0x7f);
+                        self.nrpn_val[c] = 0;
                         self.nrpn_on[c] = true;
                     }
                     98 => {
                         self.nrpn_param[c] = (self.nrpn_param[c] & !0x7f) | d2 as u16;
+                        self.nrpn_val[c] = 0;
                         self.nrpn_on[c] = true;
                     }
                     100 | 101 => self.nrpn_on[c] = false, // an RPN
                     6 | 38 if self.nrpn_on[c] => {
                         let v = &mut self.nrpn_val[c];
-                        *v = if d1 == 6 { (d2 as u16) << 7 | (*v & 0x7f) } else { (*v & !0x7f) | d2 as u16 };
+                        *v = if d1 == 6 { (d2 as u16) << 7 } else { (*v & !0x7f) | d2 as u16 };
                         out.push((Src::Nrpn { ch, param: self.nrpn_param[c] }, Input::Pos(*v as f32 / N14)));
                         return out;
                     }
@@ -501,7 +513,8 @@ impl Decoder {
                 out.push((Src::Cc { ch, cc: d1 }, Input::Raw(d2)));
                 if d1 < 32 {
                     self.msb[c][d1 as usize] = d2;
-                    let v = (d2 as u16) << 7 | self.lsb[c][d1 as usize] as u16;
+                    self.lsb[c][d1 as usize] = 0;
+                    let v = (d2 as u16) << 7;
                     out.push((Src::Cc14 { ch, msb: d1 }, Input::Pos(v as f32 / N14)));
                 } else if d1 < 64 {
                     let k = (d1 - 32) as usize;
@@ -836,6 +849,8 @@ impl Midi {
         }
         o.push_str(",\"last\":");
         jstr(o, &i.last);
+        // messages the inbox had no room for (counted there, never shown before)
+        let _ = write!(o, ",\"lost\":{}", self.inbox.dropped.load(Relaxed));
         o.push_str(",\"learn\":");
         if !i.learn.on {
             o.push_str("null");
@@ -931,7 +946,16 @@ impl Midi {
     }
 
     /// Bring LEDs and motor faders up to date; `send` writes one message.
-    fn feedback(&self, hub: &Hub, now: Instant, mut send: impl FnMut(&[u8])) {
+    /// A message that could not be sent stops the round (`Err`): that
+    /// binding and the ones after it are not marked as sent, so they go out
+    /// again once the port works (before, they were marked and their LEDs
+    /// stayed wrong until the value changed again).
+    fn feedback(
+        &self,
+        hub: &Hub,
+        now: Instant,
+        mut send: impl FnMut(&[u8]) -> Result<(), String>,
+    ) -> Result<(), String> {
         let mut i = lockm(&self.inner);
         let refeed = std::mem::take(&mut i.refeed);
         let Inner { bindings, rt, .. } = &mut *i;
@@ -947,14 +971,15 @@ impl Midi {
             if !refeed && r.fed == Some(v) {
                 continue;
             }
-            r.fed = Some(v);
             if r.wrote.is_some_and(|w| (w - t.norm_of(v)).abs() >= 1e-4) {
                 r.wrote = None; // moved by something else: pick up again
             }
             for m in encode(b.src, t.norm_of(v)) {
-                send(&m[..msg_len(m[0])]);
+                send(&m[..msg_len(m[0])])?;
             }
+            r.fed = Some(v);
         }
+        Ok(())
     }
 }
 
@@ -987,6 +1012,13 @@ pub fn encode(src: Src, n: f32) -> Vec<[u8; 3]> {
 /// What a binding does with one input: the action and, for a value, the value
 /// to set (`None`: nothing to do).
 fn resolve(b: &Binding, r: &mut Rt, input: Input, hub: &Hub) -> Option<(Action, Option<f32>)> {
+    // A fader, pitch bend or NRPN used as a button: past halfway is pressed.
+    // (These send positions, not raw values, so toggle, momentary and scene
+    // bindings on them did nothing at all.)
+    let input = match (b.mode, input) {
+        (Mode::Toggle | Mode::Momentary | Mode::Trigger, Input::Pos(n)) => Input::Raw(if n >= 0.5 { 127 } else { 0 }),
+        _ => input,
+    };
     if let Action::Scene(_) = &b.action {
         let press = match input {
             Input::Press => true,
@@ -1061,10 +1093,12 @@ fn reconcile(midi: &Midi, io: &mut dyn Io) {
         (i.ports.want_in.clone(), i.ports.want_out.clone(), i.ports.open_in, i.ports.open_out)
     };
     let (ins, outs) = (io.inputs(), io.outputs());
+    let (in_ok, out_ok) = io.alive();
     let mut err = None;
     let mut now_in = open_in;
-    // a port that went away is closed; the wanted one is opened when it is there
-    if open_in && (want_in.is_empty() || !ins.contains(&want_in)) {
+    // a port that went away (or lost its connection) is closed; the wanted
+    // one is opened when it is there
+    if open_in && (want_in.is_empty() || !ins.contains(&want_in) || !in_ok) {
         io.close_input();
         now_in = false;
     }
@@ -1075,7 +1109,7 @@ fn reconcile(midi: &Midi, io: &mut dyn Io) {
         }
     }
     let mut now_out = open_out;
-    if open_out && (want_out.is_empty() || !outs.contains(&want_out)) {
+    if open_out && (want_out.is_empty() || !outs.contains(&want_out) || !out_ok) {
         io.close_output();
         now_out = false;
     }
@@ -1132,16 +1166,13 @@ pub fn run(hub: &Hub, midi: &Midi, io: Result<Box<dyn Io>, String>) {
             (i.ports.open_in, i.ports.open_out)
         };
         if open_out && now >= next_feed {
-            let mut fail = None;
-            midi.feedback(hub, now, |m| {
-                if fail.is_none()
-                    && let Err(e) = io.send(m)
-                {
-                    fail = Some(e);
-                }
-            });
-            if let Some(e) = fail {
-                lockm(&midi.inner).ports.error = Some(e);
+            if let Err(e) = midi.feedback(hub, now, |m| io.send(m)) {
+                // the port is closed: the next scan opens it again (when it is
+                // still there) and sends every value
+                io.close_output();
+                let mut i = lockm(&midi.inner);
+                i.ports.open_out = false;
+                i.ports.error = Some(e);
             }
             next_feed = now + FEEDBACK;
         }
@@ -1177,6 +1208,10 @@ pub mod fake {
         pub inbox: Option<Arc<Inbox>>,
         pub sent: Vec<Vec<u8>>,
         pub opens: usize,
+        /// The open input lost its connection (a quick unplug and replug).
+        pub in_lost: bool,
+        /// Sending fails (the device is gone).
+        pub send_fails: bool,
     }
 
     #[derive(Clone, Default)]
@@ -1219,8 +1254,16 @@ pub mod fake {
             self.0.lock().unwrap().open_out = None;
         }
         fn send(&mut self, msg: &[u8]) -> Result<(), String> {
-            self.0.lock().unwrap().sent.push(msg.to_vec());
+            let mut s = self.0.lock().unwrap();
+            if s.send_fails {
+                return Err("the device is gone".into());
+            }
+            s.sent.push(msg.to_vec());
             Ok(())
+        }
+        fn alive(&mut self) -> (bool, bool) {
+            let mut s = self.0.lock().unwrap();
+            (!std::mem::take(&mut s.in_lost), true)
         }
     }
 }
@@ -1334,6 +1377,27 @@ mod tests {
         // after an RPN, CC 6 is an ordinary CC again
         p(&mut d, [0xb2, 101, 0]);
         assert_eq!(p(&mut d, [0xb2, 6, 1])[0], (Src::Cc { ch: 2, cc: 6 }, Input::Raw(1)));
+    }
+
+    #[test]
+    fn a_new_msb_starts_with_lsb_zero() {
+        let mut d = Decoder::default();
+        let p = |d: &mut Decoder, m: [u8; 3]| d.decode(pack(&m));
+        let pos = |v: u16| Input::Pos(v as f32 / N14);
+        // a fader moving up: 10/127, then MSB 11 is 11/0, not 11/127 (an overshoot)
+        p(&mut d, [0xb0, 7, 10]);
+        p(&mut d, [0xb0, 39, 127]);
+        assert_eq!(p(&mut d, [0xb0, 7, 11])[1], (Src::Cc14 { ch: 0, msb: 7 }, pos(11 << 7)));
+        assert_eq!(p(&mut d, [0xb0, 39, 3])[1], (Src::Cc14 { ch: 0, msb: 7 }, pos(11 << 7 | 3)));
+        // the same for an NRPN's value, and a new parameter starts from 0
+        let nrpn = |param| Src::Nrpn { ch: 0, param };
+        p(&mut d, [0xb0, 99, 0]);
+        p(&mut d, [0xb0, 98, 1]);
+        p(&mut d, [0xb0, 6, 5]);
+        assert_eq!(p(&mut d, [0xb0, 38, 100]), [(nrpn(1), pos(5 << 7 | 100))]);
+        assert_eq!(p(&mut d, [0xb0, 6, 6]), [(nrpn(1), pos(6 << 7))]);
+        p(&mut d, [0xb0, 98, 2]);
+        assert_eq!(p(&mut d, [0xb0, 38, 9]), [(nrpn(2), pos(9))], "not parameter 1's MSB");
     }
 
     #[test]

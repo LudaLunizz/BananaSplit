@@ -3873,7 +3873,7 @@ function renderMidi(S) {
   setText($("midistate"), !M.available ? (M.error || "MIDI is not available here.") : M.error ? M.error :
     !M.in ? "Choose the port your controller sends on." : M.inOpen ? "Listening to " + M.in + (M.outOpen ? ", sending to " + M.out + "." : ".") :
     M.in + " is not connected: plug it in, BananaSplit opens it within a few seconds.");
-  setText($("midilast"), M.last || "none yet");
+  setText($("midilast"), (M.last || "none yet") + (M.lost ? " · " + M.lost + " message" + (M.lost === 1 ? "" : "s") + " lost (the controller sent faster than BananaSplit could read)" : ""));
   midiTargets(S);
   const L = M.learn, caught = L && L.src;
   setText($("midilearnbtn"), L ? "Learning…" : "Learn a control");

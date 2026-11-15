@@ -2417,6 +2417,39 @@ mod tests {
                 .unwrap()
                 .starts_with(r#"{"in":"Pad","out":"Pad","bindings":[{"src":"cc:1:7","#)
         );
+
+        // a motor fader (pitch bend) as a button: the default mode is toggle,
+        // and past halfway is a press (it did nothing before)
+        assert_eq!(cmd("op=midibind&src=pb:1&target=/strips/3/mute").map(|_| ()), Ok(()));
+        assert!(!sh.strips[2].mute.load(Relaxed));
+        dev.play(&[0xe0, 0x7f, 0x7f, 0xe0, 0x7f, 0x7e, 0xe0, 0, 0]);
+        wait("pitch bend toggles", &|| sh.strips[2].mute.load(Relaxed));
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(sh.strips[2].mute.load(Relaxed), "one press, one toggle");
+        dev.play(&[0xe0, 0x7f, 0x7f]);
+        wait("and back", &|| !sh.strips[2].mute.load(Relaxed));
+
+        // unplugged and plugged in again between two listings: the name never
+        // left the list, but the lost connection is noticed and made again
+        let opens = dev.0.lock().unwrap().opens;
+        dev.0.lock().unwrap().in_lost = true;
+        wait("reconnected after a quick replug", &|| dev.0.lock().unwrap().opens > opens);
+
+        // sending fails: the port is closed, and once it works again every
+        // value is sent again (before, the failed ones counted as sent)
+        std::thread::sleep(Duration::from_millis(ECHO_WAIT));
+        dev.0.lock().unwrap().send_fails = true;
+        cmd("op=mute&ch=0&v=0").unwrap();
+        wait("the failure closes the output", &|| state().contains(r#""outOpen":false"#));
+        assert!(state().contains(r#""error":"the device is gone""#), "{}", state());
+        {
+            let mut d = dev.0.lock().unwrap();
+            d.send_fails = false;
+            d.sent.clear();
+        }
+        wait("reopened and sent again", &|| dev.0.lock().unwrap().sent.contains(&vec![0x90, 16, 0]));
+        assert!(state().contains(r#""outOpen":true"#));
+        assert!(state().contains(r#""lost":0"#), "{}", state());
         h.close();
     }
 

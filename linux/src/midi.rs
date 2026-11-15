@@ -26,6 +26,20 @@ type Seq = *mut c_void;
 struct Event([u8; 28]);
 const _: () = assert!(size_of::<Event>() == 28);
 
+/// `snd_seq_addr_t`: a client and one of its ports.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Addr {
+    client: u8,
+    port: u8,
+}
+
+impl Addr {
+    fn of(client: c_int, port: c_int) -> Addr {
+        Addr { client: client as u8, port: port as u8 }
+    }
+}
+
 #[repr(C)]
 struct PollFd {
     fd: c_int,
@@ -72,6 +86,11 @@ dl_api! {
         snd_midi_event_decode: unsafe extern "C" fn(*mut c_void, *mut u8, c_long, *const Event) -> c_long,
         snd_midi_event_encode: unsafe extern "C" fn(*mut c_void, *const u8, c_long, *mut Event) -> c_long,
         snd_midi_event_reset_encode: unsafe extern "C" fn(*mut c_void),
+        snd_seq_port_subscribe_malloc: unsafe extern "C" fn(*mut *mut c_void) -> c_int,
+        snd_seq_port_subscribe_free: unsafe extern "C" fn(*mut c_void),
+        snd_seq_port_subscribe_set_sender: unsafe extern "C" fn(*mut c_void, *const Addr),
+        snd_seq_port_subscribe_set_dest: unsafe extern "C" fn(*mut c_void, *const Addr),
+        snd_seq_get_port_subscription: unsafe extern "C" fn(Seq, *const c_void) -> c_int,
     }
 }
 
@@ -167,6 +186,8 @@ pub struct Alsa {
     out: Client,
     /// The input: its reader thread and its stop flag.
     reader: Option<(JoinHandle<()>, Arc<AtomicBool>)>,
+    /// The input's connection (controller -> our input port), checked by `alive`.
+    in_sub: Option<(Addr, Addr)>,
     /// Where the output port is connected to.
     dest: Option<(c_int, c_int)>,
     encoder: *mut c_void,
@@ -197,7 +218,7 @@ impl Alsa {
         if unsafe { (api.snd_midi_event_new)(256, &mut encoder) } < 0 || encoder.is_null() {
             return Err("cannot create a MIDI encoder".into());
         }
-        Ok(Alsa { api, out, reader: None, dest: None, encoder })
+        Ok(Alsa { api, out, reader: None, in_sub: None, dest: None, encoder })
     }
 
     /// Every port another client offers with the capabilities `want`.
@@ -242,6 +263,28 @@ impl Alsa {
             (a.snd_seq_client_info_free)(ci);
         }
         list
+    }
+
+    /// Whether the sequencer still has the connection `from -> to`. The
+    /// kernel drops a connection when either port goes away, and a controller
+    /// plugged in again gets a new port that nothing is connected to.
+    fn connected(&self, from: Addr, to: Addr) -> bool {
+        let a = self.api;
+        let mut sub = std::ptr::null_mut();
+        // SAFETY: an out pointer for ALSA's own subscription object, freed below.
+        if unsafe { (a.snd_seq_port_subscribe_malloc)(&mut sub) } < 0 || sub.is_null() {
+            return true; // cannot tell: leave the port as it is
+        }
+        // SAFETY: the object made above and two addresses that live for the call;
+        // the query reads the kernel's subscription list.
+        let e = unsafe {
+            (a.snd_seq_port_subscribe_set_sender)(sub, &from);
+            (a.snd_seq_port_subscribe_set_dest)(sub, &to);
+            let e = (a.snd_seq_get_port_subscription)(self.out.seq, sub);
+            (a.snd_seq_port_subscribe_free)(sub);
+            e
+        };
+        e >= 0
     }
 
     fn find(&self, want: c_uint, name: &str) -> Result<PortRef, String> {
@@ -305,10 +348,13 @@ impl Io for Alsa {
         let p = self.find(CAP_READ | CAP_SUBS_READ, name)?;
         let c = Client::open(self.api, c"BananaSplit MIDI in", CAP_WRITE | CAP_SUBS_WRITE)?;
         // SAFETY: an open handle and its own port.
-        let e = unsafe { (self.api.snd_seq_connect_from)(c.seq, c.port, p.client, p.port) };
+        let (e, us) = unsafe {
+            ((self.api.snd_seq_connect_from)(c.seq, c.port, p.client, p.port), (self.api.snd_seq_client_id)(c.seq))
+        };
         if e < 0 {
             return Err(format!("cannot connect from {name:?} (error {e})"));
         }
+        let sub = (Addr::of(p.client, p.port), Addr::of(us, c.port));
         let stop = Arc::new(AtomicBool::new(false));
         let s = stop.clone();
         let t = std::thread::Builder::new()
@@ -316,10 +362,12 @@ impl Io for Alsa {
             .spawn(move || read_loop(c, inbox, s))
             .map_err(|e| format!("cannot start the MIDI input thread: {e}"))?;
         self.reader = Some((t, stop));
+        self.in_sub = Some(sub);
         Ok(())
     }
 
     fn close_input(&mut self) {
+        self.in_sub = None;
         if let Some((t, stop)) = self.reader.take() {
             stop.store(true, Relaxed);
             let _ = t.join(); // the client closes with the thread
@@ -367,6 +415,14 @@ impl Io for Alsa {
         // SAFETY: an open handle and a complete event.
         let e = unsafe { (a.snd_seq_event_output_direct)(self.out.seq, &mut ev) };
         if e < 0 { Err(format!("cannot send MIDI (error {e})")) } else { Ok(()) }
+    }
+
+    fn alive(&mut self) -> (bool, bool) {
+        // SAFETY: the open output handle.
+        let us = unsafe { (self.api.snd_seq_client_id)(self.out.seq) };
+        let input = self.in_sub.is_none_or(|(from, to)| self.connected(from, to));
+        let output = self.dest.is_none_or(|(c, p)| self.connected(Addr::of(us, self.out.port), Addr::of(c, p)));
+        (input, output)
     }
 }
 
@@ -436,7 +492,16 @@ mod tests {
             [[0xb0, 7, 100], [0x90, 36, 0], [0xe0, 0x7f, 0x7f], [0xc5, 9, 0]],
             "velocity-0 Note On stays a Note On"
         );
+        assert_eq!(io.alive(), (true, true), "both connections are there");
+        assert!(!io.connected(Addr::of(0, 0), Addr::of(0, 1)), "a connection nobody made");
+        // the connection goes (as when the controller is unplugged) while the
+        // port keeps its name: `alive` says so, so the next scan reconnects
+        let (c, p) = io.dest.unwrap();
+        // SAFETY: the open output handle and the port it is connected to.
+        unsafe { (io.api.snd_seq_disconnect_to)(io.out.seq, io.out.port, c, p) };
+        assert_eq!(io.alive(), (true, false));
         io.close_input();
         io.close_output();
+        assert_eq!(io.alive(), (true, true), "nothing open: nothing lost");
     }
 }
