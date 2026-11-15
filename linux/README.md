@@ -13,6 +13,13 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  V2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    V1 ── V3 B1 B2
 ```
 
+## What's new in 2.9.2
+
+* **No crash at start right after boot** (#158): started within a few seconds of booting (autostart on a fast machine), BananaSplit could stop with a panic; its timers no longer reach back before the system clock began.
+* **Windows: the Disk line is right again** (#158): it showed the free space as the disk size, so it always read about 100% free; it now shows the disk size and your free share.
+* **Windows: sturdier audio threads** (#158): an audio stream in an unexpected state is rebuilt like an unplugged device instead of stopping the mixer.
+* Behind the scenes: CI now checks the oldest Rust the source promises (1.88), lint exceptions say why, more code documented.
+
 ## What's new in 2.9.1
 
 * **Themes** (#152): MENU ▸ **Theme** picks the whole look: **Classic** (the old look, still the default) or the new **Console** (neutral greys, a flat console, a dB scale on the faders). Dark / Light / Auto is now called **Mode** and works with both. API: `op=look`.
