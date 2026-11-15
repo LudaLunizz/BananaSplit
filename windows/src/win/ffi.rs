@@ -8,7 +8,14 @@
 //! three IUnknown slots, and methods are listed in header order, because the
 //! slot position is the ABI.
 
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::upper_case_acronyms, dead_code)]
+#![allow(
+    non_snake_case,
+    non_camel_case_types,
+    non_upper_case_globals,
+    clippy::upper_case_acronyms,
+    dead_code,
+    reason = "Win32 names as Microsoft writes them, and whole vtables of which only some slots are called"
+)]
 
 use std::ffi::c_void;
 
@@ -108,6 +115,8 @@ pub const AUDCLNT_BUFFERFLAGS_SILENT: u32 = 0x2;
 pub const AUDCLNT_E_DEVICE_INVALIDATED: HRESULT = 0x8889_0004_u32 as i32;
 pub const AUDCLNT_E_SERVICE_NOT_RUNNING: HRESULT = 0x8889_0010_u32 as i32;
 pub const AUDCLNT_E_RESOURCES_INVALIDATED: HRESULT = 0x8889_0026_u32 as i32;
+/// `E_UNEXPECTED`: a call that does not fit the object's state.
+pub const E_UNEXPECTED: HRESULT = 0x8000_FFFF_u32 as i32;
 /// `IAudioSessionControl::GetState`: the session's app is gone.
 pub const AudioSessionStateExpired: u32 = 2;
 /// `IAudioSessionControl2::GetProcessId`: a session of several processes.

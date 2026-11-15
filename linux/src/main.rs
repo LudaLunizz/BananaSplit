@@ -15,7 +15,7 @@ mod lowlat;
 mod midi;
 mod shell;
 mod sys;
-use bananasplit::tui;
+use bananasplit::{clock, tui};
 mod update;
 
 use backend::{Backend, Wiring};
@@ -937,7 +937,7 @@ fn run_tui(ctx: &Ctx, cfg: &mut Config, rec: &Recorder, notes: Vec<String>) -> R
     let mut changed_at: Option<Instant> = Some(Instant::now());
     let mut force_connect = false;
     let mut lat = (0u32, 0u32);
-    let mut lat_at = Instant::now() - Duration::from_secs(10);
+    let mut lat_at: Option<Instant> = None; // never: refresh at once
     let mut lat_check = LatencyCheck::new();
     let mut ips = sys::local_ipv4();
     let mut ips_at = Instant::now();
@@ -1008,11 +1008,11 @@ fn run_tui(ctx: &Ctx, cfg: &mut Config, rec: &Recorder, notes: Vec<String>) -> R
             }
             force_connect = false;
             changed_at = None;
-            lat_at = Instant::now() - Duration::from_secs(10); // refresh latency now
+            lat_at = None; // refresh latency now
         }
-        if lat_at.elapsed() > Duration::from_millis(500) {
+        if clock::since(lat_at, Instant::now()) > Duration::from_millis(500) {
             lat = backend.io_latency();
-            lat_at = Instant::now();
+            lat_at = Some(Instant::now());
         }
         if let Some(m) = lat_check.poll(backend, cfg) {
             view.latency = Some(m);
@@ -1276,7 +1276,7 @@ fn run_gui(
     let pulse = devices::PulseWatch::start();
     let mut seen = PulseSeen::new(ctx.path);
     let mut conns: Vec<Vec<String>> = vec![Vec::new(); cables::NUM_CHANNELS];
-    let mut conns_at = Instant::now() - Duration::from_secs(10);
+    let mut conns_at: Option<Instant> = None; // never: read at once
     let mut pulse_rev = u64::MAX;
     let mut dev_rev = 0u64;
     let mut ips = sys::local_ipv4();
@@ -1284,7 +1284,7 @@ fn run_gui(
     let mut changed_at: Option<Instant> = Some(Instant::now());
     let mut force_connect = false;
     let mut lat = (0u32, 0u32);
-    let mut lat_at = Instant::now() - Duration::from_secs(10);
+    let mut lat_at: Option<Instant> = None; // never: refresh at once
     let mut lat_check = LatencyCheck::new();
     let mut vlog = VbanLog::default();
     let mut was_recording = false;
@@ -1391,7 +1391,7 @@ fn run_gui(
                     }
                     if !list {
                         pulse.kick();
-                        conns_at = Instant::now() - Duration::from_secs(10);
+                        conns_at = None;
                         dev_rev += 1;
                         match &r {
                             Ok(m) => status = m.clone(),
@@ -1450,11 +1450,11 @@ fn run_gui(
             }
             force_connect = false;
             changed_at = None;
-            lat_at = Instant::now() - Duration::from_secs(10);
+            lat_at = None;
         }
-        if lat_at.elapsed() > Duration::from_millis(500) {
+        if clock::since(lat_at, Instant::now()) > Duration::from_millis(500) {
             lat = backend.io_latency();
-            lat_at = Instant::now();
+            lat_at = Some(Instant::now());
         }
         if let Some(m) = lat_check.poll(backend, cfg) {
             eprintln!("bananasplit: warning: {m}");
@@ -1475,13 +1475,15 @@ fn run_gui(
             was_recording = recording;
         }
         // Slow things: the recordings folder, disk space, the autostart file.
-        if backend.ctl.conns_changed.swap(false, Relaxed) || conns_at.elapsed() > Duration::from_secs(2) {
+        if backend.ctl.conns_changed.swap(false, Relaxed)
+            || clock::since(conns_at, Instant::now()) > Duration::from_secs(2)
+        {
             let c = chanmenu::connections(backend, &ctx.cables.borrow());
             if c != conns {
                 conns = c;
                 dev_rev += 1;
             }
-            conns_at = Instant::now();
+            conns_at = Some(Instant::now());
         }
         let (rev, info) = pulse.snapshot();
         if rev != pulse_rev {

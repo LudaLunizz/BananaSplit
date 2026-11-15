@@ -5,8 +5,6 @@
 //! all 12 input and 10 output channels are processed for the same frames in
 //! the same cycle — inherently sample-synchronous, with no extra buffering.
 
-#![allow(clippy::needless_range_loop)] // index loops mirror the [strip][channel] layout
-
 use crate::cables::{CableSet, Cables};
 use crate::devices::{self, Resolver, Side, client_of};
 use crate::jack::{JackClient, LATENCY_CAPTURE, LATENCY_PLAYBACK, Port, regex_escape};
@@ -319,7 +317,7 @@ impl Backend {
     }
 
     pub fn client(&self) -> &JackClient {
-        self.client.as_ref().expect("client present until drop")
+        self.client.as_ref().expect("client is Some until Drop takes it")
     }
 
     /// (capture latency into strips, playback latency out of A buses), frames.

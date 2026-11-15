@@ -145,7 +145,8 @@ pub struct AppRestore {
     policy: Option<Policy>,
     /// Why there is no policy, until said once.
     why: Option<String>,
-    last: Instant,
+    /// The last look; `None` = never, so the first tick looks at once.
+    last: Option<Instant>,
     // Declared last, so the factory is released before COM is.
     _com: Option<ComInit>,
 }
@@ -159,7 +160,7 @@ impl AppRestore {
             Ok(p) => (Some(p), None),
             Err(e) => (None, Some(format!("apps are not put back on their strips: {e}"))),
         };
-        AppRestore { homes: AppHomes::load(config), policy, why, last: Instant::now() - EVERY, _com: com.ok() }
+        AppRestore { homes: AppHomes::load(config), policy, why, last: None, _com: com.ok() }
     }
 
     /// Every couple of seconds: look at the apps with sound open and put
@@ -168,10 +169,10 @@ impl AppRestore {
         if let Some(w) = self.why.take() {
             return vec![w];
         }
-        if self.last.elapsed() < EVERY {
+        if bananasplit::clock::since(self.last, Instant::now()) < EVERY {
             return Vec::new();
         }
-        self.last = Instant::now();
+        self.last = Some(Instant::now());
         let Some(policy) = &self.policy else { return Vec::new() };
         let Ok(_com) = ComInit::mta() else { return Vec::new() };
         let Ok(en) = wasapi::Enumerator::new() else { return Vec::new() };

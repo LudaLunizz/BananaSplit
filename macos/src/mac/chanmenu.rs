@@ -10,8 +10,6 @@
 //! cable on or off, a restart, or a cable gone for a moment (a driver
 //! update) moves no channel's apps to another channel.
 
-#![allow(clippy::needless_range_loop)] // index loops mirror the channel layout
-
 use super::cables;
 use super::route::{self, DevInfo};
 use super::{Snapshot, snapshot};

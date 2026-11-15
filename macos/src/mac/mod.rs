@@ -296,7 +296,7 @@ impl Session {
                 Err(e) => return (Vec::new(), vec![e]),
             }
         }
-        let g = self.graph.as_ref().expect("graph built");
+        let g = self.graph.as_ref().expect("graph is Some: just built above, or it was already Some");
         let mut errs = g.errs.clone();
         if g.inputs > 0 && ffi::mic_access() == Some(false) {
             errs.insert(0, MIC_DENIED.into());

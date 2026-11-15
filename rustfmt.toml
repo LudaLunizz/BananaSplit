@@ -1,3 +1,5 @@
 # Fits the existing style: long lines and short one-line ifs and literals.
+# style_edition: cargo fmt takes it from the edition, a bare rustfmt call does not.
+style_edition = "2024"
 max_width = 120
 use_small_heuristics = "Max"

@@ -18,8 +18,6 @@
 //! drift-correcting resampler (`bananasplit::ring`). Audio threads use MMCSS
 //! "Pro Audio" priority and never allocate, lock or block once running.
 
-#![allow(clippy::needless_range_loop)] // index loops mirror the [strip]/[bus] layout
-
 use super::ffi::*;
 use super::route::{self, DevInfo};
 use bananasplit::config::Config;
@@ -379,7 +377,9 @@ impl Stream {
 
     /// Hand `n` frames of interleaved stereo to the device; `fill` writes them.
     fn write(&self, n: u32, fill: impl FnOnce(&mut [f32])) -> Result<(), HRESULT> {
-        let r = self.render.as_ref().expect("render stream");
+        // Only a capture stream lacks the render half; writing to it is a caller
+        // bug, reported like a device error rather than panicking the audio thread.
+        let Some(r) = self.render.as_ref() else { return Err(E_UNEXPECTED) };
         let mut p: *mut u8 = std::ptr::null_mut();
         // SAFETY: `r` owns a live IAudioRenderClient; `p` is a local out-pointer (GetBuffer fails if `n` frames do not fit).
         let hr = unsafe { (r.vt().GetBuffer)(r.as_ptr(), n, &mut p) };
@@ -489,7 +489,7 @@ impl Graph {
                 }
                 match route::resolve(pat, infos, def) {
                     Some(d) => {
-                        let i = infos.iter().position(|x| x.id == d.id).expect("from list");
+                        let i = infos.iter().position(|x| x.id == d.id).expect("resolve() returns an entry of `infos`");
                         if !idx.contains(&i) {
                             idx.push(i);
                             shown.push(route::short_name(&d.name).to_string());
@@ -644,7 +644,12 @@ fn capture_thread(s: Stream, mut prod: Producer, stop: &AtomicBool, stats: &Stat
     // (parameters are dropped after the function's locals).
     let s = s;
     let _mm = Mmcss::pro_audio();
-    let cap = s.capture.as_ref().expect("capture stream");
+    let Some(cap) = s.capture.as_ref() else {
+        // A render stream handed to the capture thread: stop like a lost device,
+        // so the graph is rebuilt, instead of panicking the audio thread.
+        stats.invalidated.store(true, Relaxed);
+        return;
+    };
     if s.start().is_err() {
         stats.invalidated.store(true, Relaxed);
         return;
@@ -750,7 +755,7 @@ fn sink_thread(s: Stream, mut rd: DriftReader, stop: &AtomicBool, stats: &Stats,
     s.stop();
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "a thread body: what it owns or shares is moved in at spawn")]
 fn master_thread(
     out: Option<Stream>,
     mut eng: Engine,

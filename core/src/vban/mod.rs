@@ -552,7 +552,7 @@ fn rx_thread(inner: &Inner) {
     let mut version = 0u64;
     let mut sock: Option<Arc<UdpSocket>> = None;
     let mut bind_error: Option<String> = None;
-    let mut last_bind = Instant::now() - REBIND_EVERY;
+    let mut last_bind: Option<Instant> = None; // never: bind at once
     let mut streams: [RxStream; NUM_IN] = std::array::from_fn(|_| RxStream::default());
     let mut errors: [Option<String>; NUM_IN] = Default::default();
     let mut seen: Vec<Seen> = Vec::new();
@@ -562,7 +562,7 @@ fn rx_thread(inner: &Inner) {
     // any UDP datagram fits (VBAN packets are at most 1464 bytes, but a
     // sender that ignores that limit still gets through)
     let mut buf = vec![0u8; 65_536];
-    let mut last_status = Instant::now() - STATUS_EVERY;
+    let mut last_status: Option<Instant> = None;
 
     while !inner.quit.load(SeqCst) {
         let now = Instant::now();
@@ -583,7 +583,7 @@ fn rx_thread(inner: &Inner) {
                 own_port = None;
                 *lock(&inner.socket) = None;
                 bind_error = None;
-                last_bind = now - REBIND_EVERY;
+                last_bind = None; // bind again at once
             }
             for k in 0..NUM_IN {
                 let slot = &tap.ins[k];
@@ -605,8 +605,8 @@ fn rx_thread(inner: &Inner) {
                 }
             }
         }
-        if cfg.enabled && sock.is_none() && now.duration_since(last_bind) >= REBIND_EVERY {
-            last_bind = now;
+        if cfg.enabled && sock.is_none() && crate::clock::since(last_bind, now) >= REBIND_EVERY {
+            last_bind = Some(now);
             match bind(cfg.port) {
                 Ok(s) => {
                     let s = Arc::new(s);
@@ -673,8 +673,8 @@ fn rx_thread(inner: &Inner) {
         }
 
         let now = Instant::now();
-        if now.duration_since(last_status) >= STATUS_EVERY {
-            last_status = now;
+        if crate::clock::since(last_status, now) >= STATUS_EVERY {
+            last_status = Some(now);
             seen.retain(|s| now.duration_since(s.last) < SEEN_FOR);
             let mut st = lock(&inner.status);
             st.listening = sock.as_ref().and_then(|s| s.local_addr().ok()).map(|a| a.port());
@@ -737,7 +737,6 @@ fn note_seen(seen: &mut Vec<Seen>, h: &proto::AudioHeader, from: SocketAddrV4, n
     }
 }
 
-#[allow(clippy::needless_range_loop)] // k indexes the config, the slots and the streams
 fn tx_thread(inner: &Inner) {
     let tap = &*inner.tap;
     let mut fs = inner.rate();
@@ -748,7 +747,7 @@ fn tx_thread(inner: &Inner) {
     let mut names = [[0u8; proto::NAME_LEN]; NUM_OUT];
     let mut fallback: Option<Arc<UdpSocket>> = None;
     let mut fallback_error: Option<String> = None;
-    let mut last_status = Instant::now() - STATUS_EVERY;
+    let mut last_status: Option<Instant> = None;
 
     while !inner.quit.load(SeqCst) {
         // The audio server changed its sample rate: packets announce the new
@@ -830,8 +829,8 @@ fn tx_thread(inner: &Inner) {
         }
 
         let now = Instant::now();
-        if now.duration_since(last_status) >= STATUS_EVERY {
-            last_status = now;
+        if crate::clock::since(last_status, now) >= STATUS_EVERY {
+            last_status = Some(now);
             let mut st = lock(&inner.status);
             for k in 0..NUM_OUT {
                 let c = &cfg.outs[k];

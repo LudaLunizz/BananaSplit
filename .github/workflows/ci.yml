@@ -80,6 +80,40 @@ jobs:
         working-directory: ${{ matrix.crate }}
         run: cargo deny --target ${{ matrix.target }} --config ../deny.toml check
 
+  # The oldest Rust the manifests promise (`rust-version`): every crate must
+  # still build with it, so a newer API cannot slip in unnoticed. The version
+  # is read from the manifests, which must agree. Issue #158.
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read rust-version
+        id: msrv
+        run: |
+          v=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' core/Cargo.toml)
+          for c in linux windows macos; do
+            w=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' $c/Cargo.toml)
+            [ "$w" = "$v" ] || { echo "::error::$c/Cargo.toml says rust-version $w, core says $v"; exit 1; }
+          done
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
+        run: |
+          rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal \
+            --target x86_64-pc-windows-gnu --target aarch64-apple-darwin
+
+      - name: Check every crate
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+        run: |
+          (cd core && cargo check --locked --all-targets)
+          (cd linux && cargo check --locked --all-targets)
+          (cd windows && cargo check --locked --target x86_64-pc-windows-gnu)
+          # DOCS_RS: some macOS dependencies skip their Mac-only build steps off a Mac.
+          (cd macos && DOCS_RS=1 cargo check --locked --target aarch64-apple-darwin)
+
   linux:
     name: Linux
     runs-on: ubuntu-24.04

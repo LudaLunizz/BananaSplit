@@ -904,7 +904,7 @@ fn install_deb(deb: &Path, hash: &[u8; 32], version: &str, stop: &AtomicBool, in
 }
 
 #[cfg(unix)]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "the seam the tests drive: every program path and input can be swapped")]
 fn install_deb_with(
     pkexec: &Path,
     apt: &Path,

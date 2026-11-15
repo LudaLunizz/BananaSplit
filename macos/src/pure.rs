@@ -52,15 +52,21 @@ pub fn format_mark(channels: u32, float32: impl FnOnce() -> bool) -> char {
 /// What the signature records of one device.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SigDevice<'a> {
+    /// The device's UID (stable across reconnects).
     pub uid: &'a str,
     /// The HAL's object ID (a new one when the device comes back).
     pub id: u32,
+    /// Its name.
     pub name: &'a str,
+    /// Input channels.
     pub inputs: u32,
+    /// Output channels.
     pub outputs: u32,
+    /// Nominal sample rate, Hz.
     pub rate: f64,
-    /// `format_mark` of the inputs and of the outputs.
+    /// `format_mark` of the inputs.
     pub in_mark: char,
+    /// `format_mark` of the outputs.
     pub out_mark: char,
 }
 
@@ -161,10 +167,15 @@ pub fn mic_status(status: isize) -> Option<bool> {
 /// One device for `--status`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusDevice {
+    /// Its name.
     pub name: String,
+    /// Its UID.
     pub uid: String,
+    /// Nominal sample rate, Hz.
     pub rate: f64,
+    /// Input channels.
     pub inputs: u32,
+    /// Output channels.
     pub outputs: u32,
 }
 

@@ -1244,7 +1244,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
+    #[expect(clippy::field_reassign_with_default, reason = "changes one field at a time, as the app does")]
     fn modified_round_trips() {
         let mut c = Config::default();
         c.client_name = "mix_2".into();
@@ -1625,7 +1625,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn apply_and_capture() {
         let sh = Shared::new();
         let mut c = Config::default();

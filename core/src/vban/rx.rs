@@ -381,7 +381,10 @@ impl RxStream {
 
     /// Handle one audio packet of incoming stream `k`. `Err` if the stream
     /// cannot be played (status text).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one packet in its context: stream slot, header, payload, sender, clock and rates"
+    )]
     pub fn packet(
         &mut self,
         tap: &VbanTap,

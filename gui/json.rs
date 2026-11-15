@@ -32,11 +32,6 @@ impl Value {
     pub fn as_str(&self) -> Option<&str> {
         if let Value::Str(s) = self { Some(s) } else { None }
     }
-    #[allow(dead_code)] // the MIDI bindings (#144) use it
-    pub fn as_f64(&self) -> Option<f64> {
-        if let Value::Num(n) = self { Some(*n) } else { None }
-    }
-    #[allow(dead_code)] // the MIDI bindings (#144) use it
     pub fn as_bool(&self) -> Option<bool> {
         if let Value::Bool(b) = self { Some(*b) } else { None }
     }
@@ -217,7 +212,6 @@ impl Parser<'_> {
 }
 
 /// Write `v` as JSON (used for the bindings file).
-#[allow(dead_code)] // the MIDI bindings (#144) use it
 pub fn write(o: &mut String, v: &Value) {
     match v {
         Value::Null => o.push_str("null"),

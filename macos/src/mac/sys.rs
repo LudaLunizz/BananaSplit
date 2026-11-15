@@ -38,6 +38,7 @@ extern "C" fn on_signal(_sig: c_int) {
     QUIT.store(true, SeqCst);
 }
 
+/// Catch Ctrl+C, SIGTERM and SIGHUP, so the mixer quits cleanly.
 pub fn install_signal_handlers() {
     let h = on_signal as extern "C" fn(c_int) as usize;
     for s in [SIGINT, SIGTERM, SIGHUP] {
@@ -46,6 +47,7 @@ pub fn install_signal_handlers() {
     }
 }
 
+/// Are stdin and stdout both a terminal (so the terminal view can run)?
 pub fn stdin_is_tty() -> bool {
     // SAFETY: plain libc calls on the standard descriptors.
     unsafe { isatty(0) == 1 && isatty(1) == 1 }
@@ -207,6 +209,7 @@ pub fn disk_space(path: &std::path::Path) -> Option<(u64, u64)> {
 pub struct LocalIp {
     /// The network interface (`en0`, `en1`).
     pub iface: String,
+    /// The address.
     pub ip: std::net::Ipv4Addr,
     /// Its network's broadcast address, if it has one.
     pub broadcast: Option<std::net::Ipv4Addr>,

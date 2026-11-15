@@ -28,6 +28,8 @@ unsafe extern "system" fn on_ctrl(kind: u32) -> BOOL {
     1 // handled
 }
 
+/// Catch Ctrl+C, closing the console, logging off and shutting down, so
+/// the mixer saves and quits cleanly instead of being killed.
 pub fn install_signal_handlers() {
     // SAFETY: `on_ctrl` is a `extern "system"` HandlerRoutine that lives for the whole program.
     unsafe { SetConsoleCtrlHandler(Some(on_ctrl), 1) };
@@ -38,6 +40,7 @@ fn handle(which: u32) -> HANDLE {
     unsafe { GetStdHandle(which) }
 }
 
+/// Are input and output both a console window (so the terminal view can run)?
 pub fn stdin_is_tty() -> bool {
     let mut m = 0u32;
     // SAFETY: `m` is a local u32 out-pointer; a non-console handle just makes GetConsoleMode fail.
@@ -69,9 +72,14 @@ fn restore() {
 }
 
 /// Raw keyboard input + VT output + alternate screen; restored on drop and on panic.
+#[derive(Debug)]
 pub struct RawTerminal;
 
 impl RawTerminal {
+    /// Switch the console over; the old modes come back when this is dropped.
+    ///
+    /// # Errors
+    /// When this program is not running in a console window.
     pub fn enter() -> Result<RawTerminal, String> {
         let (hin, hout) = (handle(STD_INPUT_HANDLE), handle(STD_OUTPUT_HANDLE));
         let (mut min, mut mout) = (0u32, 0u32);

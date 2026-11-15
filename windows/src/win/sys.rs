@@ -17,10 +17,15 @@ pub fn allow_foreground() {
     unsafe { AllowSetForegroundWindow(ASFW_ANY) };
 }
 
+/// An IPv4 address of this computer (for the VBAN window: what to type
+/// into Voicemeeter on the other computer).
 #[derive(Debug, Clone)]
 pub struct LocalIp {
+    /// The network adapter's name as Windows shows it (`Ethernet`, `Wi-Fi`).
     pub iface: String,
+    /// The address.
     pub ip: Ipv4Addr,
+    /// Its network's broadcast address, if it has one.
     pub broadcast: Option<Ipv4Addr>,
 }
 
@@ -29,6 +34,8 @@ const GAA_FLAG_SKIP_ANYCAST: u32 = 0x2;
 const GAA_FLAG_SKIP_MULTICAST: u32 = 0x4;
 const GAA_FLAG_SKIP_DNS_SERVER: u32 = 0x8;
 
+/// This computer's IPv4 addresses on adapters that are up, without
+/// loopback; empty if Windows cannot list them.
 pub fn local_ipv4() -> Vec<LocalIp> {
     const FLAGS: u32 = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
     const ERROR_BUFFER_OVERFLOW: u32 = 111;
@@ -194,6 +201,7 @@ pub fn same_user(peer: SocketAddr, us: SocketAddr) -> bool {
     }
 }
 
+/// Current local time as `YYYY-MM-DD_HH-MM-SS` (for recording file names).
 pub fn local_timestamp() -> String {
     let mut t =
         SystemTime { year: 0, month: 0, day_of_week: 0, day: 0, hour: 0, minute: 0, second: 0, milliseconds: 0 };
@@ -204,17 +212,19 @@ pub fn local_timestamp() -> String {
     format!("{:04}-{:02}-{:02}_{:02}-{:02}-{:02}", t.year, t.month, t.day, t.hour, t.minute, t.second)
 }
 
+/// Total and free (for this user, after quotas) bytes of the drive that
+/// holds `path`, or of its nearest existing parent.
 pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     let mut cur = path.to_path_buf();
     loop {
         let w = to_wide(cur.as_os_str());
         let mut free_avail: u64 = 0;
         let mut total: u64 = 0;
-        let mut total_free: u64 = 0;
+        let mut total_free: u64 = 0; // free for everyone; the page shows the user's share
         // SAFETY: `w` is a NUL-terminated UTF-16 path held in a local; the out-pointers are local u64s.
         let ok = unsafe { GetDiskFreeSpaceExW(w.as_ptr(), &mut free_avail, &mut total, &mut total_free) };
         if ok != 0 {
-            return Some((total_free, free_avail));
+            return Some((total, free_avail));
         }
         if !cur.pop() {
             break;
@@ -223,12 +233,17 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     None
 }
 
+/// Nothing to do on Windows: child processes do not inherit handles that
+/// were not made inheritable (the Linux version marks JACK's sockets).
 pub fn cloexec_all() {}
 
+/// Width of the terminal; not read on Windows, so the view uses its default.
 pub fn term_cols() -> Option<usize> {
     None
 }
 
+/// Regex port patterns are a JACK feature; Windows has none, so `None`
+/// (the pattern is treated as not compiling).
 pub fn regex_match(_pattern: &str, _text: &str) -> Option<bool> {
     None
 }
@@ -259,6 +274,15 @@ mod tests {
         assert!(same_user(srv.peer_addr().unwrap(), srv.local_addr().unwrap()));
         // SAFETY: the current-process pseudo-handle is always valid and needs no CloseHandle.
         assert!(process_user(unsafe { GetCurrentProcess() }).is_some_and(|s| s.len() >= 12));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn disk_space_is_total_then_free() {
+        // The system drive always holds files, so free < total; the old
+        // (free, free) pair made the page's Disk line read "100% free".
+        let (total, free) = disk_space(&std::env::temp_dir().join("bs-no-such-dir/a/b")).unwrap();
+        assert!(total > 0 && free < total, "{total} {free}");
     }
 
     #[test]
