@@ -143,8 +143,10 @@ try:
     code, r = v1('{"cmd":"fade","path":"/vban/port","to":7000,"ms":100}')
     check(code == 400 and 'does not fade' in r['error'], f'v1 port does not fade (got {r})')
     code, r = v1('', '/api/v1/player/stop'); check(code == 200 and r['value'] == 'stopped', f'v1 player/stop (got {r})')
+    time.sleep(0.3)  # the state is published by the main loop, a few times a second
     st3 = json.loads(req('GET', '/api/state')[1])
-    check(st3['ch'][0]['eq']['b'][1][2] == 1000 and st3['vban']['in'][0]['name'] == 'Desk', 'the new v1 paths changed the state')
+    got = (st3['ch'][0]['eq']['b'][1], st3['vban']['in'][0]['name'])
+    check(got[0][2] == 1000 and got[1] == 'Desk', f'the new v1 paths changed the state (got {got})')
     code, r = v1('{"cmd":"set","path":"/strips/1/gain_db","value":-6}')
     check((code, r) == (200, {'ok': True, 'text': '-6.0 dB', 'path': '/strips/1/gain_db', 'value': -6.0}), f'v1 set as documented (got {r})')
     code, r = v1('{"cmd":"toggle","path":"/buses/B1/mute"}'); check(code == 200 and r['value'] in (True, False), 'v1 toggle')
