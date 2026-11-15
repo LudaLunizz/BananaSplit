@@ -529,9 +529,12 @@ New in 2.6:
 
 The changes in each version, newest first.
 
-### What's new in 2.9.2
+### Not released yet
 
 * **A token for what reaches beyond the mixer** (#166): quitting, updates, starting with the system, the app menu entry, opening folders, recording (and its folder) and VBAN out now need a token BananaSplit writes at each start to a file only you can read (`$XDG_RUNTIME_DIR/bananasplit/BananaSplit.token`; Windows `%LOCALAPPDATA%`, macOS `~/Library/Caches`). The window, the touch deck opened from the menu (new: MENU ▸ **Open the touch deck**) and `--quit` get it by themselves; mixer controls (faders, mutes, routing, EQ, scenes, player) work without it, so the deck and Companion keep working. Scripts that quit or record send `X-BananaSplit-Token` (see `docs/api.md`).
+
+### What's new in 2.9.2
+
 * **No crash at start right after boot** (#158): started within a few seconds of booting (autostart on a fast machine), BananaSplit could stop with a panic; its timers no longer reach back before the system clock began.
 * **Windows: the Disk line is right again** (#158): it showed the free space as the disk size, so it always read about 100% free; it now shows the disk size and your free share.
 * **Windows: sturdier audio threads** (#158): an audio stream in an unexpected state is rebuilt like an unplugged device instead of stopping the mixer.
