@@ -36,7 +36,7 @@ BananaSplit opens in its own window, with a Dock icon and a menu bar while the w
 - BananaSplit runs only the side of a device it uses: playing on a headset doesn't switch its microphone on.
 - **Default input** and **Default output** follow what you pick in System Settings › Sound. They never follow macOS into a virtual cable (BlackHole set as the default output, say): the mixer would record itself. `@physical` skips every software device.
 - The mixer runs at **48 kHz**. Devices that run at another rate (44.1 kHz, 96 kHz, …) are converted, with a high-quality resampler, so nothing has to be changed in Audio MIDI Setup. Each device runs on its own clock; BananaSplit keeps them in step.
-- **Latency.** BananaSplit asks every device it uses for IO cycles of `buffer_size` frames (`[global] buffer_size = 128`, about 2.7 ms at 48 kHz), within what the device allows. This is BananaSplit's own setting: other apps keep theirs. `buffer_size = 0` leaves the devices as they are. Bluetooth devices allow only large cycles, and add latency of their own.
+- **Latency.** BananaSplit asks every device it uses for IO cycles of `buffer_size` frames (`[global] buffer_size = 128`, about 2.7 ms at 48 kHz), within what the device allows. This is BananaSplit's own setting: other apps keep theirs. `buffer_size = 0` leaves the devices as they are. Bluetooth devices allow only large cycles, and add latency of their own. There are no measured latency figures for macOS yet; the measured figures in the [Linux manual](../linux/README.md#sync-and-latency) are for Linux only.
 - In the config file, `connect =` takes `@default`, `@physical` or part of a device's name as macOS shows it: `bananasplit --list-devices` lists them.
 - Devices that come and go (USB, Bluetooth, a changed default device or rate) are picked up within a few seconds.
 
@@ -120,6 +120,6 @@ sh packaging/bundle.sh && sh tests/launch/smoke.sh dist/BananaSplit.app
 
 ## Notes
 
-- The UI talks to the mixer over a loopback-only local connection. macOS can't say which user a local connection belongs to, so another user logged in to the same Mac at the same time could reach it, as on Linux without `/proc`.
+- The UI talks to the mixer over a loopback-only local connection. Since 2.8.15 BananaSplit checks which user each connection belongs to in the kernel's list of TCP sockets (`net.inet.tcp.pcblist_n`), as it does on Linux and Windows, and answers only its own user. Since 2.8.25, if that list can't be read, it refuses every connection and the window says why. Only IPv4 loopback connections (`127.0.0.1`) are let in.
 - If a device stops delivering audio, BananaSplit reconnects the devices once by itself; Menu ▸ Reconnect devices does it again. If it is the device the mixer runs on (the first bus with a device, normally) and it stops again, the mixer goes on without waiting for it, and that device plays again as soon as it runs.
 - Default routing uses `@default` and `@physical`; change it from the channel menus.

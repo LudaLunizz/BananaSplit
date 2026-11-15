@@ -11,8 +11,10 @@
   <description>
     <p>
       BananaSplit mixes, routes and records audio on PipeWire: 6 strips and
-      5 buses with EQ, virtual cables to send any app's sound where you want
-      it, VBAN over the network and a recorder that writes MP3 or WAV.
+      5 buses with EQ, a gate and compressor on every strip and a limiter on
+      every bus, virtual cables to send any app's sound where you want it,
+      VBAN over the network, a recorder that writes MP3 or WAV, and MIDI
+      controllers.
     </p>
     <p>
       It lives in the tray, and closing its window keeps the mixer running.

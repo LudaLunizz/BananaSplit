@@ -20,6 +20,19 @@ Extract the release zip, put `bananasplit.exe` in a folder of your own (your Des
 - **Settings are saved** when you quit, every two minutes, and when you log off, restart or shut down Windows. `taskkill /im bananasplit.exe` (without `/f`) also quits cleanly.
 - **No WebView2?** BananaSplit opens the mixer in your web browser instead and offers Microsoft's download page for the WebView2 Runtime.
 
+## Latency and buffers
+
+How the Windows app moves audio, from `windows/src/win/wasapi.rs` and `core/src/ring.rs`:
+
+- **Shared mode.** Every device is opened in WASAPI shared mode, event-driven, at 48 kHz, stereo, 32-bit float. Windows converts from whatever format the device runs at. Other apps keep using the same devices, and virtual cables can be opened as often as needed. Windows' own audio engine is in the path; BananaSplit has no exclusive-mode or ASIO option.
+- **Buffers.** Each stream asks Windows for the smallest buffer shared mode allows, about one device period. Windows usually hands out about 10 ms.
+- **One device drives the mixer.** Each Windows device runs on its own clock, so there is no single clock as with JACK on Linux. The mixer is driven by the first bus device that opens (normally V1's) and mixes one block per period of that device; the window shows that period next to the sample rate (for example `48 kHz · 10.00 ms`). Without a bus device it mixes 480 frames (10 ms) at a time.
+- **Rings between the other devices and the mixer.** Every other device, inputs and the other bus outputs, is joined to the mixer through a lock-free ring buffer that holds up to one second. Each ring is kept at a fill level of the mixer's period plus that device's period plus 96 frames. Its reader resamples by a tiny, continuously adjusted ratio to hold that level, so the clocks never drift apart and the ring never runs dry or overflows. The correction is at most ±0.5 %; real clocks differ by well under 0.05 %, so the large values only occur while it settles.
+- **The round trip shown** in the session panel adds the longest input path (ring level plus the latency Windows reports for the device) to the longest output path (device buffer plus reported latency, plus the ring level for devices other than the one that drives the mixer). It is computed from what Windows reports, not measured with a loopback cable.
+- **No settings.** The period comes from the device and Windows. `buffer_size` in `[global]` is not used on Windows.
+
+There are no measured latency figures for Windows yet; the measured figures in the [Linux manual](../linux/README.md#sync-and-latency) are for Linux with JACK or PipeWire only.
+
 ## Updates
 
 **Menu ▸ Check for updates…** opens the Updates window.

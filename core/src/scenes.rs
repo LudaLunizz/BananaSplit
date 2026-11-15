@@ -190,7 +190,11 @@ impl SceneStore {
         crate::config::write_replacing(&path, &to_ini(sh))
     }
 
-    /// Load scene `name` into the mixer.
+    /// Load scene `name` into the mixer. All or nothing at the file level:
+    /// the whole file is read and checked (`parse`) before anything is set,
+    /// so a bad file changes nothing. A good one is then applied value by
+    /// value (`Config::apply`), each through its usual ramp; the audio thread
+    /// may run a cycle between two of them.
     pub fn load(&self, name: &str, sh: &Shared) -> Result<(), String> {
         let path = self.path(name)?;
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;

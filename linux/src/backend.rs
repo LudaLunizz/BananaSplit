@@ -2,8 +2,9 @@
 //!
 //! The whole mixer runs inside ONE JACK process callback. JACK (and
 //! PipeWire's JACK layer) call it once per period for every port at once, so
-//! all 12 input and 10 output channels are processed for the same frames in
-//! the same cycle — inherently sample-synchronous, with no extra buffering.
+//! all 6 strips and 5 buses (12 input and 10 output ports, a stereo pair
+//! each) are processed for the same frames in the same cycle: inherently
+//! sample-synchronous, with no extra buffering.
 
 use crate::cables::{CableSet, Cables};
 use crate::devices::{self, Resolver, Side, client_of};
