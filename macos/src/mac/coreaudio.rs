@@ -22,8 +22,6 @@
 //!
 //! Nothing in an IOProc allocates, locks or blocks.
 
-#![allow(clippy::needless_range_loop)] // index loops mirror the [strip]/[bus] layout
-
 use super::catypes::{
     self, AudioBufferList, AudioObjectID, AudioTimeStamp, OSStatus, kAudioHardwareBadDeviceError,
     kAudioHardwareBadObjectError,
@@ -683,7 +681,7 @@ impl Graph {
                 }
                 match route::resolve(pat, infos, def) {
                     Some(d) => {
-                        let i = infos.iter().position(|x| x.id == d.id).expect("from the list");
+                        let i = infos.iter().position(|x| x.id == d.id).expect("resolve() returns an entry of `infos`");
                         if !idx.contains(&i) {
                             idx.push(i);
                             shown.push(d.name.clone());

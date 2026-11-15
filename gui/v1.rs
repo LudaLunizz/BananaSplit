@@ -14,8 +14,8 @@ use super::cmd::{Cmd, SceneAct};
 use super::json::{self, Value};
 use super::{Hub, jnum, jstr, lock};
 use bananasplit::engine::{
-    BUS_IDS, MAX_GAIN_DB, MAX_TRIM_DB, MIN_GAIN_DB, MIN_TRIM_DB, NUM_BUSES, NUM_STRIPS, bus_index, clamp_db, clamp_pan,
-    clamp_trim,
+    BUS_IDS, BusParams, MAX_GAIN_DB, MAX_TRIM_DB, MIN_GAIN_DB, MIN_TRIM_DB, NUM_BUSES, NUM_STRIPS, StripParams,
+    bus_index, clamp_db, clamp_pan, clamp_trim,
 };
 use bananasplit::limiter::{LIMIT_MIN_DB, LIMIT_OFF_DB, clamp_limit};
 use bananasplit::scenes;
@@ -236,7 +236,6 @@ impl Target {
 
     /// The value as a fader position, 0 to 1 (the gain on the page's taper,
     /// the rest straight across its range; a flag is 0 or 1).
-    #[allow(dead_code)] // the MIDI bindings (#144) use it
     pub fn norm_of(&self, v: f32) -> f32 {
         match (self, self.kind()) {
             (Target::Chan { p: Param::Gain, .. }, _) => db_to_pos(v),
@@ -246,7 +245,6 @@ impl Target {
     }
 
     /// A fader position (0 to 1) as a value, [`fit`](Self::fit) for the target.
-    #[allow(dead_code)] // the MIDI bindings (#144) use it
     pub fn value_at(&self, n: f32) -> f32 {
         let n = if n.is_finite() { n.clamp(0.0, 1.0) } else { 0.0 };
         self.fit(match (self, self.kind()) {
@@ -261,24 +259,42 @@ impl Target {
         let sh = &*hub.shared;
         let Target::Chan { ch, p } = *self else { return hub.recorder.is_recording() as u8 as f32 };
         let flag = |b: bool| b as u8 as f32;
-        let (s, b) =
-            if ch < NUM_STRIPS { (Some(&sh.strips[ch]), None) } else { (None, Some(&sh.buses[ch - NUM_STRIPS])) };
+        /// The channel's controls: a strip or a bus, never both or neither.
+        #[derive(Clone, Copy)]
+        enum Chan<'a> {
+            Strip(&'a StripParams),
+            Bus(&'a BusParams),
+        }
+        let c = if ch < NUM_STRIPS { Chan::Strip(&sh.strips[ch]) } else { Chan::Bus(&sh.buses[ch - NUM_STRIPS]) };
+        // A field both kinds have, read the same way.
+        macro_rules! either {
+            ($x:ident => $e:expr) => {
+                match c {
+                    Chan::Strip($x) => $e,
+                    Chan::Bus($x) => $e,
+                }
+            };
+        }
+        let strip = match c {
+            Chan::Strip(s) => Some(s),
+            Chan::Bus(_) => None,
+        };
         match p {
-            Param::Gain => s.map_or_else(|| b.unwrap().gain_db.load(), |s| s.gain_db.load()),
-            Param::Trim => s.map_or_else(|| b.unwrap().trim_db.load(), |s| s.trim_db.load()),
-            Param::Pan => s.map_or_else(|| b.unwrap().pan.load(), |s| s.pan.load()),
-            Param::Mute => flag(s.map_or_else(|| b.unwrap().mute.load(SeqCst), |s| s.mute.load(SeqCst))),
-            Param::Mono => flag(s.map_or_else(|| b.unwrap().mono.load(SeqCst), |s| s.mono.load(SeqCst))),
-            Param::Solo => flag(s.is_some_and(|s| s.solo.load(SeqCst))),
+            Param::Gain => either!(x => x.gain_db.load()),
+            Param::Trim => either!(x => x.trim_db.load()),
+            Param::Pan => either!(x => x.pan.load()),
+            Param::Mute => flag(either!(x => x.mute.load(SeqCst))),
+            Param::Mono => flag(either!(x => x.mono.load(SeqCst))),
+            Param::Solo => flag(strip.is_some_and(|s| s.solo.load(SeqCst))),
             Param::Record => flag(sh.rec_links.load(SeqCst) & (1 << ch) != 0),
             Param::Eq => flag(sh.eq(ch).on.load(SeqCst)),
-            Param::Gate => flag(s.is_some_and(|s| s.dynamics.gate_on.load(SeqCst))),
-            Param::Comp => flag(s.is_some_and(|s| s.dynamics.comp_on.load(SeqCst))),
-            Param::Limit => b.map_or(LIMIT_OFF_DB, |b| b.limit.load()),
-            Param::Send(bus) => {
-                let r = s.map_or_else(|| b.unwrap().routes.load(SeqCst), |s| s.routes.load(SeqCst));
-                flag(r & (1 << bus) != 0)
-            }
+            Param::Gate => flag(strip.is_some_and(|s| s.dynamics.gate_on.load(SeqCst))),
+            Param::Comp => flag(strip.is_some_and(|s| s.dynamics.comp_on.load(SeqCst))),
+            Param::Limit => match c {
+                Chan::Bus(b) => b.limit.load(),
+                Chan::Strip(_) => LIMIT_OFF_DB,
+            },
+            Param::Send(bus) => flag(either!(x => x.routes.load(SeqCst)) & (1 << bus) != 0),
         }
     }
 

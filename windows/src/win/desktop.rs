@@ -62,6 +62,7 @@ pub fn helper_exe() -> Result<PathBuf, String> {
     Ok(crate::update::moved_program().filter(|p| p.is_file()).unwrap_or_else(exe_path))
 }
 
+/// Open a folder in Explorer.
 pub fn open_folder(path: &Path) -> Result<(), String> {
     // the HTTP threads that call this have no COM of their own
     let _com = crate::win::ffi::ComInit::sta();
@@ -103,6 +104,8 @@ fn reg_set_run(enable: bool) -> Result<(), String> {
     }
 }
 
+/// Turn starting with Windows (in the tray) on or off; the answer is a line
+/// for the user.
 pub fn set_autostart(enable: bool) -> Result<String, String> {
     reg_set_run(enable)?;
     if enable {
@@ -174,6 +177,7 @@ pub fn autostart_enabled() -> bool {
     run_value().is_some_and(|v| run_targets(&v, &exe_path()))
 }
 
+/// `bananasplit --install`: a Start Menu shortcut to this program.
 pub fn install() -> Result<String, String> {
     let exe = exe_path();
     let start_menu = std::env::var_os("APPDATA")
@@ -199,6 +203,7 @@ pub fn install() -> Result<String, String> {
     }
 }
 
+/// Is there a Start Menu shortcut?
 pub fn menu_installed() -> bool {
     std::env::var_os("APPDATA")
         .map(|a| PathBuf::from(a).join("Microsoft\\Windows\\Start Menu\\Programs\\BananaSplit.lnk").exists())
@@ -272,6 +277,8 @@ pub fn no_window(why: &str, mixer_url: &str) {
     open_url(mixer_url);
 }
 
+/// Show an error to someone who started BananaSplit without a console: a
+/// message box.
 pub fn error_dialog(text: &str) {
     let cap = wide("BananaSplit");
     let t = to_wide(text);

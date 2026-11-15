@@ -21,7 +21,7 @@ mod app_window;
 #[cfg(windows)]
 #[path = "win/tray.rs"]
 mod tray;
-use bananasplit::tui;
+use bananasplit::{clock, tui};
 #[path = "update.rs"]
 mod update;
 #[path = "win/mod.rs"]
@@ -376,8 +376,8 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     // console to print it to.
     let mut status = notes.join(" | ");
     let mut view = tui::View::default();
-    let mut last_scan = Instant::now() - Duration::from_secs(10);
-    let mut last_slow = Instant::now() - Duration::from_secs(10);
+    let mut last_scan: Option<Instant> = None; // never: scan at once
+    let mut last_slow: Option<Instant> = None;
     let mut last_save = Instant::now();
     let mut dev_rev = 0u64;
     let mut ips = sys::local_ipv4();
@@ -518,13 +518,13 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
             }
             dev_rev += 1;
         }
-        if last_scan.elapsed() >= Duration::from_secs(2) || dev_rev != views_rev {
-            last_scan = Instant::now();
+        if clock::since(last_scan, Instant::now()) >= Duration::from_secs(2) || dev_rev != views_rev {
+            last_scan = Some(Instant::now());
             chans = win::chanmenu::views(cfg);
             views_rev = dev_rev;
         }
-        if last_slow.elapsed() >= Duration::from_secs(2) {
-            last_slow = Instant::now();
+        if clock::since(last_slow, Instant::now()) >= Duration::from_secs(2) {
+            last_slow = Some(Instant::now());
             ips = sys::local_ipv4();
             disk = sys::disk_space(&folder);
             hub.autostart.store(desktop::autostart_enabled(), SeqCst);

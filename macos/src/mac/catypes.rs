@@ -6,7 +6,7 @@
 //! `AudioHardware.h`, `AudioHardwareBase.h`), as the objc2-core-audio
 //! bindings, generated from them, also have them.
 
-#![allow(non_upper_case_globals, non_snake_case)]
+#![allow(non_upper_case_globals, non_snake_case, reason = "Core Audio names as Apple writes them")]
 
 use bananasplit::ring::Producer;
 use std::ffi::c_void;

@@ -121,6 +121,8 @@ pub fn agent_program(plist: &str) -> Option<String> {
     Some(xml_unescape(rest[start..end].trim()))
 }
 
+/// Turn starting at login on or off (a LaunchAgent); the answer is a line
+/// for the user.
 pub fn set_autostart(enable: bool) -> Result<String, String> {
     let f = agent_file().ok_or("no home folder")?;
     if enable {
@@ -162,6 +164,8 @@ pub fn menu_installed() -> bool {
     true
 }
 
+/// `bananasplit --install`: nothing to do on macOS, so it says how to keep
+/// the app (drag it into Applications).
 pub fn install() -> Result<String, String> {
     Err("Drag BananaSplit into your Applications folder to keep it there.".into())
 }
@@ -203,6 +207,8 @@ fn dialog(text: &str, critical: bool) {
         .status();
 }
 
+/// Show an error to someone who started BananaSplit from Finder (no
+/// terminal to print to): a dialog.
 pub fn error_dialog(text: &str) {
     dialog(text, true);
 }

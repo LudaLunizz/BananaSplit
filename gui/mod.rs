@@ -204,7 +204,7 @@ pub struct Hub {
     pub installed: AtomicBool,
     /// The first start without virtual cables (Windows, macOS): the page opens
     /// its "Virtual cables" window by itself, once.
-    #[allow(dead_code)] // Linux has no such window
+    #[allow(dead_code, reason = "Linux has no such window")]
     pub cable_welcome: AtomicBool,
     state: Mutex<(u64, Arc<String>)>,
     cond: Condvar,
@@ -464,7 +464,7 @@ impl Takes {
         c.notify_all();
     }
 
-    #[allow(dead_code)] // only the Linux app changes the recorder folder while it runs
+    #[allow(dead_code, reason = "only the Linux app changes the recorder folder while it runs")]
     pub fn set_folder(&self, folder: PathBuf) {
         let mut g = lock(&self.inner);
         if g.folder != folder {

@@ -19,6 +19,7 @@
 //! (where the config folder is, how `~` expands, the wording of the
 //! `connect =` hints) are `cfg(target_os)` branches here.
 
+pub mod clock;
 pub mod config;
 pub mod dynamics;
 pub mod engine;

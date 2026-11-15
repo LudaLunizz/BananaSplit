@@ -545,7 +545,10 @@ impl RecRt {
     /// and must be read as zeros). `buses` are the finished outputs.
     ///
     /// Real-time safe: no allocation, no locks, no syscalls, no panics.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one audio cycle's buffers and sizes, passed straight from the engine on the real-time path"
+    )]
     pub fn push(
         &mut self,
         tap: &RecTap,
@@ -563,7 +566,10 @@ impl RecRt {
         tap.cycles.fetch_add(1, SeqCst);
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one audio cycle's buffers and sizes, passed straight from the engine on the real-time path"
+    )]
     #[inline]
     fn write_block(
         &mut self,

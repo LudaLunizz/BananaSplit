@@ -42,7 +42,7 @@ impl Hello {
     }
 
     /// Only the tray icon; `why` there is no window of our own.
-    #[allow(dead_code)] // the Linux window falls back to this; the Windows one fails instead
+    #[allow(dead_code, reason = "the Linux window falls back to this; the Windows one fails instead")]
     pub fn tray_only(why: impl Into<String>) -> Hello {
         Hello::Ready { app: false, tray: true, note: why.into() }
     }
@@ -91,10 +91,10 @@ const WINDOW_START: Duration = Duration::from_secs(60);
 pub struct WindowProc {
     child: Child,
     stdin: Option<ChildStdin>,
-    #[allow(dead_code)] // read by the Linux app (main.rs)
+    #[allow(dead_code, reason = "read by the Linux app (main.rs)")]
     pub mode: WinMode,
     /// It has a tray icon (`ready app tray`): closing the window hides it there.
-    #[allow(dead_code)] // read by the Windows app (main.rs)
+    #[allow(dead_code, reason = "read by the Windows app (main.rs)")]
     pub tray: bool,
     rx: mpsc::Receiver<Event>,
     gone: bool,

@@ -192,7 +192,7 @@ impl Session {
                 Err(e) => return (Vec::new(), vec![e]),
             }
         }
-        let g = self.graph.as_ref().expect("graph built");
+        let g = self.graph.as_ref().expect("graph is Some: just built above, or it was already Some");
         (g.desc.clone(), g.errs.clone())
     }
 
