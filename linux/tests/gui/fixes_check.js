@@ -41,6 +41,7 @@ async function start(ini, extraEnv, port) {
   fs.writeFileSync(path.join(home, ".config/bananasplit/bananasplit.ini"), ini.replace(/\$HOME/g, home) + "\n[gui]\nlisten =\n");
   const env = Object.assign({}, process.env, {
     HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local/share"),
+    XDG_RUNTIME_DIR: path.join(home, "run"), // its own: the port note and the API token (#166)
     LD_LIBRARY_PATH: MOCK, MOCKJACK_REPORT: path.join(home, "report.txt"), MOCKJACK_REALTIME: "1", MOCKJACK_CYCLES: "100000000",
   }, extraEnv);
   delete env.DISPLAY; delete env.WAYLAND_DISPLAY;
@@ -48,8 +49,12 @@ async function start(ini, extraEnv, port) {
   const proc = spawn(BIN, ["--gui", "--no-open", "--gui-port", String(port)], { env, stdio: ["ignore", log, log] });
   const url = `http://127.0.0.1:${port}/`;
   for (let i = 0; i < 100; i++) { try { await fetch(url + "api/ping"); break; } catch (e) { await sleep(100); } }
+  // the API token (#166): the page gets it as BananaSplit's window does, in the fragment
+  let token = "";
+  try { token = fs.readFileSync(path.join(home, "run/bananasplit/BananaSplit.token"), "utf8").trim(); } catch (e) { /* not up */ }
+  const page = url + "#t=" + token;
   const post = async (params) => {
-    const r = await fetch(url + "api/cmd", { method: "POST", headers: { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params).toString() });
+    const r = await fetch(url + "api/cmd", { method: "POST", headers: { "X-BananaSplit": "1", "X-BananaSplit-Token": token, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params).toString() });
     return { status: r.status, text: await r.text() };
   };
   const stop = async () => {
@@ -57,7 +62,7 @@ async function start(ini, extraEnv, port) {
     for (let i = 0; i < 50 && proc.exitCode === null; i++) await sleep(100);
     if (proc.exitCode === null) proc.kill();
   };
-  return { home, url, post, stop };
+  return { home, url, page, post, stop };
 }
 
 async function pollPage(page, fn, pred, what, ms = 5000) {
@@ -88,7 +93,7 @@ async function pollPage(page, fn, pred, what, ms = 5000) {
   for (const [w, h, zoom] of [[1366, 768, 1], [1366, 768, 1.2], [1280, 720, 1.2], [1760, 960, 1]]) {
     const bs = await start(ini + `[gui]\nzoom = ${zoom}\n`, {}, 18700 + Math.floor(Math.random() * 100));
     const page = await browser.newPage({ viewport: { width: w, height: h } });
-    await page.goto(bs.url);
+    await page.goto(bs.page);
     await page.waitForSelector(".strip");
     const m = await pollPage(page, () => {
       const r = (e) => e.getBoundingClientRect();
@@ -112,7 +117,7 @@ async function pollPage(page, fn, pred, what, ms = 5000) {
   {
     const bs = await start("[global]\ncreate_cables = false\n[strip3]\nconnect = ^system:\n", { MOCKJACK_DEVICES: "1" }, 18810);
     const page = await browser.newPage({ viewport: { width: 1760, height: 960 } });
-    await page.goto(bs.url);
+    await page.goto(bs.page);
     await page.waitForSelector(".strip");
     const tip = () => document.querySelectorAll(".devb")[2].title;
     await pollPage(page, tip, (t) => t.includes("Connected: system"), "strip 3's button: Connected: system");
@@ -129,7 +134,7 @@ async function pollPage(page, fn, pred, what, ms = 5000) {
     const bs = await start("[global]\ncreate_cables = false\n[strip1]\nroutes = A1\n[recorder]\nfolder = $HOME/rec\nlinks = 1,A1\nmode = multi\n",
       { MOCKJACK_TONE: "1000", MOCKJACK_RATE: "48000", MOCKJACK_RATE_SWITCH: "900:44100" }, 18820);
     const page = await browser.newPage({ viewport: { width: 1760, height: 960 } });
-    await page.goto(bs.url);
+    await page.goto(bs.page);
     await page.waitForSelector(".strip");
     await page.locator("#recbtn").click();
     await pollPage(page, () => document.getElementById("taketitle").textContent, (t) => t === "REC · 2 tracks", "recording: REC · 2 tracks");
@@ -152,7 +157,7 @@ async function pollPage(page, fn, pred, what, ms = 5000) {
       held.push({ ac, r });
     }
     const page = await browser.newPage({ viewport: { width: 1760, height: 960 } });
-    await page.goto(bs.url);
+    await page.goto(bs.page);
     await page.waitForSelector(".strip");
     await sleep(3500);
     check(await page.evaluate(() => document.getElementById("overlay").classList.contains("show")), "with every stream taken, the page says it lost the connection");
