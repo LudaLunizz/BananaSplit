@@ -13,6 +13,11 @@ A Voicemeeter Banana-style mixer written in Rust, with **6 input strips** and **
  V2  Blue Headphones   +0.0  ████····· ████·····  -30 ·   · E    V1 ── V3 B1 B2
 ```
 
+## What's new in 2.9.1
+
+* **Themes** (#152): MENU ▸ **Theme** picks the whole look: **Classic** (the old look, still the default) or the new **Console** (neutral greys, a flat console, a dB scale on the faders). Dark / Light / Auto is now called **Mode** and works with both. API: `op=look`.
+* **MIDI fixes** (#154): a motor fader, pitch bend, 14-bit CC or NRPN bound as a button or to a scene now works (past halfway = pressed); 14-bit faders no longer overshoot when their coarse step changes; LEDs and motor faders catch up after a send error (the port is opened again); on Linux a controller unplugged and plugged back in quickly is connected again; messages lost because the controller sent too fast are shown in the MIDI window (state `midi.lost`).
+
 ## What's new in 2.9.0
 
 * **MIDI controllers** (#144): MENU ▸ **MIDI controllers…** — choose your controller's ports, click **Learn a control**, move a fader, knob or button and pick what it drives (any fader, gain, pan, mute, solo, route, EQ, gate, limiter, record arm, recording, or loading a scene). Absolute faders and knobs, endless encoders (three relative kinds), 14-bit CCs, pitch-bend faders, NRPN, buttons that switch or work while held. **Pickup**: a fader that doesn't match the value does nothing until it reaches it, so nothing jumps. **LEDs and motor faders follow** every change, from the window, the deck, the API or a scene. Plug the controller in later and it is opened within seconds. Linux (ALSA sequencer, no new library), Windows (WinMM), macOS (CoreMIDI). Kept in `midi.json` next to the settings.

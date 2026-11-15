@@ -27,6 +27,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.9.1" date="2026-11-15">
+      <description>
+        <p>Themes: choose the Classic look or the new Console theme, each in dark or light. MIDI fixes: motor faders and 14-bit controls work as buttons, 14-bit faders no longer overshoot, LEDs catch up after a send error, a quickly replugged controller reconnects on Linux, and lost messages are shown.</p>
+      </description>
+    </release>
     <release version="2.9.0" date="2026-11-14">
       <description>
         <p>MIDI controllers: learn a fader, knob or button and bind it to any control or a scene. Faders pick the value up instead of jumping, and LEDs and motor faders follow every change. A new versioned API (v1) lets scripts and decks set, toggle, step and fade any value by its path.</p>
