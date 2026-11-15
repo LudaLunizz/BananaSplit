@@ -5,12 +5,20 @@ server that every BananaSplit (Linux, Windows, macOS) runs on the same computer.
 computer, run by the same user, can use it the same way: set a fader, start a recording, read the
 meters.
 
-This describes BananaSplit 2.8.22 and the changes merged since: the `platform` field of the state
-and errors as JSON on request (both marked *new*), and **API v1** (from 2.9.0): one versioned command
-model with paths, relative changes, fades and batches, which the MIDI bindings use too. `/api/cmd` is
-the API the page is written against; there is no promise yet that it never changes, and changes are
-named in the release notes. API v1 is the one to build on: it only grows, and anything that would
-change what it does gets a new version (`/api/v2/`).
+This describes the API of the BananaSplit it ships with; where a part came later, its first version
+is named next to it. There are two ways to change things:
+
+* **API v1** (`/api/v1/`, from 2.9.0) is the one to build on: one versioned command model with
+  paths, relative changes, fades and batches, which the MIDI bindings use too. It only grows, and
+  anything that would change what it does gets a new version (`/api/v2/`). **New features are added
+  here.**
+* **`POST /api/cmd`** is the form-encoded API the page and the touch deck are written against. It is
+  kept for them, and so for scripts that already use it, but it **gets no new ops**: everything new
+  comes to API v1 only. There is no promise that it never changes; a change is named in the release
+  notes.
+
+Both end in the same code: every change v1 makes is one of the commands of `/api/cmd`, so the two
+cannot disagree.
 
 * [Reaching it](#reaching-it)
 * [What it checks](#what-it-checks)
@@ -74,10 +82,15 @@ except the event stream.
 | `POST /api/v1/command` | One command or a batch, as JSON. |
 | `POST /api/v1/scenes/{name}/recall` | Load a saved scene. |
 | `POST /api/v1/recorder/start`, `.../stop` | Start or stop recording. |
+| `POST /api/v1/player/play`, `.../pause`, `.../stop` | Play, pause or stop the player. |
 
 Anything else under a known method is a 404; other methods are 405 (`Allow: GET, POST`).
 
 ## `POST /api/cmd`: the commands
+
+Kept for the page and the touch deck; it gets no new ops (new features go to [API v1](#api-v1), which
+covers everything below that a script would change: levels, routing, EQ bands, gate and compressor,
+VBAN, the player, the recorder and scenes).
 
 The body is a form (`application/x-www-form-urlencoded`: `op=gain&ch=2&v=-3.5`; `+` and `%xx` as
 usual, UTF-8). `op` says what to do, the other fields say with what. Fields may come in any order.
@@ -165,7 +178,7 @@ number.
 |---|---|---|---|
 | `scene` | `name` (1 to 40 letters, digits, spaces and ``- _ . , ( ) & + ' !``, not starting with a dot), `act` (`load`, `save`, `delete`) | | `scene "Live" saved` ... |
 | `theme` | `v` (`dark`, `light`, `auto`) | | `ok` |
-| `look` | `v` (`classic`, `console`) | *New:* the theme set: the page's whole look, each with its own dark and light (`theme`). | `ok` |
+| `look` | `v` (`classic`, `console`) | From 2.9.1: the theme set: the page's whole look, each with its own dark and light (`theme`). | `ok` |
 | `zoom` | `v` (0.5 to 2.0) | | `ok` |
 | `listen` | `v` a device's client name (empty: none) | The output device you listen on (from 2.8.27): bus cards playing to it get a blue border. | `ok` |
 | `closetray` | `v` flag | "Closing the window keeps it running". | `ok` |
@@ -184,7 +197,7 @@ number.
 |---|---|---|---|
 | `midiport` | any of `in`, `out` (a port name from `midi.ins` / `midi.outs`, empty: none) | The port the controller sends on and the one it listens on (LEDs, motor faders). Opened as soon as it is there, again after it was unplugged. | `ok` |
 | `midi` | `a` (`learn`, `stop`) | Learning: the next control moved on the controller is caught (`midi.learn`); nothing is changed while learning. Stops by itself after 60 s. | `move a control on your MIDI controller`, `learning stopped` |
-| `midibind` | `src`, `target`, any of `mode`, `takeover` flag, `feedback` flag | Bind a control to a value, or replace its binding. `src`: `cc:CH:N`, `cc14:CH:N` (N 0 to 31, its LSB on N+32), `note:CH:N`, `pb:CH` (pitch bend), `nrpn:CH:N`, `pc:CH:N` (program change); CH 1 to 16. `target`: an API v1 path, or `scene:<name>`. `mode`: `abs`, `rel2` (1 up, 127 down), `rel64` (65 up, 63 down), `relsign` (1 up, 65 down), `toggle`, `momentary`, `trigger`; left out: the first that fits. A button cannot set a number. `takeover` (soft-takeover, default on for absolute controls except pitch bend) and `feedback` (send the value back, default on except for scenes and program changes). At most 256. | `CC 7 · ch 1 → Strip 1: fader` |
+| `midibind` | `src`, `target`, any of `mode`, `takeover` flag, `feedback` flag | Bind a control to a value, or replace its binding. `src`: `cc:CH:N`, `cc14:CH:N` (N 0 to 31, its LSB on N+32), `note:CH:N`, `pb:CH` (pitch bend), `nrpn:CH:N`, `pc:CH:N` (program change); CH 1 to 16. `target`: an API v1 path whose `midi` is true in `/api/v1/paths` (every flag, and every number that fades: faders, EQ band and gate/compressor settings ...), or `scene:<name>`. `mode`: `abs`, `rel2` (1 up, 127 down), `rel64` (65 up, 63 down), `relsign` (1 up, 65 down), `toggle`, `momentary`, `trigger`; left out: the first that fits. A button cannot set a number. `takeover` (soft-takeover, default on for absolute controls except pitch bend) and `feedback` (send the value back, default on except for scenes and program changes). At most 256. | `CC 7 · ch 1 → Strip 1: fader` |
 | `midiunbind` | `src` | Remove a control's binding. | `CC 7 · ch 1 unbound`, `... was not bound` |
 
 **Windows and macOS only:** `cables` with `a` = `page` (the cable download page), `sound` (the
@@ -211,7 +224,7 @@ times a second while there is something to show). It is one JSON object:
 | `takes` | `rev` (goes up when the list changes), `count`, `newest` (key or `null`). The list itself is `GET /api/takes`. |
 | `disk` | `total` and `free` bytes where recordings go, and `low` (less than 1 GB free: the recorder stops and does not start; `rec.error` says why), or `null`. |
 | `scene`, `scenes` | The current scene's name (empty: none) and the saved scenes. |
-| `app` | `theme`, `look` (*new*: `classic` or `console`), `closeToTray`, `zoom`, `listen` (from 2.8.27: the device you listen on, `""` = none, `null` = not asked yet), `autostart`, `installed` (in the application menu), `window` (`app`: its own window, `browser`, `none`), `tray`, `platform` (*new*: `linux`, `windows` or `macos`) and, on Windows and macOS only, `welcome` (the first-start cables window is still to be shown). |
+| `app` | `theme`, `look` (from 2.9.1: `classic` or `console`), `closeToTray`, `zoom`, `listen` (from 2.8.27: the device you listen on, `""` = none, `null` = not asked yet), `autostart`, `installed` (in the application menu), `window` (`app`: its own window, `browser`, `none`), `tray`, `platform` (from 2.8.23: `linux`, `windows` or `macos`) and, on Windows and macOS only, `welcome` (the first-start cables window is still to be shown). |
 | `midi` | From 2.9.0, once MIDI runs: `available` (false: no MIDI on this system, `error` says why), `in`, `out` (the chosen ports, `""` = none), `inOpen`, `outOpen`, `ins`, `outs` (the ports there are now), `error` (`null` or why a port did not open), `last` (the last message received, as text), `lost` (messages dropped because they came in faster than they were read), `learn` (`null`, or `src`, `name` and the suggested `mode` of the control caught, each `null` until one is moved), `bindings` (each `src`, `name`, `target`, `label`, `mode`, `takeover`, `feedback`). |
 | `update` | `null` (no updater), or `auto`, `phase` (`idle`, `checking`, `current`, `available`, `downloading`, `prepared`, `installing`, `ready`, `failed`), `current`, `latest`, `installed` (versions, or `null`), `message`, `got`, `total` (bytes), `method` (`replace`, `package`, `manual`), `canInstall`, `checkedAgo` (seconds or `null`), `rev`. |
 
@@ -283,26 +296,82 @@ apply unchanged: a `POST` needs `X-BananaSplit: 1`.
 | `/buses/{bus}/sends/{bus}` | on/off: the bus feeds another bus (not itself, no loops) |
 | `/recorder/recording` | on/off: recording now |
 
+Added after 2.9.2: the EQ bands, the gate and compressor settings, VBAN and the player have paths too:
+
+| Path | Kind |
+|---|---|
+| `/strips/{1-6}/eq/{1-6}/on`, `/buses/{bus}/eq/{1-6}/on` | on/off: one EQ band (the band's own switch; `eq` is the whole EQ's) |
+| `.../eq/{1-6}/type` | `bell`, `lowshelf`, `highshelf`, `lowcut`, `highcut` or `notch` (`set` also reads the other names `op=band` reads: `hpf`, `peak` ...) |
+| `.../eq/{1-6}/freq_hz` | 20 to 20000 Hz, to 1 (a MIDI control and a fade move it on a log scale) |
+| `.../eq/{1-6}/gain_db` | -24 to +24 dB, to 0.1 (cuts and the notch have no gain) |
+| `.../eq/{1-6}/q` | 0.1 to 30, to 0.01 (log scale, as the frequency) |
+| `/strips/{1-6}/gate/threshold_db` | -80 to 0 dB, to 0.1 (all gate and compressor settings: to 0.1) |
+| `/strips/{1-6}/gate/range_db` | -80 to 0 dB: how far the closed gate turns the sound down |
+| `/strips/{1-6}/gate/attack_ms`, `hold_ms`, `release_ms` | 0.1 to 50, 0 to 2000, 5 to 4000 ms |
+| `/strips/{1-6}/comp/threshold_db` | -60 to 0 dB |
+| `/strips/{1-6}/comp/ratio` | 1 to 20 (`4` = 4:1) |
+| `/strips/{1-6}/comp/knee_db`, `makeup_db` | 0 to 24 dB, 0 to 24 dB |
+| `/strips/{1-6}/comp/attack_ms`, `release_ms` | 0.1 to 200, 10 to 4000 ms |
+| `/vban/on` | on/off: VBAN as a whole |
+| `/vban/port` | The UDP port it listens on, 1 to 65535 |
+| `/vban/in/{1-8}/on` | on/off: incoming stream 1 to 8 |
+| `/vban/in/{1-8}/name` | text: the stream name it takes, 1 to 16 printable ASCII characters, no space at either end |
+| `/vban/in/{1-8}/from` | text: the sender's IPv4 address, `any`, or `""` (not set: the stream cannot run) |
+| `/vban/in/{1-8}/strip` | The strip it plays into, 1 to 6 |
+| `/vban/in/{1-8}/buffer_ms` | 0 to 200 ms |
+| `/vban/out/{1-8}/on`, `name` | on/off, text: outgoing stream 1 to 8 (`name` as for incoming streams) |
+| `/vban/out/{1-8}/to` | text: the receiver's IPv4 address, or `""` (not set) |
+| `/vban/out/{1-8}/port` | The receiver's UDP port, 1 to 65535 |
+| `/vban/out/{1-8}/source` | What it sends: `1` to `6`, `V1`, `V2`, `V3`, `B1`, `B2` (the old `A1` to `A3` are read too) |
+| `/vban/out/{1-8}/format` | `int16`, `int24`, `int32` or `float32` |
+| `/vban/out/{1-8}/channels` | 1 (mono) or 2 (stereo) |
+| `/player/playing` | on/off: on plays (the loaded take, else the newest: as `op=play`), off pauses |
+| `/player/state` | `stopped`, `playing` or `paused`: setting it plays, pauses or stops |
+| `/player/position_s` | Where the player is in the take, seconds, to 0.01 (0 and up, as `op=seek`): `set` seeks, `step` skips (`"by": -10`) |
+| `/player/take` | text: the loaded take's key (from `/api/takes`; `null` when none is loaded). Setting it loads that take without playing it |
+| `/player/sends/{bus}` | on/off: the player plays into the bus |
+
 `{bus}` is `V1`, `V2`, `V3`, `B1` or `B2` (the old `A1` to `A3` are read too, in any case). Values
-given outside their range are clamped and rounded as `/api/cmd` does.
+given outside their range are clamped and rounded as `/api/cmd` does (where `/api/cmd` refuses a
+gate, compressor or band value outside its range, v1 clamps it). A value that is not a number is
+checked as `/api/cmd` checks it, and refused the same way: an EQ type, a source or a format that does
+not exist, an address that is not an IPv4 address, a stream name that is too long.
+
+What each kind of value takes:
+
+| `kind` | `value` | Commands |
+|---|---|---|
+| `flag` | `true`/`false` (or `1`/`0`) | `set`, `toggle` |
+| `number` | a number | `set`, `step`, and `fade` where `fade` is true (the levels and the EQ, gate and compressor settings). The VBAN numbers and `/player/position_s` jump: they `set` and `step` but do not fade |
+| `choice` | one of its `choices`, as text | `set` |
+| `text` | text | `set` |
+
+What is not a value has no path: resetting the EQ bands or the gate and compressor settings
+(`op=eqreset`, `op=dynreset`) and opening the recorder's folder are done on `/api/cmd`, by the page.
+
+**MIDI.** A binding's target is a path whose `midi` is true in `/api/v1/paths`: every flag, and
+every number that fades. Text, choices, the VBAN numbers and `/player/position_s` cannot be bound
+(`op=midibind` says so).
 
 **`GET /api/v1/state`.** The [state](#the-state) with two fields in front: `api` (1) and `rev`, a
 number that goes up with every new state, so a client can tell whether anything changed since it last
 looked.
 
-**`GET /api/v1/paths`.** `{"api": 1, "paths": [...]}`, each `{"path", "label", "kind", "value"}` and,
-for a number, `min`, `max`, `step` and `unit`. `kind` is `number` or `flag`; `value` is the value now
-(`true`/`false` for a flag). `label` names the channel as the page does (`Strip 1 (Mic): fader`,
-`B1: to V1`).
+**`GET /api/v1/paths`.** `{"api": 1, "paths": [...]}`, each `{"path", "label", "kind", "value",
+"midi"}`; a number also has `min`, `max`, `step`, `unit` and `fade` (it may fade), a choice its
+`choices`. `kind` is `flag`, `number`, `choice` or `text`; `value` is the value now (`true`/`false`
+for a flag, a choice's name, text or `null`). `midi`: a MIDI control can be bound to it. `label`
+names the channel as the page does (`Strip 1 (Mic): fader`, `B1: to V1`, `Strip 1 (Mic): EQ band 2
+frequency`, `VBAN in 1: name`, `Player: to B1`).
 
 **`POST /api/v1/command`.** The body is one command object, or a list of 1 to 64 of them:
 
 | `cmd` | Fields | Does |
 |---|---|---|
-| `set` | `path`, `value` | Set it. A number for a number; `true`/`false` (or `1`/`0`) for a flag. |
+| `set` | `path`, `value` | Set it. A number for a number; `true`/`false` (or `1`/`0`) for a flag; a name for a choice; text for text. |
 | `toggle` | `path` | Flip a flag. |
 | `step` | `path`, `by` | Add `by` (may be negative) to a number. |
-| `fade` | `path`, `to`, `ms` (0 to 60000) | Move a number to `to` over `ms` milliseconds. A gain moves evenly along the fader, as a hand would. A `set` or `step` on the same path, another fade on it, or a scene stops it. |
+| `fade` | `path`, `to`, `ms` (0 to 60000) | Move a number whose `fade` is true to `to` over `ms` milliseconds. A gain moves evenly along the fader, as a hand would; a frequency or Q on its log scale. A `set` or `step` on the same path, another fade on it, or a scene stops it. |
 | `recall` | `scene` | Load a saved scene (the name as in `op=scene`). |
 
 One command answers 200 with `{"ok": true, "text": "<what the page shows>", "path": ..., "value": ...}`
@@ -315,7 +384,8 @@ answer to a single command or `{"ok": false, "error": "..."}` for one the mixer 
 that would loop, a scene that is gone).
 
 **`POST /api/v1/scenes/{name}/recall`** is `recall` with that name (percent-encoded in the path; `+`
-is a plus). **`POST /api/v1/recorder/start`** and **`/stop`** set `/recorder/recording`. Both need no body.
+is a plus). **`POST /api/v1/recorder/start`** and **`/stop`** set `/recorder/recording`.
+**`POST /api/v1/player/play`**, **`/pause`** and **`/stop`** set `/player/state`. None needs a body.
 
 ```sh
 P=8790; H='X-BananaSplit: 1'; J='Content-Type: application/json'
@@ -328,6 +398,32 @@ curl -s -H "$H" -H "$J" --data '[{"cmd":"fade","path":"/buses/V1/gain_db","to":-
   {"cmd":"set","path":"/strips/3/sends/B1","value":true}]' localhost:$P/api/v1/command
 curl -s -H "$H" -X POST localhost:$P/api/v1/scenes/Live/recall
 curl -s -H "$H" -X POST localhost:$P/api/v1/recorder/start
+
+# EQ band 2 of strip 1: a bell at 3 kHz, +4 dB, Q 1.4 (one batch, checked whole first)
+curl -s -H "$H" -H "$J" --data '[{"cmd":"set","path":"/strips/1/eq/2/type","value":"bell"},
+  {"cmd":"set","path":"/strips/1/eq/2/freq_hz","value":3000},
+  {"cmd":"set","path":"/strips/1/eq/2/gain_db","value":4},
+  {"cmd":"set","path":"/strips/1/eq/2/q","value":1.4}]' localhost:$P/api/v1/command
+    # {"ok":true,"results":[{"ok":true,"text":"ok","path":"/strips/1/eq/2/type","value":"bell"}, ...]}
+# the compressor on strip 2, then its threshold down over two seconds
+curl -s -H "$H" -H "$J" --data '[{"cmd":"set","path":"/strips/2/comp","value":true},
+  {"cmd":"set","path":"/strips/2/comp/ratio","value":4},
+  {"cmd":"fade","path":"/strips/2/comp/threshold_db","to":-24,"ms":2000}]' localhost:$P/api/v1/command
+curl -s -H "$H" -H "$J" --data '{"cmd":"step","path":"/strips/1/gate/release_ms","by":50}' localhost:$P/api/v1/command
+# VBAN: receive "Stream1" from any sender into strip 6, send B1 to 192.168.1.20
+curl -s -H "$H" -H "$J" --data '[{"cmd":"set","path":"/vban/on","value":true},
+  {"cmd":"set","path":"/vban/in/1/from","value":"any"},
+  {"cmd":"set","path":"/vban/in/1/strip","value":6},
+  {"cmd":"set","path":"/vban/in/1/on","value":true},
+  {"cmd":"set","path":"/vban/out/1/to","value":"192.168.1.20"},
+  {"cmd":"set","path":"/vban/out/1/source","value":"B1"},
+  {"cmd":"set","path":"/vban/out/1/on","value":true}]' localhost:$P/api/v1/command
+# the player: load a take, play it into B1, skip back 10 s, pause
+curl -s -H "$H" -H "$J" --data '[{"cmd":"set","path":"/player/take","value":"2026-10-21_14-03-05"},
+  {"cmd":"set","path":"/player/sends/B1","value":true},
+  {"cmd":"set","path":"/player/state","value":"playing"}]' localhost:$P/api/v1/command
+curl -s -H "$H" -H "$J" --data '{"cmd":"step","path":"/player/position_s","by":-10}' localhost:$P/api/v1/command
+curl -s -H "$H" -X POST localhost:$P/api/v1/player/pause
 ```
 
 ## Errors
@@ -336,7 +432,7 @@ A request that cannot be done is answered with a 4xx or 5xx status and its messa
 
 * **As plain text** (`Content-Type: text/plain; charset=utf-8`), the message alone, for a client that
   does not ask for anything. This is what curl and scripts get.
-* ***New:* as JSON** (`application/json`), `{"error":"<message>"}`, for a client that names it in its
+* **As JSON** (`application/json`, from 2.8.23), `{"error":"<message>"}`, for a client that names it in its
   `Accept` header (`Accept: application/json`; `*/*` does not count). The page and the touch deck do,
   and everything under `/api/v1/` always answers this way.
   A refusal that comes before the request has been read (the other end is another user, a request

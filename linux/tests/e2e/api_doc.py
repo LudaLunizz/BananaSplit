@@ -120,11 +120,31 @@ try:
     check(v1st['api'] == 1 and isinstance(v1st['rev'], int) and set(v1st) - {'api', 'rev'} == set(st), 'v1 state = api, rev + the state')
     v1doc = doc[doc.index('## API v1'):doc.index('## Errors')]
     paths = json.loads(req('GET', '/api/v1/paths')[1])['paths']
-    check(len(paths) == 151, f'151 v1 paths (got {len(paths)})')
+    check(len(paths) == 654, f'654 v1 paths (got {len(paths)})')
+    kind_fields = {'flag': set(), 'text': set(), 'choice': {'choices'}, 'number': {'min', 'max', 'step', 'unit', 'fade'}}
     for pth in paths:
         tail = pth['path'].split('/')[-1] if '/sends/' not in pth['path'] else 'sends'
         check(f'`{tail}`' in v1doc or f'/{tail}`' in v1doc or f'{tail}/' in v1doc, f'v1 path {pth["path"]} is documented')
-        check({'path', 'label', 'kind', 'value'} <= set(pth) and (pth['kind'] == 'flag' or {'min', 'max', 'step', 'unit'} <= set(pth)), f'{pth["path"]} fields')
+        check({'path', 'label', 'kind', 'value', 'midi'} <= set(pth) and kind_fields.get(pth['kind'], {'?'}) <= set(pth), f'{pth["path"]} fields')
+        check(f'`{pth["kind"]}`' in v1doc, f'v1 kind {pth["kind"]} is documented')
+    byp = {p['path']: p for p in paths}
+    check(byp['/strips/1/eq/1/type']['choices'] == ['bell', 'lowshelf', 'highshelf', 'lowcut', 'highcut', 'notch'], 'EQ types as documented')
+    check(byp['/vban/out/1/format']['choices'] == ['int16', 'int24', 'int32', 'float32'], 'VBAN formats as documented')
+    check(byp['/player/state']['choices'] == ['stopped', 'playing', 'paused'], 'player states as documented')
+    check(byp['/vban/port']['fade'] is False and byp['/vban/port']['midi'] is False, '/vban/port does not fade')
+    code, r = v1('{"cmd":"set","path":"/strips/1/eq/2/freq_hz","value":1000}')
+    check((code, r.get('value')) == (200, 1000), f'v1 EQ band set (got {r})')
+    code, r = v1('{"cmd":"set","path":"/strips/1/eq/2/type","value":"notch"}')
+    check((code, r.get('value')) == (200, 'notch'), f'v1 EQ band type (got {r})')
+    code, r = v1('{"cmd":"set","path":"/strips/1/comp/ratio","value":4}')
+    check((code, r.get('value')) == (200, 4.0), f'v1 compressor ratio (got {r})')
+    code, r = v1('{"cmd":"set","path":"/vban/in/1/name","value":"Desk"}')
+    check((code, r.get('value')) == (200, 'Desk'), f'v1 VBAN name (got {r})')
+    code, r = v1('{"cmd":"fade","path":"/vban/port","to":7000,"ms":100}')
+    check(code == 400 and 'does not fade' in r['error'], f'v1 port does not fade (got {r})')
+    code, r = v1('', '/api/v1/player/stop'); check(code == 200 and r['value'] == 'stopped', f'v1 player/stop (got {r})')
+    st3 = json.loads(req('GET', '/api/state')[1])
+    check(st3['ch'][0]['eq']['b'][1][2] == 1000 and st3['vban']['in'][0]['name'] == 'Desk', 'the new v1 paths changed the state')
     code, r = v1('{"cmd":"set","path":"/strips/1/gain_db","value":-6}')
     check((code, r) == (200, {'ok': True, 'text': '-6.0 dB', 'path': '/strips/1/gain_db', 'value': -6.0}), f'v1 set as documented (got {r})')
     code, r = v1('{"cmd":"toggle","path":"/buses/B1/mute"}'); check(code == 200 and r['value'] in (True, False), 'v1 toggle')

@@ -378,7 +378,10 @@ pub struct Binding {
 pub fn modes_for(src: Src, action: &Action) -> Vec<Mode> {
     match action {
         Action::Scene(_) => vec![Mode::Trigger],
+        // text, choices and numbers that only jump (a port, a position) have no control
+        Action::Value(t) if !t.midi() => vec![],
         Action::Value(t) => match (t.kind(), src) {
+            (Kind::Choice(_) | Kind::Text, _) => vec![],
             (Kind::Number { .. }, Src::Cc { .. }) => vec![Mode::Abs, Mode::Rel2, Mode::Rel64, Mode::RelSign],
             (Kind::Number { .. }, Src::Cc14 { .. } | Src::Pitch { .. } | Src::Nrpn { .. }) => vec![Mode::Abs],
             (Kind::Number { .. }, Src::Note { .. } | Src::Program { .. }) => vec![],
@@ -399,6 +402,11 @@ impl Binding {
         takeover: Option<bool>,
         feedback: Option<bool>,
     ) -> Result<Binding, String> {
+        if let Action::Value(t) = &action
+            && !t.midi()
+        {
+            return Err(format!("{} cannot be driven by a MIDI control: set it through the API", t.path()));
+        }
         let ok = modes_for(src, &action);
         let Some(&first) = ok.first() else {
             return Err(format!(
@@ -1351,6 +1359,17 @@ mod tests {
         assert_eq!((sc.mode, sc.feedback), (Mode::Trigger, false));
         assert!(Action::parse("scene:.x").is_err());
         assert!(Action::parse("/nope").is_err());
+        // the paths of #165: knobs on EQ and dynamics, buttons on the player and VBAN streams
+        let knob = Binding::new(fader, t("/strips/1/eq/3/freq_hz"), Some(Mode::Rel64), None, None).unwrap();
+        assert_eq!(knob.mode, Mode::Rel64);
+        assert_eq!(Binding::new(fader, t("/strips/2/comp/ratio"), None, None, None).unwrap().mode, Mode::Abs);
+        assert_eq!(Binding::new(btn, t("/player/playing"), None, None, None).unwrap().mode, Mode::Toggle);
+        assert_eq!(Binding::new(btn, t("/vban/out/1/on"), None, None, None).unwrap().mode, Mode::Toggle);
+        // text, choices and numbers that only jump are not for a control
+        for p in ["/vban/port", "/player/position_s", "/strips/1/eq/1/type", "/vban/in/1/name", "/player/take"] {
+            let e = Binding::new(fader, t(p), None, None, None).unwrap_err();
+            assert!(e.contains("cannot be driven by a MIDI control"), "{p}: {e}");
+        }
     }
 
     #[test]

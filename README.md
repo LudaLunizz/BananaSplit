@@ -27,7 +27,7 @@
 - **VBAN network audio**, compatible with Voicemeeter.
 - **Multitrack recorder (MP3 or WAV) and player**, plus saved **scenes**.
 - **Borders that tell you at a glance what a channel does.** Green: the selected channel. Blue: the buses playing to the output you listen on. Red: the channels being recorded. Yellow: the buses an app (Discord, OBS) takes sound from (Linux). Several can stack as rings.
-- **MIDI controllers.** Learn any fader, knob or button of a hardware MIDI controller to a fader, gain, pan, mute, solo, route, EQ, limiter, record arm or scene; motorised faders and LEDs follow along. The same commands are open to scripts and decks through the documented [API v1](docs/api.md).
+- **MIDI controllers.** Learn any fader, knob or button of a hardware MIDI controller to a fader, gain, pan, mute, solo, route, EQ (each band's frequency, gain and Q too), gate and compressor setting, limiter, record arm, player, VBAN stream or scene; motorised faders and LEDs follow along. The same commands are open to scripts and decks through the documented [API v1](docs/api.md).
 - **Desktop app** with its own window and tray icon. Also runs in a terminal or headless as a service.
 - **Updates itself** from the GitHub releases, installing only releases signed with BananaSplit's release key: on request (Menu ▸ Check for updates…), or automatically once you switch that on (off by default).
 
