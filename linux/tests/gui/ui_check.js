@@ -46,8 +46,9 @@ async function untilDev(pred, what, ms = 4000) {
   check(false, what);
   return d;
 }
+let TOKEN = ""; // the API token (#166), read once BananaSplit runs
 async function post(params) {
-  const r = await fetch(URL + "api/cmd", { method: "POST", headers: { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params).toString() });
+  const r = await fetch(URL + "api/cmd", { method: "POST", headers: { "X-BananaSplit": "1", "X-BananaSplit-Token": TOKEN, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params).toString() });
   return { status: r.status, text: await r.text() };
 }
 // What the page shows: it draws from its own event stream, which can be a
@@ -102,6 +103,7 @@ async function until(pred, what, ms = 4000) {
   await new Promise((r) => ghServer.listen(0, "127.0.0.1", r));
   const env = Object.assign({}, process.env, {
     HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local/share"),
+    XDG_RUNTIME_DIR: path.join(home, "run"), // its own: the port note and the API token (#166)
     LD_LIBRARY_PATH: MOCK, MOCKJACK_REPORT: path.join(home, "report.txt"), MOCKJACK_REALTIME: "1", MOCKJACK_CYCLES: "100000000",
     // a webcam, a USB mic and its headphones, and a 440 Hz tone on system:capture
     MOCKJACK_DEVICES: "1", MOCKJACK_TONE: "440",
@@ -120,8 +122,11 @@ async function until(pred, what, ms = 4000) {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
-  await page.goto(URL);
+  // opened as BananaSplit opens its window: with the token in the fragment (#166)
+  TOKEN = fs.readFileSync(path.join(home, "run/bananasplit/BananaSplit.token"), "utf8").trim();
+  await page.goto(URL + "#t=" + TOKEN);
   await page.waitForSelector(".strip");
+  check(!page.url().includes("#t="), "the page takes the token out of the address bar");
   await sleep(600);
   const strip = (i) => page.locator(".strip").nth(i);
 
