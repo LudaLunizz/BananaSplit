@@ -7,7 +7,7 @@
 
 use super::MAX_NAME;
 use super::api::ApiError;
-use bananasplit::config::{Theme, parse_listen, parse_pan, parse_trim, parse_zoom};
+use bananasplit::config::{Look, Theme, parse_listen, parse_pan, parse_trim, parse_zoom};
 use bananasplit::dynamics::{COMP, GATE};
 use bananasplit::engine::{NUM_BUSES, NUM_STRIPS, clamp_db};
 use bananasplit::eq::{self, BANDS, Kind};
@@ -322,6 +322,8 @@ pub enum Cmd {
     },
     // ---- app settings ----
     Theme(Theme),
+    /// The theme set (`look`).
+    Look(Look),
     CloseToTray(bool),
     Zoom(f32),
     /// The output device the user listens on ("" = none).
@@ -506,6 +508,7 @@ impl Cmd {
                 Cmd::Scene { name, act }
             }
             "theme" => Cmd::Theme(Theme::parse(f.req("v")?)?),
+            "look" => Cmd::Look(Look::parse(f.req("v")?)?),
             "closetray" => Cmd::CloseToTray(f.flag()?),
             "zoom" => Cmd::Zoom(parse_zoom(f.req("v")?)?),
             "listen" => Cmd::Listen(parse_listen(f.get("v").unwrap_or(""))?),
@@ -607,6 +610,8 @@ mod tests {
         assert_eq!(p("op=play"), Ok(Cmd::Play { from: None, key: None }));
         assert_eq!(p("op=quit"), Ok(Cmd::Quit));
         assert_eq!(p("op=theme&v=light"), Ok(Cmd::Theme(Theme::Light)));
+        assert_eq!(p("op=look&v=console"), Ok(Cmd::Look(Look::Console)));
+        assert!(p("op=look&v=fancy").is_err());
         assert_eq!(p("op=scene&name=Live&act=save"), Ok(Cmd::Scene { name: "Live".into(), act: SceneAct::Save }));
         assert_eq!(p("op=vbanport&v=6981"), Ok(Cmd::VbanPort { port: 6981 }));
     }

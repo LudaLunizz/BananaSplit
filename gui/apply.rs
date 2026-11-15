@@ -342,6 +342,10 @@ pub fn apply(hub: &Hub, cmd: Cmd) -> Result<String, ApiError> {
             hub.request(Request::Theme(t));
             ok()
         }
+        Cmd::Look(l) => {
+            hub.request(Request::Look(l));
+            ok()
+        }
         Cmd::CloseToTray(on) => {
             hub.request(Request::CloseToTray(on));
             ok()

@@ -60,7 +60,7 @@
 //! and `window_stderr()`, which `window.rs` needs, and `open_window(url)`.
 
 use crate::tui::{Info, ROWS};
-use bananasplit::config::{Config, Theme};
+use bananasplit::config::{Config, GuiConfig, Look, Theme};
 use bananasplit::engine::{MAX_GAIN_DB, MAX_TRIM_DB, MIN_GAIN_DB, MIN_TRIM_DB, NUM_BUSES, NUM_STRIPS, Shared};
 use bananasplit::player::{self, PlayStatus, Player, ScanCache, TakeInfo};
 use bananasplit::recorder::{self, Recorder, Settings, Status};
@@ -127,6 +127,7 @@ pub enum Request {
     /// activation token of the launch, if any.
     Show(String),
     Theme(Theme),
+    Look(Look),
     CloseToTray(bool),
     Zoom(f32),
     /// The output device the user listens on ("" = none).
@@ -196,6 +197,8 @@ pub struct Hub {
     scene_list: Mutex<Vec<String>>,
     /// Index into THEMES, for the page as it is served.
     theme: AtomicU8,
+    /// Index into Look::ALL.
+    look: AtomicU8,
     zoom: AtomicU32,
     pub autostart: AtomicBool,
     pub installed: AtomicBool,
@@ -245,6 +248,7 @@ impl Hub {
             scenes,
             scene_list: Mutex::new(list),
             theme: AtomicU8::new(0),
+            look: AtomicU8::new(0),
             zoom: AtomicU32::new(1f32.to_bits()),
             autostart: AtomicBool::new(false),
             installed: AtomicBool::new(false),
@@ -338,10 +342,11 @@ impl Hub {
         lock(&self.names).clone()
     }
 
-    /// Theme and zoom of the page as it is served (no flash on load).
-    pub fn set_look(&self, theme: Theme, zoom: f32) {
-        self.theme.store(THEMES.iter().position(|t| *t == theme).unwrap_or(0) as u8, SeqCst);
-        self.zoom.store(zoom.to_bits(), SeqCst);
+    /// Theme, look and zoom of the page as it is served (no flash on load).
+    pub fn set_look(&self, g: &GuiConfig) {
+        self.theme.store(THEMES.iter().position(|t| *t == g.theme).unwrap_or(0) as u8, SeqCst);
+        self.look.store(Look::ALL.iter().position(|l| *l == g.look).unwrap_or(0) as u8, SeqCst);
+        self.zoom.store(g.zoom.to_bits(), SeqCst);
     }
 
     pub fn refresh_scenes(&self) {
@@ -361,14 +366,19 @@ impl Hub {
         self.themed(DECK, "")
     }
 
-    /// `html` with the theme and zoom (and `extra`) set on its `<html lang="en">` tag.
+    /// `html` with the theme, look and zoom (and `extra`) set on its `<html lang="en">` tag.
+    /// Classic is the page's default look and gets no attribute.
     fn themed(&self, html: &str, extra: &str) -> String {
         let theme = THEMES[self.theme.load(SeqCst) as usize % THEMES.len()];
+        let look = Look::ALL[self.look.load(SeqCst) as usize % Look::ALL.len()];
         let zoom = f32::from_bits(self.zoom.load(SeqCst));
-        let attrs = match theme {
+        let mut attrs = match theme {
             Theme::Auto => format!(" data-zoom=\"{zoom}\""),
             t => format!(" data-theme=\"{}\" data-zoom=\"{zoom}\"", t.as_str()),
         };
+        if look != Look::Classic {
+            let _ = write!(attrs, " data-look=\"{}\"", look.as_str());
+        }
         html.replacen("<html lang=\"en\">", &format!("<html lang=\"en\"{attrs}{extra}>"), 1)
     }
 }
@@ -955,8 +965,9 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     let welcome = x.welcome.map(|w| format!(",\"welcome\":{w}")).unwrap_or_default();
     let _ = write!(
         o,
-        "],\"app\":{{\"theme\":\"{}\",\"closeToTray\":{},\"zoom\":{},\"listen\":{},\"autostart\":{},\"installed\":{},\"window\":\"{}\",\"tray\":{},\"platform\":\"{}\"{welcome}}}",
+        "],\"app\":{{\"theme\":\"{}\",\"look\":\"{}\",\"closeToTray\":{},\"zoom\":{},\"listen\":{},\"autostart\":{},\"installed\":{},\"window\":\"{}\",\"tray\":{},\"platform\":\"{}\"{welcome}}}",
         g.theme.as_str(),
+        g.look.as_str(),
         g.close_to_tray,
         g.zoom,
         g.listen.as_deref().map_or("null".to_string(), |l| {
@@ -1909,7 +1920,7 @@ mod tests {
         );
         assert!(json.contains(r#","player":{"state":"stopped","take":null,"pos":0.00,"dur":0.00,"underruns":0,"error":null},"playTo":1,"takes":{"rev":3,"count":2,"newest":"2026-10-21_14-03-05"},"disk":{"total":64000000000,"free":52000000000},"#), "{json}");
         let os = crate::gui_platform::PLATFORM;
-        assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","closeToTray":true,"zoom":1,"listen":null,"autostart":false,"installed":true,"window":"app","tray":true,"platform":"{os}"}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
+        assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","look":"classic","closeToTray":true,"zoom":1,"listen":null,"autostart":false,"installed":true,"window":"app","tray":true,"platform":"{os}"}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
         // Windows and macOS add whether the cables welcome is still to come, and nothing else.
         let welcome = render(&Extra { welcome: Some(false), ..extra(&ps, &scene_list) });
         assert!(
@@ -1978,6 +1989,7 @@ mod tests {
         assert!(h.scene_list().is_empty());
         // app settings go to the main loop
         command(&h, "op=theme&v=light").unwrap();
+        command(&h, "op=look&v=console").unwrap();
         command(&h, "op=closetray&v=0").unwrap();
         command(&h, "op=zoom&v=1.25").unwrap();
         command(&h, "op=listen&v=Starship%2FMatisse").unwrap();
@@ -1991,6 +2003,7 @@ mod tests {
                 Request::Scene("Live Room".into()),
                 Request::Scene(String::new()),
                 Request::Theme(Theme::Light),
+                Request::Look(Look::Console),
                 Request::CloseToTray(false),
                 Request::Zoom(1.25),
                 Request::Listen("Starship/Matisse".into()),
@@ -2107,9 +2120,18 @@ mod tests {
         assert!(h.page().starts_with(&format!(
             "<!doctype html>\n<html lang=\"en\" data-theme=\"dark\" data-zoom=\"1\" data-platform=\"{os}\">"
         )));
-        h.set_look(Theme::Auto, 1.25);
+        let mut g = GuiConfig { theme: Theme::Auto, zoom: 1.25, ..GuiConfig::default() };
+        h.set_look(&g);
         assert!(h.page().contains(&format!("<html lang=\"en\" data-zoom=\"1.25\" data-platform=\"{os}\">")));
-        h.set_look(Theme::Light, 1.0);
+        g.look = Look::Console;
+        h.set_look(&g);
+        assert!(
+            h.page().contains(&format!(
+                "<html lang=\"en\" data-zoom=\"1.25\" data-look=\"console\" data-platform=\"{os}\">"
+            ))
+        );
+        g = GuiConfig { theme: Theme::Light, ..GuiConfig::default() };
+        h.set_look(&g);
         assert!(
             h.page()
                 .contains(&format!("<html lang=\"en\" data-theme=\"light\" data-zoom=\"1\" data-platform=\"{os}\">"))
@@ -2246,6 +2268,7 @@ mod tests {
             "openfolder",
             "scene",
             "theme",
+            "look",
             "closetray",
             "zoom",
             "listen",
