@@ -127,7 +127,7 @@ fn vban_name(f: &Form) -> Result<Option<String>, String> {
 }
 
 /// Which of a strip's gate or compressor settings (an index into `GATE` or `COMP`).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DynSetting {
     Gate(usize),
     Comp(usize),

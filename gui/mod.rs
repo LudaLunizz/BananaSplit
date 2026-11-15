@@ -1288,13 +1288,17 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
     }
 }
 
-/// The `POST`s of API v1: the command endpoint and the two shortcuts.
+/// The `POST`s of API v1: the command endpoint and the shortcuts (recorder,
+/// player, scenes).
 fn v1_post(hub: &Hub, path: &str, body: &str) -> Result<String, ApiError> {
     let short = |c: &str| v1::command(hub, c);
     match path {
         "/api/v1/command" => v1::command(hub, body),
         "/api/v1/recorder/start" => short(r#"{"cmd":"set","path":"/recorder/recording","value":true}"#),
         "/api/v1/recorder/stop" => short(r#"{"cmd":"set","path":"/recorder/recording","value":false}"#),
+        "/api/v1/player/play" => short(r#"{"cmd":"set","path":"/player/state","value":"playing"}"#),
+        "/api/v1/player/pause" => short(r#"{"cmd":"set","path":"/player/state","value":"paused"}"#),
+        "/api/v1/player/stop" => short(r#"{"cmd":"set","path":"/player/state","value":"stopped"}"#),
         p => {
             let name = p.strip_prefix("/api/v1/scenes/").and_then(|n| n.strip_suffix("/recall"));
             // a path keeps its '+' (only a form turns it into a space)
@@ -2485,8 +2489,24 @@ mod tests {
         assert_eq!(code, 200);
         assert!(st.starts_with("{\"api\":1,\"rev\":") && st.ends_with(",\"x\":1}"), "{st}");
         let (_, paths) = send("GET", "/api/v1/paths", "", "");
-        assert!(paths.contains(r#"{"path":"/strips/1/gain_db","label":"Strip 1: fader","kind":"number","min":-60,"max":12,"step":0.1,"unit":"dB","value":0.0}"#), "{paths}");
-        assert!(paths.contains(r#"{"path":"/buses/B1/mute","label":"B1: mute","kind":"flag","value":false}"#));
+        assert!(paths.contains(r#"{"path":"/strips/1/gain_db","label":"Strip 1: fader","kind":"number","min":-60,"max":12,"step":0.1,"unit":"dB","fade":true,"value":0.0,"midi":true}"#), "{paths}");
+        assert!(
+            paths.contains(r#"{"path":"/buses/B1/mute","label":"B1: mute","kind":"flag","value":false,"midi":true}"#)
+        );
+        assert!(paths.contains(r#"{"path":"/strips/1/eq/1/type","label":"Strip 1: EQ band 1 type","kind":"choice","choices":["bell","lowshelf","highshelf","lowcut","highcut","notch"],"value":"lowshelf","midi":false}"#), "{paths}");
+        assert!(paths.contains(r#"{"path":"/strips/1/eq/1/freq_hz","label":"Strip 1: EQ band 1 frequency","kind":"number","min":20,"max":20000,"step":1,"unit":"Hz","fade":true,"value":100,"midi":true}"#), "{paths}");
+        assert!(paths.contains(r#"{"path":"/vban/port","label":"VBAN: port","kind":"number","min":1,"max":65535,"step":1,"unit":"","fade":false,"value":6980,"midi":false}"#), "{paths}");
+        assert!(
+            paths.contains(
+                r#"{"path":"/vban/in/1/name","label":"VBAN in 1: name","kind":"text","value":"Stream1","midi":false}"#
+            ),
+            "{paths}"
+        );
+        assert!(
+            paths.contains(r#"{"path":"/player/take","label":"Player: take","kind":"text","value":null,"midi":false}"#),
+            "{paths}"
+        );
+        assert!(paths.contains(r#"{"path":"/player/state","label":"Player: state","kind":"choice","choices":["stopped","playing","paused"],"value":"stopped","midi":false}"#), "{paths}");
 
         assert_eq!(
             cmd(r#"{"cmd":"set","path":"/strips/1/gain_db","value":-6.54}"#),
@@ -2545,6 +2565,59 @@ mod tests {
         assert_eq!(h.fades.running(), 0);
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(sh.strips[3].gain_db.load(), -30.0);
+
+        // EQ bands, gate and compressor, VBAN and the player (#165)
+        assert_eq!(
+            cmd(r#"{"cmd":"set","path":"/buses/B1/eq/2/freq_hz","value":99999}"#).1,
+            r#"{"ok":true,"text":"ok","path":"/buses/B1/eq/2/freq_hz","value":20000}"#
+        );
+        assert_eq!(sh.eq(9).bands[1].load().freq, 20_000.0);
+        assert_eq!(
+            cmd(r#"{"cmd":"set","path":"/strips/1/eq/2/type","value":"notch"}"#).1,
+            r#"{"ok":true,"text":"ok","path":"/strips/1/eq/2/type","value":"notch"}"#
+        );
+        assert_eq!(sh.eq(0).bands[1].load().kind, Kind::Notch);
+        assert_eq!(
+            cmd(r#"{"cmd":"step","path":"/strips/2/comp/ratio","by":100}"#).1,
+            r#"{"ok":true,"text":"ok","path":"/strips/2/comp/ratio","value":20.0}"#
+        );
+        assert_eq!(sh.strips[1].dynamics.comp[1].load(), 20.0);
+        // a fade on a new number: the gate's threshold moves on its own and lands exactly
+        assert_eq!(cmd(r#"{"cmd":"set","path":"/strips/2/gate/threshold_db","value":-60}"#).0, 200);
+        assert_eq!(cmd(r#"{"cmd":"fade","path":"/strips/2/gate/threshold_db","to":-20,"ms":200}"#).0, 200);
+        std::thread::sleep(Duration::from_millis(80));
+        let mid = sh.strips[1].dynamics.gate[0].load();
+        assert!(mid > -60.0 && mid < -20.0, "{mid}");
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!((sh.strips[1].dynamics.gate[0].load(), h.fades.running()), (-20.0, 0));
+        // VBAN, text values included
+        assert_eq!(
+            cmd(r#"{"cmd":"set","path":"/vban/in/2/from","value":"192.168.1.20"}"#).1,
+            r#"{"ok":true,"text":"ok","path":"/vban/in/2/from","value":"192.168.1.20"}"#
+        );
+        assert_eq!(h.vban.config().ins[1].from, vban::FromAddr::Ip(Ipv4Addr::new(192, 168, 1, 20)));
+        assert_eq!(cmd(r#"{"cmd":"set","path":"/vban/out/1/source","value":"V2"}"#).0, 200);
+        assert_eq!(h.vban.config().outs[0].source, 7);
+        // a batch with one bad new value changes nothing
+        let (code, e) = cmd(
+            r#"[{"cmd":"set","path":"/vban/in/3/name","value":"Desk"},{"cmd":"set","path":"/strips/1/eq/1/gain_db","value":6},{"cmd":"set","path":"/vban/out/1/to","value":"nowhere"}]"#,
+        );
+        assert_eq!(code, 400);
+        assert!(e.starts_with(r#"{"error":"command 3: expected the receiver's IPv4"#), "{e}");
+        assert_eq!((h.vban.config().ins[2].name.as_str(), sh.eq(0).bands[0].load().gain_db), ("Stream3", 0.0));
+        // the player: no recordings yet, so playing is refused as op=play refuses it
+        assert_eq!(cmd(r#"{"cmd":"set","path":"/player/sends/B2","value":true}"#).0, 200);
+        assert_eq!(h.player.routes() & 1 << 4, 1 << 4);
+        assert_eq!(cmd(r#"{"cmd":"set","path":"/player/playing","value":true}"#).0, 400);
+        assert_eq!(
+            cmd(r#"{"cmd":"set","path":"/player/playing","value":false}"#).1,
+            r#"{"ok":true,"text":"not playing","path":"/player/playing","value":false}"#
+        );
+        assert_eq!(
+            post("/api/v1/player/stop", "").1,
+            r#"{"ok":true,"text":"stopped","path":"/player/state","value":"stopped"}"#
+        );
+        assert_eq!(cmd(r#"{"cmd":"set","path":"/player/take","value":"no-such-take"}"#).0, 400);
 
         // the shortcuts
         assert_eq!(

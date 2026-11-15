@@ -3799,8 +3799,9 @@ let midiPaths = [], midiSig = "", midiTargetSig = "";
 function midiModes(src, target) {
   const k = src.split(":")[0];
   if (target.startsWith("scene:")) return ["trigger"];
-  // the numbers of API v1; every other path is on or off
-  const num = /\/(gain_db|trim_db|pan|limit_db)$/.test(target);
+  // a number of API v1 (as /api/v1/paths says); every other path a control drives is on or off
+  const p = midiPaths.find((x) => x.path === target);
+  const num = p ? p.kind === "number" : /\/(gain_db|trim_db|pan|limit_db)$/.test(target);
   if (num) return k === "cc" ? ["abs", "rel2", "rel64", "relsign"] : k === "note" || k === "pc" ? [] : ["abs"];
   return k === "note" ? ["toggle", "momentary"] : k === "pc" ? ["toggle"] : ["toggle", "abs", "momentary"];
 }
@@ -3826,10 +3827,11 @@ function midiTargets(S) {
   if (midiTargetSig === sig) return;
   midiTargetSig = sig;
   const sel = $("miditarget"), keep = sel.value;
-  const groups = [["Strips", (p) => p.path.startsWith("/strips/")], ["Buses", (p) => p.path.startsWith("/buses/")], ["Recorder", (p) => p.path.startsWith("/recorder/")]];
-  const kids = groups.map(([name, f]) => {
+  const groups = [["Strips", "/strips/"], ["Buses", "/buses/"], ["Recorder", "/recorder/"], ["Player", "/player/"], ["VBAN", "/vban/"]];
+  const kids = groups.map(([name, pre]) => {
     const g = document.createElement("optgroup"); g.label = name;
-    midiPaths.filter(f).forEach((p) => { const o = el("option", "", p.label); o.value = p.path; g.append(o); });
+    // only what a control can drive (no text, lists, ports or positions)
+    midiPaths.filter((p) => p.path.startsWith(pre) && p.midi !== false).forEach((p) => { const o = el("option", "", p.label); o.value = p.path; g.append(o); });
     return g;
   });
   if ((S.scenes || []).length) {
