@@ -201,7 +201,7 @@ times a second while there is something to show). It is one JSON object:
 | `client` | The JACK client name (Linux: the mixer's name in the audio graph). |
 | `sr`, `bs` | Sample rate (Hz) and buffer size (frames). |
 | `period`, `rtt` | One buffer's length and the round-trip latency, in ms. `measured`: `rtt` was measured, not estimated from the buffer. |
-| `cpu` | Audio load, percent. `xruns`: dropouts since start. `oversize`: cycles of more than 16384 frames, which are silenced instead of processed. |
+| `cpu` | Audio load, percent. `xruns`: dropouts since start. `oversize`: cycles of more than 16384 frames, which are silenced instead of processed. `panics` (*new*): audio cycles in which the mixer hit a bug (a Rust panic) and played silence instead of stopping. |
 | `cables` | How many virtual cables are in use. `devRev` goes up when what a channel menu lists changes. |
 | `status` | The status line (text). `anySolo`: a strip is soloed. |
 | `ch` | The 11 channels, below. |

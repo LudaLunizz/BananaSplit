@@ -288,6 +288,8 @@ pub struct Info<'a> {
     pub cpu: f32,
     pub xruns: u32,
     pub oversize: u32,
+    /// Audio cycles that panicked and were silenced ([`crate::engine::Shared::panics`]).
+    pub panics: u32,
     pub lat_in: u32,
     pub lat_out: u32,
     pub cables: usize,
@@ -464,7 +466,7 @@ impl View {
         );
         let _ = write!(
             o,
-            " {} Hz · {} fr · {:.2} ms/period · RTT {}{:.2} ms {} · DSP {:.0}% · xruns {}{}{line_end}",
+            " {} Hz · {} fr · {:.2} ms/period · RTT {}{:.2} ms {} · DSP {:.0}% · xruns {}{}{}{line_end}",
             info.sample_rate,
             info.buffer_size,
             period_ms,
@@ -474,6 +476,7 @@ impl View {
             info.cpu,
             info.xruns,
             if info.oversize > 0 { format!(" \x1b[31moversize {}\x1b[0m", info.oversize) } else { String::new() },
+            if info.panics > 0 { format!(" \x1b[31mpanics {}\x1b[0m", info.panics) } else { String::new() },
         );
         // VBAN (in place of a blank line)
         let _ = write!(o, " {}{line_end}", fit(info.vban, cols - 2));
@@ -806,6 +809,7 @@ mod tests {
             cpu: 1.0,
             xruns: 0,
             oversize: 0,
+            panics: 0,
             lat_in: 128,
             lat_out: 256,
             cables: 8,
@@ -855,6 +859,7 @@ mod tests {
             cpu: 1.0,
             xruns: 0,
             oversize: 0,
+            panics: 0,
             lat_in: 128,
             lat_out: 256,
             cables: 8,
@@ -893,6 +898,7 @@ mod tests {
             cpu: 1.0,
             xruns: 3,
             oversize: 0,
+            panics: 0,
             lat_in: 416,
             lat_out: 416,
             cables: 8,
@@ -961,6 +967,7 @@ mod tests {
             cpu: 1.0,
             xruns: 0,
             oversize: 0,
+            panics: 0,
             lat_in: 128,
             lat_out: 256,
             cables: 8,
@@ -1015,6 +1022,7 @@ mod tests {
             cpu: 1.0,
             xruns: 0,
             oversize: 0,
+            panics: 0,
             lat_in: 128,
             lat_out: 128,
             cables: 8,
@@ -1133,6 +1141,7 @@ mod tests {
             cpu: 1.0,
             xruns: 0,
             oversize: 0,
+            panics: 0,
             lat_in: 128,
             lat_out: 128,
             cables: 8,

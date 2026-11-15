@@ -29,7 +29,7 @@ use super::catypes::{
 use super::ffi::{self, IoProc, IoProcId};
 use super::route::{self, DevInfo};
 use bananasplit::config::{Config, DEFAULT_DEVICE};
-use bananasplit::engine::{AtomicF32, BUS_IDS, Engine, NUM_BUSES, NUM_STRIPS, Shared};
+use bananasplit::engine::{AtomicF32, BUS_IDS, Engine, NUM_BUSES, NUM_STRIPS, Shared, guard_cycle};
 use bananasplit::player::PlayTap;
 use bananasplit::pure::{self, Layout, SigDevice, to_mixer};
 use bananasplit::recorder::RecTap;
@@ -266,6 +266,8 @@ trait Cycle: Send {
 struct Guarded<S> {
     beat: Arc<Beat>,
     stats: Arc<Stats>,
+    /// For `Shared::panics`, the count /api/state shows on every system.
+    shared: Arc<Shared>,
     /// The direction the IOProc uses: its layout is checked on this list.
     input: bool,
     /// The layout at start (None: it could not be read, nothing is checked,
@@ -311,6 +313,7 @@ unsafe extern "C" fn guarded<S: Cycle>(
             // Dropping the payload would free memory here; the state stays
             // too (Proc's Drop decides about it, on another thread).
             std::mem::forget(payload);
+            g.shared.panics.fetch_add(1, Relaxed);
             g.poisoned = true;
             g.stats.poisoned.store(true, SeqCst);
             silent = true;
@@ -333,10 +336,19 @@ fn launch<S: Cycle>(
     pair: (usize, usize),
     input: bool,
     stats: &Arc<Stats>,
+    shared: &Arc<Shared>,
 ) -> Result<Proc<Guarded<S>>, (String, S)> {
     let beat = Arc::new(Beat::default());
     let layout = ffi::stream_layout(dev.id, input).map(|chans| Layout::new(&chans, pair));
-    let state = Box::new(Guarded { beat: beat.clone(), stats: stats.clone(), input, layout, poisoned: false, inner });
+    let state = Box::new(Guarded {
+        beat: beat.clone(),
+        stats: stats.clone(),
+        shared: shared.clone(),
+        input,
+        layout,
+        poisoned: false,
+        inner,
+    });
     Proc::start(dev, guarded::<S>, state, beat, input).map_err(|(e, st)| (e, st.inner))
 }
 
@@ -436,6 +448,19 @@ impl Mixer {
             in_l: zeros(MAX_BLOCK),
             in_r: zeros(MAX_BLOCK),
             shared,
+        }
+    }
+
+    /// After a panic in [`Mixer::run`]: silence for `n` frames on the buses
+    /// and to every other output device.
+    fn silence(&mut self, n: usize) {
+        let n = n.min(MAX_BLOCK);
+        for ch in self.bus.iter_mut().flatten() {
+            ch[..n].fill(0.0);
+        }
+        for (b, prod) in self.sinks.iter_mut() {
+            let [l, r] = &self.bus[*b];
+            prod.push_planar(&l[..n], &r[..n]);
         }
     }
 
@@ -567,6 +592,7 @@ fn timer_run(mut mix: Mixer, stop: &AtomicBool, stats: &Stats) {
     let n = RATE as usize / 100;
     let mut next = Instant::now() + tick;
     let mut cpu = 0.0f32;
+    let shared = mix.shared.clone();
     while !stop.load(Relaxed) {
         let now = Instant::now();
         if next > now {
@@ -578,7 +604,12 @@ fn timer_run(mut mix: Mixer, stop: &AtomicBool, stats: &Stats) {
             next = Instant::now() + tick;
         }
         let t0 = Instant::now();
-        mix.run(n);
+        // Not an IOProc, but the same rule: a panic in the mix is counted,
+        // gives silence for this block and the thread goes on (see
+        // `bananasplit::engine::guard_cycle`).
+        if !guard_cycle(&shared.panics, || mix.run(n)) {
+            mix.silence(n);
+        }
         let used = t0.elapsed().as_secs_f32() / 0.01 * 100.0;
         cpu += 0.1 * (used - cpu);
         stats.cpu.store(cpu);
@@ -770,7 +801,7 @@ impl Graph {
                 seen: 0,
                 shared: shared.clone(),
             };
-            match launch(d, state, pair, false, stats) {
+            match launch(d, state, pair, false, stats, shared) {
                 Ok(p) => {
                     procs.push(Box::new(p));
                     sinks.push((b, prod));
@@ -822,7 +853,7 @@ impl Graph {
                 });
                 let pair = ffi::stereo_pair(d.id, false);
                 let state = Master { mix, bus: b, pair, convert, rate: d.rate as f32, cpu: 0.0, stats: stats.clone() };
-                match launch(d, state, pair, false, stats) {
+                match launch(d, state, pair, false, stats, shared) {
                     Ok(p) => {
                         master_at = Some(procs.len());
                         procs.push(Box::new(p));
@@ -855,7 +886,7 @@ impl Graph {
         let mut inputs = 0;
         for (s, d, target, state) in captures {
             let pair = state.pair;
-            match launch(d, state, pair, true, stats) {
+            match launch(d, state, pair, true, stats, shared) {
                 Ok(p) => {
                     procs.push(Box::new(p));
                     inputs += 1;

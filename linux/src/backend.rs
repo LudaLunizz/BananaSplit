@@ -9,7 +9,7 @@ use crate::cables::{CableSet, Cables};
 use crate::devices::{self, Resolver, Side, client_of};
 use crate::jack::{JackClient, LATENCY_CAPTURE, LATENCY_PLAYBACK, Port, regex_escape};
 use bananasplit::config::{Config, DEFAULT_DEVICE, PHYSICAL};
-use bananasplit::engine::{BUS_IDS, Engine, LEGACY_BUS_IDS, MAX_FRAMES, NUM_BUSES, NUM_STRIPS, Shared};
+use bananasplit::engine::{BUS_IDS, Engine, LEGACY_BUS_IDS, MAX_FRAMES, NUM_BUSES, NUM_STRIPS, Shared, guard_cycle};
 use bananasplit::player::PlayTap;
 use bananasplit::recorder::RecTap;
 use bananasplit::vban::VbanTap;
@@ -21,6 +21,9 @@ use std::time::{Duration, Instant};
 
 struct RtCtx {
     lib: &'static crate::jack::Lib,
+    /// The engine's own [`Shared`], kept apart so the panic counter can be
+    /// reached while the engine is borrowed by the cycle.
+    shared: Arc<Shared>,
     engine: Engine,
     ins: [[Port; 2]; NUM_STRIPS],
     outs: [[Port; 2]; NUM_BUSES],
@@ -44,24 +47,66 @@ const _: () = {
     send_sync::<CtlCtx>();
 };
 
+/// The JACK process callback. A panic must not unwind out of an `extern "C"`
+/// function (that aborts the whole program and drops every cable mid-stream),
+/// so the cycle runs behind [`guard_cycle`]: a panic is counted
+/// (`Shared::panics`), this cycle's outputs are silenced, and JACK calls us
+/// again next period with the same engine (see `guard_cycle` for what is
+/// assumed about the state a panic leaves). No allocation or lock on the
+/// normal path.
 unsafe extern "C" fn process_cb(nframes: u32, arg: *mut c_void) -> c_int {
     // SAFETY: `arg` is the RtCtx box owned by Backend, alive until the client
     // is closed; JACK never runs two process callbacks of one client at once.
     let ctx = unsafe { &mut *arg.cast::<RtCtx>() };
+    let RtCtx { lib, shared, engine, ins, outs } = ctx;
+    // SAFETY: called from JACK's process callback with its `nframes`.
+    if !guard_cycle(&shared.panics, || unsafe { mix(lib, engine, ins, outs, nframes) }) {
+        // SAFETY: as above.
+        unsafe { silence(lib, outs, nframes) };
+    }
+    0
+}
+
+/// Write silence to every output port for this cycle (after a panic).
+///
+/// # Safety
+/// Only from the process callback, with its `nframes`, on the open client's ports.
+unsafe fn silence(lib: &crate::jack::Lib, outs: &[[Port; 2]; NUM_BUSES], nframes: u32) {
+    for p in outs.iter().flatten() {
+        // SAFETY: our port on the open client; `lib` is the dlsym'd libjack table.
+        let b = unsafe { (lib.jack_port_get_buffer)(p.as_ptr(), nframes) }.cast::<f32>();
+        if !b.is_null() {
+            // SAFETY: JACK guarantees `nframes` valid samples; nothing else
+            // holds a reference to it now (the cycle that did has unwound).
+            unsafe { std::slice::from_raw_parts_mut(b, nframes as usize) }.fill(0.0);
+        }
+    }
+}
+
+/// One cycle of the mixer: inputs into the engine, the mix into the outputs.
+///
+/// # Safety
+/// Only from the process callback, with its `nframes`, on the open client's ports.
+unsafe fn mix(
+    lib: &crate::jack::Lib,
+    engine: &mut Engine,
+    ins: &[[Port; 2]; NUM_STRIPS],
+    outs: &[[Port; 2]; NUM_BUSES],
+    nframes: u32,
+) {
     let n = nframes as usize;
-    let lib = ctx.lib;
 
     // 1) Copy inputs into the engine (before any output buffer is touched,
     //    so an input that aliases one of our outputs is still read correctly).
     for s in 0..NUM_STRIPS {
         for c in 0..2 {
             // SAFETY: our port on the open client; `lib` is the dlsym'd libjack table.
-            let p = unsafe { (lib.jack_port_get_buffer)(ctx.ins[s][c].as_ptr(), nframes) }.cast::<f32>();
+            let p = unsafe { (lib.jack_port_get_buffer)(ins[s][c].as_ptr(), nframes) }.cast::<f32>();
             if p.is_null() || n > MAX_FRAMES {
-                ctx.engine.clear_input(s, c, n);
+                engine.clear_input(s, c, n);
             } else {
                 // SAFETY: JACK guarantees `nframes` valid samples.
-                ctx.engine.load_input(s, c, unsafe { std::slice::from_raw_parts(p, n) });
+                engine.load_input(s, c, unsafe { std::slice::from_raw_parts(p, n) });
             }
         }
     }
@@ -71,9 +116,9 @@ unsafe extern "C" fn process_cb(nframes: u32, arg: *mut c_void) -> c_int {
     for b in 0..NUM_BUSES {
         for c in 0..2 {
             // SAFETY: our port on the open client; `lib` is the dlsym'd libjack table.
-            let p = unsafe { (lib.jack_port_get_buffer)(ctx.outs[b][c].as_ptr(), nframes) }.cast::<f32>();
+            let p = unsafe { (lib.jack_port_get_buffer)(outs[b][c].as_ptr(), nframes) }.cast::<f32>();
             if p.is_null() {
-                return 0;
+                return;
             }
             ptrs[b][c] = p;
         }
@@ -82,8 +127,7 @@ unsafe extern "C" fn process_cb(nframes: u32, arg: *mut c_void) -> c_int {
     // buffers of `nframes` samples each.
     let mut outs: [[&mut [f32]; 2]; NUM_BUSES] =
         std::array::from_fn(|b| std::array::from_fn(|c| unsafe { std::slice::from_raw_parts_mut(ptrs[b][c], n) }));
-    ctx.engine.process(&mut outs);
-    0
+    engine.process(&mut outs);
 }
 
 // The control callbacks below get the CtlCtx box owned by Backend as `arg`;
@@ -236,7 +280,8 @@ impl Backend {
         if let Some(tap) = play {
             engine.attach_player(tap);
         }
-        let rt = Box::into_raw(Box::new(RtCtx { lib: client.lib, engine, ins: in_ports, outs: out_ports }));
+        let shared = engine.shared().clone();
+        let rt = Box::into_raw(Box::new(RtCtx { lib: client.lib, shared, engine, ins: in_ports, outs: out_ports }));
         let client_name = client.name();
         let mut me = Backend {
             client: Some(client),
