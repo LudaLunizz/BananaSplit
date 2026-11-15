@@ -431,6 +431,12 @@ impl JackClient {
     }
 }
 
+/// Teardown order: `jack_deactivate`, then `jack_client_close`, so no
+/// callback of this client runs once `drop` returns. The owner frees the
+/// callbacks' contexts only after that (see `Backend`'s `Drop`). The
+/// libjack these functions come from is never unloaded: `dl::Handle` is
+/// never closed and `lib` is `'static`, so the function table outlives
+/// every client.
 impl Drop for JackClient {
     fn drop(&mut self) {
         // SAFETY: valid client; after close returns no callback runs again.

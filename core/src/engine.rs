@@ -624,9 +624,10 @@ impl Engine {
         self.chan_mut(strip, ch)[..n].fill(0.0);
     }
 
-    /// Mix one cycle. Call `load_input`/`clear_input` for all 12 input
-    /// channels first. All 10 output slices must have the same length `n`,
-    /// which must equal the length passed to the loaders.
+    /// Mix one cycle. Call `load_input`/`clear_input` for both sides of
+    /// all 6 strips first (12 mono inputs). All 10 output slices (both sides
+    /// of the 5 buses) must have the same length `n`, which must equal the
+    /// length passed to the loaders.
     pub fn process(&mut self, out: &mut [[&mut [f32]; 2]; NUM_BUSES]) {
         self.shared.cycles.fetch_add(1, Relaxed);
         self.follow_rate();
