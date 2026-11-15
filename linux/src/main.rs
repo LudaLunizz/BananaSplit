@@ -329,7 +329,7 @@ fn run(args: Args) -> Result<(), String> {
             let Some(port) = gui::find_running(&client, args.gui_port) else {
                 return Err("no BananaSplit GUI is running".into());
             };
-            return match gui::request_quit(port) {
+            return match gui::request_quit(&client, port) {
                 Some((200, _)) => Ok(()),
                 Some((code, body)) => Err(format!("the BananaSplit on port {port} answered {code}: {body}")),
                 None => Err(format!("no BananaSplit GUI is running on port {port}")),
@@ -360,7 +360,9 @@ fn run(args: Args) -> Result<(), String> {
         if args.hidden {
             return Ok(());
         }
-        let shown = !args.no_open && (gui::request_show(gui_port, &launch_token()) || gui_platform::open_window(&url));
+        let shown = !args.no_open
+            && (gui::request_show(gui_port, &launch_token())
+                || gui_platform::open_window(&gui::running_page_url(&cfg.client_name, gui_port)));
         if !shown {
             eprintln!("bananasplit: already running; open {url}");
         }
@@ -1125,7 +1127,10 @@ impl Window {
         if gui_platform::open_window(&self.url) {
             self.browser = true;
         } else {
-            eprintln!("bananasplit: could not open a window; open {} in a browser", self.url);
+            eprintln!(
+                "bananasplit: could not open a window; open {} in a browser",
+                gui::token::split_fragment(&self.url).0
+            );
         }
     }
 
@@ -1245,7 +1250,9 @@ fn run_gui(
     let port = gui::start(hub.clone(), opts.port, opts.explicit)?;
     gui::start_midi(&hub, midi::io());
     let url = gui::url(port);
-    gui::note_port(&backend.client_name, port);
+    gui::note_port(&hub, &backend.client_name, port);
+    // the window and a browser it opens get the token (never printed)
+    let page = hub.page_url(port);
     for n in &notes {
         eprintln!("bananasplit: warning: {n}");
     }
@@ -1267,7 +1274,7 @@ fn run_gui(
         starting: None,
         start_hidden: false,
         show_when_ready: None,
-        url: url.clone(),
+        url: page.clone(),
         browser: false,
         recording: rec.is_recording(),
     };
@@ -1413,7 +1420,7 @@ fn run_gui(
             for m in p.poll() {
                 match m {
                     gui::FromWindow::Quit => quit = true,
-                    gui::FromWindow::Open => window.browser |= gui_platform::open_window(&url),
+                    gui::FromWindow::Open => window.browser |= gui_platform::open_window(&page),
                     gui::FromWindow::Record => {
                         status = match toggle_record(rec, shared, &channel_names(cfg)) {
                             Ok(m) => m,
@@ -1592,7 +1599,7 @@ fn run_gui(
     takes.shutdown();
     pulse.shutdown();
     updater.shutdown();
-    gui::forget_port(&backend.client_name, port);
+    gui::forget_port(&hub, &backend.client_name, port);
     // Remember the mixer state for next time (like the terminal UI), also
     // when the audio server went away.
     capture_all(cfg, shared, rec, vban);

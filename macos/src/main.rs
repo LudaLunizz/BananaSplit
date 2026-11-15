@@ -283,7 +283,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
 
     let port = gui::start(hub.clone(), opts.port, opts.explicit_port)?;
     gui::start_midi(&hub, mac::midi::io());
-    gui::note_port(&cfg.client_name, port);
+    gui::note_port(&hub, &cfg.client_name, port);
     let url = gui::url(port);
     let mut notes = notes;
     if port != opts.port {
@@ -293,7 +293,8 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
     for n in &notes {
         eprintln!("bananasplit: {n}");
     }
-    let mut window = Window { ui, url: url.clone(), started: false, failed: false, tray: true, recording: false };
+    let mut window =
+        Window { ui, url: hub.page_url(port), started: false, failed: false, tray: true, recording: false };
     // Started after the first frame is published (it takes a moment). In the
     // background (`--no-open`), the window stays hidden: only the icon.
     let mut open_window = true;
@@ -559,7 +560,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
     // everything stops and the settings are saved.
     ui.send(ToUi::Window(gui::ToWindow::Hide));
     hub.close();
-    gui::forget_port(&cfg.client_name, port);
+    gui::forget_port(&hub, &cfg.client_name, port);
     // What must not be lost comes first (quit from the Dock, or at log out,
     // macOS waits for it only a few seconds): the settings as they are, the
     // take being recorded, the settings file. Then the rest.
@@ -578,13 +579,13 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
 
 /// A second start: bring up the running BananaSplit's window (started in
 /// the background, only say that it runs).
-fn show_running(port: u16, no_open: bool) -> ExitCode {
+fn show_running(client: &str, port: u16, no_open: bool) -> ExitCode {
     let url = gui::url(port);
     if no_open {
         eprintln!("bananasplit: already running at {url}");
         return ExitCode::SUCCESS;
     }
-    if !gui::request_show(port, "") && desktop::open_page(&url).is_err() {
+    if !gui::request_show(port, "") && desktop::open_page(&gui::running_page_url(client, port)).is_err() {
         return fail(&format!("BananaSplit is already running at {url}, but its window could not be opened"), false);
     }
     ExitCode::SUCCESS
@@ -673,7 +674,7 @@ fn main() -> ExitCode {
     if args.quit {
         let defq = Config::default();
         if let Some(p) = gui::find_running(&defq.client_name, args.explicit_port.then_some(args.port))
-            && let Some((code, _)) = gui::request_quit(p)
+            && let Some((code, _)) = gui::request_quit(&defq.client_name, p)
             && code == 200
         {
             return ExitCode::SUCCESS;
@@ -681,7 +682,7 @@ fn main() -> ExitCode {
         if let Ok(c) = Config::load_or_default(&args.path)
             && let Some(p) = gui::find_running(&c.client_name, args.explicit_port.then_some(args.port))
         {
-            let _ = gui::request_quit(p);
+            let _ = gui::request_quit(&c.client_name, p);
             return ExitCode::SUCCESS;
         }
         eprintln!("no running BananaSplit found");
@@ -704,7 +705,7 @@ fn main() -> ExitCode {
     if !args.headless
         && let Some(port) = running()
     {
-        return show_running(port, args.no_open);
+        return show_running(&cfg.client_name, port, args.no_open);
     }
     // One mixer per config file, also when two starts overlap (the login
     // item, and macOS reopening the apps that ran at log out, can start it
@@ -717,7 +718,7 @@ fn main() -> ExitCode {
                 let t0 = Instant::now();
                 while t0.elapsed() < Duration::from_secs(20) {
                     if let Some(port) = running() {
-                        return show_running(port, args.no_open);
+                        return show_running(&cfg.client_name, port, args.no_open);
                     }
                     std::thread::sleep(Duration::from_millis(250));
                 }

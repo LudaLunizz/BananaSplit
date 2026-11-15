@@ -2,7 +2,7 @@
 //! Windows. The list of items is the platform contract documented in
 //! `gui/mod.rs`; every app has the same one.
 
-use crate::gui::{Form, Hub, WINDOW_FLAG, portdir};
+use crate::gui::{Form, Hub, WINDOW_FLAG, portdir, token};
 use std::net::SocketAddr;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -33,6 +33,30 @@ pub fn port_dir() -> Option<PathBuf> {
 /// it is in is the user's own already.)
 pub fn create_private_dir(dir: &Path) {
     let _ = std::fs::create_dir_all(dir);
+}
+
+/// Random bytes for the API token: the system's preferred random generator.
+pub fn random_bytes(buf: &mut [u8]) -> Result<(), String> {
+    crate::sys::random_bytes(buf)
+}
+
+/// Write `text` to `path` through a new file renamed over it. The per-user
+/// folder (`port_dir`) is readable by this user (and the administrators) only,
+/// and a file made in it takes the folder's permissions.
+pub fn write_private_file(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = path.with_extension("tmp-new");
+    let _ = std::fs::remove_file(&tmp);
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .and_then(|mut f| f.write_all(text.as_bytes()))
+        .and_then(|()| std::fs::rename(&tmp, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 /// `GET /api/cables`: Splitter and VB-Audio cables, Voicemeeter, Windows defaults.
@@ -85,8 +109,13 @@ pub fn window_stderr() -> Stdio {
 /// window. Closing it closes it.
 pub fn open_window(url: &str) -> bool {
     let Ok(exe) = crate::desktop::helper_exe() else { return false };
-    Command::new(exe)
-        .arg(WINDOW_FLAG)
+    let mut cmd = Command::new(exe);
+    // The API token in its environment, not on its command line.
+    let (url, api_token) = token::split_fragment(url);
+    if let Some(t) = api_token {
+        cmd.env(token::ENV, t);
+    }
+    cmd.arg(WINDOW_FLAG)
         .arg(url)
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::null())

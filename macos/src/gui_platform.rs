@@ -34,6 +34,32 @@ pub fn create_private_dir(dir: &Path) {
     let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir);
 }
 
+/// Random bytes for the API token, from the kernel (`/dev/urandom`).
+pub fn random_bytes(buf: &mut [u8]) -> Result<(), String> {
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(buf)).map_err(|e| format!("/dev/urandom: {e}"))
+}
+
+/// Write `text` to `path` for this user only: a new file made with mode 0600
+/// (never readable by others, not even for a moment), renamed over it.
+pub fn write_private_file(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = path.with_extension("tmp-new");
+    let _ = std::fs::remove_file(&tmp);
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .and_then(|mut f| f.write_all(text.as_bytes()))
+        .and_then(|()| std::fs::rename(&tmp, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
+}
+
 /// `GET /api/cables`: the virtual cables (BlackHole, ...) and the macOS defaults.
 pub fn get(path: &str) -> Option<Result<String, String>> {
     (path == "/api/cables").then(crate::mac::cables::report)

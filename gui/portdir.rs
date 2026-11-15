@@ -1,5 +1,6 @@
 //! Where a running GUI notes its port (`<folder>/bananasplit/<client>.port`),
-//! so that launching it again and `--quit` find it when 8790 was busy. Which
+//! so that launching it again and `--quit` find it when 8790 was busy, and its
+//! token (`<client>.token`, readable by the user only: `token.rs`). Which
 //! folder, per system, is decided here from the environment values the app
 //! passes in; reading the environment is the app's `gui_platform::port_dir`.
 //!
@@ -11,9 +12,18 @@ use std::path::{Path, PathBuf};
 /// The note for the GUI of JACK client `client` (any other characters than
 /// letters, digits, `-` and `_` become `_`) under `dir`.
 pub fn file(dir: &Path, client: &str) -> PathBuf {
+    named(dir, client, "port")
+}
+
+/// The token file of that GUI: the same name, `.token`.
+pub fn token_file(dir: &Path, client: &str) -> PathBuf {
+    named(dir, client, "token")
+}
+
+fn named(dir: &Path, client: &str, ext: &str) -> PathBuf {
     let name: String =
         client.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
-    dir.join("bananasplit").join(format!("{name}.port"))
+    dir.join("bananasplit").join(format!("{name}.{ext}"))
 }
 
 /// Linux: `$XDG_RUNTIME_DIR` if it is an absolute path (in a Flatpak only
@@ -72,6 +82,10 @@ mod tests {
         assert_eq!(f, Path::new("/run/user/1000").join("bananasplit").join("Banana_Split_2.port"));
         assert_eq!(file(Path::new("/d"), "a-b_C9").file_name().unwrap(), "a-b_C9.port");
         assert_eq!(file(Path::new("/d"), "é").file_name().unwrap(), "_.port");
+        assert_eq!(
+            token_file(Path::new("/d"), "Banana Split/2"),
+            Path::new("/d").join("bananasplit").join("Banana_Split_2.token")
+        );
     }
 
     /// (On a Windows host `/run/user/1000` is not an absolute path, which is what

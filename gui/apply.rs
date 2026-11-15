@@ -12,9 +12,22 @@ use bananasplit::player::PlayState;
 use bananasplit::recorder::{self, ALL_LINKS};
 use std::sync::atomic::Ordering::SeqCst;
 
-/// Read one `POST /api/cmd` body and do what it asks.
+/// Read one `POST /api/cmd` body and do what it asks (in this process: the
+/// tray menu; no token needed).
+#[allow(dead_code, reason = "the tray menus of Windows and macOS (and the tests)")]
 pub fn command(hub: &Hub, body: &str) -> Result<String, ApiError> {
     apply(hub, Cmd::parse(body)?)
+}
+
+/// `POST /api/cmd` over HTTP: as [`command`], but an operation with effects
+/// outside the mixer (`Cmd::needs_token`) is refused unless the request
+/// carried the token (`token_ok`).
+pub fn command_over_http(hub: &Hub, body: &str, token_ok: bool) -> Result<String, ApiError> {
+    let cmd = Cmd::parse(body)?;
+    if cmd.needs_token() && !token_ok {
+        return Err(hub.token_refused());
+    }
+    apply(hub, cmd)
 }
 
 fn ok() -> Result<String, ApiError> {
@@ -391,6 +404,11 @@ pub fn apply(hub: &Hub, cmd: Cmd) -> Result<String, ApiError> {
                 UpdateAct::Unknown(a) => Err(format!("unknown update action {a:?}").into()),
                 UpdateAct::Missing => Err(format!("missing {:?}", "a").into()),
             }
+        }
+        Cmd::Deck => {
+            let url = hub.deck_url().ok_or("the touch deck has no address yet")?;
+            crate::gui_platform::open_page(&url)?;
+            Ok("opening the touch deck in your browser".into())
         }
         Cmd::Show { token } => {
             hub.request(Request::Show(token));

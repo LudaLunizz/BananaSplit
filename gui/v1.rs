@@ -543,6 +543,14 @@ impl Target {
             && !matches!(self, Target::Vban(_) | Target::Player(PlayerParam::Position))
     }
 
+    /// Does changing it over HTTP need the token (`token.rs`)? Recording, and
+    /// sending audio over the network: VBAN on or off and every setting of an
+    /// outgoing stream (where it goes, what it sends). The rest are mixer
+    /// controls. (MIDI writes in this process and needs none.)
+    pub fn needs_token(&self) -> bool {
+        matches!(self, Target::Recording | Target::Vban(VbanParam::On | VbanParam::Out { .. }))
+    }
+
     /// A MIDI control can drive it: an on/off value, or a number that fades.
     pub fn midi(&self) -> bool {
         self.kind() == Kind::Flag || self.fades()
@@ -966,6 +974,18 @@ fn numbers_only(t: Target, what: &str) -> Result<(), String> {
 }
 
 impl Command {
+    /// Over HTTP, it needs the token: its path does ([`Target::needs_token`]).
+    pub fn needs_token(&self) -> bool {
+        match self {
+            Command::Set { t, .. }
+            | Command::SetText { t, .. }
+            | Command::Toggle { t }
+            | Command::Step { t, .. }
+            | Command::Fade { t, .. } => t.needs_token(),
+            Command::Recall { .. } => false,
+        }
+    }
+
     /// One command object: `{"cmd": "set", "path": "...", "value": ...}`.
     pub fn parse(o: &Value) -> Result<Command, String> {
         if !matches!(o, Value::Obj(_)) {
@@ -1110,8 +1130,13 @@ fn number_json(o: &mut String, t: Target, v: f32) {
 /// A list is checked whole before anything is done, so a typo in its third
 /// command changes nothing; then each runs in order, and the answer has each
 /// one's result. One command answers its result alone, or its error.
-pub fn command(hub: &Hub, body: &str) -> Result<String, ApiError> {
+///
+/// A command on a path with effects outside the mixer ([`Target::needs_token`])
+/// is refused unless the request carried the token (`token_ok`); a batch is
+/// refused whole, before anything in it is done.
+pub fn command_over_http(hub: &Hub, body: &str, token_ok: bool) -> Result<String, ApiError> {
     let v = json::parse(body)?;
+    let allowed = |c: &Command| if c.needs_token() && !token_ok { Err(hub.token_refused()) } else { Ok(()) };
     if let Value::Arr(list) = &v {
         if list.is_empty() || list.len() > MAX_BATCH {
             return Err(format!("a batch holds 1 to {MAX_BATCH} commands").into());
@@ -1121,6 +1146,7 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, ApiError> {
             .enumerate()
             .map(|(i, c)| Command::parse(c).map_err(|e| format!("command {}: {e}", i + 1)))
             .collect::<Result<Vec<_>, _>>()?;
+        cmds.iter().try_for_each(allowed)?;
         let results: Vec<_> = cmds.iter().map(|c| c.run(hub)).collect();
         let mut o = format!("{{\"ok\":{},\"results\":[", results.iter().all(Result::is_ok));
         for (i, r) in results.iter().enumerate() {
@@ -1132,7 +1158,9 @@ pub fn command(hub: &Hub, body: &str) -> Result<String, ApiError> {
         o.push_str("]}");
         return Ok(o);
     }
-    let r = Command::parse(&v)?.run(hub);
+    let c = Command::parse(&v)?;
+    allowed(&c)?;
+    let r = c.run(hub);
     if let Err(e) = r {
         return Err(e);
     }
@@ -1697,5 +1725,48 @@ mod tests {
         );
         assert_eq!(label(Target::parse("/vban/out/2/to").unwrap(), &names), "VBAN out 2: receiver");
         assert_eq!(label(Target::parse("/player/sends/B2").unwrap(), &names), "Player: to B2");
+    }
+
+    /// Recording and sending audio over the network need the token; every
+    /// other path (what the deck, a script or Companion moves) does not.
+    #[test]
+    fn which_paths_need_the_token() {
+        let needs = |p: &str| Target::parse(p).unwrap().needs_token();
+        for p in ["/recorder/recording", "/vban/on", "/vban/out/1/on", "/vban/out/2/to", "/vban/out/8/port"] {
+            assert!(needs(p), "{p}");
+        }
+        for f in ["name", "source", "format", "channels"] {
+            assert!(needs(&format!("/vban/out/3/{f}")), "{f}");
+        }
+        for p in [
+            "/strips/1/gain_db",
+            "/strips/1/record",
+            "/buses/B1/mute",
+            "/strips/2/sends/V1",
+            "/vban/port",
+            "/vban/in/1/on",
+            "/vban/in/1/from",
+            "/player/state",
+            "/player/sends/B2",
+        ] {
+            assert!(!needs(p), "{p}");
+        }
+        // every path is one or the other, and the list covers all of /vban/out
+        for t in Target::all() {
+            let p = t.path();
+            assert_eq!(
+                t.needs_token(),
+                p == "/recorder/recording" || p == "/vban/on" || p.starts_with("/vban/out/"),
+                "{p}"
+            );
+        }
+        // a command needs it when its path does; a scene recall never
+        let c = |s: &str| cmd(s).unwrap().needs_token();
+        assert!(c(r#"{"cmd":"set","path":"/recorder/recording","value":true}"#));
+        assert!(c(r#"{"cmd":"toggle","path":"/vban/on"}"#));
+        assert!(c(r#"{"cmd":"set","path":"/vban/out/1/to","value":"192.168.1.9"}"#));
+        assert!(c(r#"{"cmd":"step","path":"/vban/out/1/port","by":1}"#));
+        assert!(!c(r#"{"cmd":"set","path":"/strips/1/gain_db","value":-3}"#));
+        assert!(!c(r#"{"cmd":"recall","scene":"Live"}"#));
     }
 }

@@ -349,6 +349,8 @@ pub enum Cmd {
     },
     MidiBind(super::midi::Binding),
     MidiUnbind(super::midi::Src),
+    /// Open the touch deck in the browser, with the token.
+    Deck,
     /// An op only one system has (`gui_platform::command` knows it, or nobody does).
     Platform {
         op: String,
@@ -554,8 +556,34 @@ impl Cmd {
                 Cmd::MidiBind(Binding::new(src, action, mode, f.bool_of("takeover")?, f.bool_of("feedback")?)?)
             }
             "midiunbind" => Cmd::MidiUnbind(super::midi::Src::parse(f.req("src")?)?),
+            "deck" => Cmd::Deck,
             op => Cmd::Platform { op: op.to_string(), form: f },
         })
+    }
+
+    /// Does it need the token (`token.rs`) when it comes over HTTP? The
+    /// operations with effects outside the mixer: quitting, updates, starting
+    /// at login, the menu entry, opening a folder, a browser or the system's
+    /// settings, recording (and where the files go), and sending audio over
+    /// the network (VBAN on or off, an outgoing stream). Mixer controls do not.
+    /// (`docs/api.md` lists them; keep the two the same.)
+    pub fn needs_token(&self) -> bool {
+        match self {
+            Cmd::Quit
+            | Cmd::Update(_)
+            | Cmd::Install
+            | Cmd::AutoUpdate(_)
+            | Cmd::Autostart(_)
+            | Cmd::OpenFolder
+            | Cmd::Deck
+            | Cmd::Rec { .. }
+            | Cmd::Vban { .. }
+            | Cmd::VbanOut { .. } => true,
+            Cmd::RecSet { folder, .. } => folder.is_some(),
+            // the "Virtual cables" window's buttons open pages and the system's settings
+            Cmd::Platform { op, form } => op == "cables" && form.get("a") != Some("seen"),
+            _ => false,
+        }
     }
 }
 
@@ -712,6 +740,73 @@ mod tests {
                 assert_eq!(form.get("a"), Some("page"));
             }
             other => panic!("{other:?}"),
+        }
+    }
+
+    /// The operations with effects outside the mixer need the token; mixer
+    /// controls (what the deck and simple scripts use) do not.
+    #[test]
+    fn which_ops_need_the_token() {
+        let needs = |body: &str| p(body).unwrap().needs_token();
+        for body in [
+            "op=quit",
+            "op=update&a=check",
+            "op=update&a=install",
+            "op=update&a=restart",
+            "op=update&a=page",
+            "op=update",
+            "op=install",
+            "op=autoupdate&v=1",
+            "op=autostart&v=0",
+            "op=openfolder",
+            "op=deck",
+            "op=rec&v=1",
+            "op=rec&v=0",
+            "op=recset&folder=%2Ftmp%2Fx",
+            "op=recset&mode=multi&folder=",
+            "op=vban&v=1",
+            "op=vban&v=0",
+            "op=vbanout&slot=0&to=192.168.1.9",
+            "op=vbanout&slot=0&on=1",
+            "op=vbanout&slot=1&src=2",
+            "op=cables&a=page",
+            "op=cables&a=splitter",
+            "op=cables&a=sound",
+            "op=cables&a=midi",
+        ] {
+            assert!(needs(body), "{body} needs the token");
+        }
+        for body in [
+            "op=gain&ch=0&v=-3",
+            "op=mute&ch=6&v=1",
+            "op=solo&ch=1&v=1",
+            "op=route&ch=0&bus=1&v=1",
+            "op=link&ch=0&v=1",
+            "op=recset&mode=multi&format=wav32f",
+            "op=eq&ch=0&v=1",
+            "op=band&ch=0&band=1&g=3",
+            "op=gate&ch=0&v=1",
+            "op=vbanin&slot=0&on=1",
+            "op=vbanport&v=6980",
+            "op=play",
+            "op=pause",
+            "op=stop",
+            "op=seek&v=3",
+            "op=playto&bus=0&v=1",
+            "op=scene&name=Live&act=load",
+            "op=scene&name=Live&act=save",
+            "op=name&ch=0&v=Mic",
+            "op=theme&v=dark",
+            "op=listen&v=",
+            "op=show",
+            "op=save",
+            "op=reconnect",
+            "op=midi&a=learn",
+            "op=cable&ch=0&v=1",
+            "op=cables&a=seen",
+            "op=nosuchop",
+        ] {
+            assert!(!needs(body), "{body} is a mixer control");
         }
     }
 }

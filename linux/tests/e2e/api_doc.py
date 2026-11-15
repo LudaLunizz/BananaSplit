@@ -54,6 +54,12 @@ try:
             if req('GET', '/api/ping')[0].startswith('HTTP/1.1 200'): break
         except OSError: time.sleep(0.05)
     time.sleep(1.0)
+    # --- the token (#166): a file only this user can read, next to the port note
+    tokfile = os.path.join(tmp, 'bananasplit', 'BananaSplit.token')
+    token = open(tokfile).read().strip()
+    check(len(token) == 64 and all(c in '0123456789abcdef' for c in token), 'the token is 64 hex digits')
+    check(os.stat(tokfile).st_mode & 0o777 == 0o600, 'the token file is for this user only (0600)')
+    T = {'X-BananaSplit-Token': token}
     st = json.loads(req('GET', '/api/state')[1])
     # --- the documented state fields are the real ones
     def doc_keys(section_start, section_end):
@@ -86,7 +92,7 @@ try:
                        ('op=vban&v=0', 'VBAN off'), ('op=vbanport&v=6981', 'VBAN listens on UDP port 6981'), ('op=pause', 'paused'), ('op=stop', 'stopped'),
                        ('op=save', 'saving'), ('op=reconnect', 'reconnecting'), ('op=scene&name=Live&act=save', 'scene "Live" saved'),
                        ('op=scene&name=Live&act=delete', 'scene "Live" deleted'), ('op=name&ch=0&v=Voice', 'ok'), ('op=zoom&v=1.25', 'ok'), ('op=theme&v=light', 'ok')]:
-        code, b = cmd(body); check((code, b) == (200, want), f'{body} -> 200 {want!r} (got {code} {b!r})')
+        code, b = cmd(body, T if body.startswith('op=vban&') else None); check((code, b) == (200, want), f'{body} -> 200 {want!r} (got {code} {b!r})')
     time.sleep(0.2)
     st2 = json.loads(req('GET', '/api/state')[1])
     check(st2['ch'][0]['gain'] == -6.0 and st2['ch'][3]['mute'] is True and st2['ch'][0]['name'] == 'Voice', 'the commands changed the state')
@@ -99,6 +105,15 @@ try:
     check('text/plain' in h and b == 'gain must be a number', '*/* gets text')
     h, b = req('GET', '/api/state', host='evil.example'); check(h.startswith('HTTP/1.1 403') and b == 'wrong Host', '403 wrong Host')
     h, b = req('POST', '/api/cmd', 'op=mute&ch=0&v=1'); check(h.startswith('HTTP/1.1 403') and b == 'forbidden', '403 without X-BananaSplit')
+    # --- the protected operations: refused without the token (saying where it is), done with it
+    for body in ['op=quit', 'op=rec&v=1', 'op=vban&v=1', 'op=openfolder', 'op=recset&folder=/tmp']:
+        code, b = cmd(body); check(code == 403 and 'X-BananaSplit-Token' in b and tokfile in b, f'{body} without the token -> 403 (got {code} {b!r})')
+        code, b = cmd(body, {'X-BananaSplit-Token': '0' * 64}); check(code == 403, f'{body} with a wrong token -> 403 (got {code})')
+    code, b = cmd('op=recset&format=wav32f'); check(code == 200, f'recset without a folder needs no token (got {code} {b!r})')
+    h, b = req('POST', '/api/v1/recorder/start', '', {**X, 'Content-Type': 'application/json'})
+    check(h.startswith('HTTP/1.1 403') and 'X-BananaSplit-Token' in json.loads(b)['error'], 'v1 recorder/start without the token -> 403 JSON')
+    for path in ['/api/state', '/api/v1/state', '/api/v1/paths', '/', '/deck']:
+        check(token not in req('GET', path)[1], f'{path} never shows the token')
     h, b = req('GET', '/api/state', hdr={'Sec-Fetch-Site': 'cross-site'}); check(h.startswith('HTTP/1.1 403'), '403 cross-site')
     h, b = req('GET', '/api/state', hdr={'Origin': 'http://evil.example'}); check(h.startswith('HTTP/1.1 403'), '403 foreign Origin')
     h, b = req('DELETE', '/api/cmd'); check(h.startswith('HTTP/1.1 405') and 'Allow: GET, POST' in h, '405 with Allow')
@@ -114,8 +129,8 @@ try:
     check(st['update'] is None or set(st['update']) >= {'auto','phase'}, 'state.update')
     # --- API v1: the documented paths, answers and examples
     J = {**X, 'Content-Type': 'application/json'}
-    def v1(body, path='/api/v1/command'):
-        h, b = req('POST', path, body, J); check('application/json' in h, f'{path} answers JSON'); return int(h.split()[1]), json.loads(b)
+    def v1(body, path='/api/v1/command', hdr=None):
+        h, b = req('POST', path, body, {**J, **(hdr or {})}); check('application/json' in h, f'{path} answers JSON'); return int(h.split()[1]), json.loads(b)
     v1st = json.loads(req('GET', '/api/v1/state')[1])
     check(v1st['api'] == 1 and isinstance(v1st['rev'], int) and set(v1st) - {'api', 'rev'} == set(st), 'v1 state = api, rev + the state')
     v1doc = doc[doc.index('## API v1'):doc.index('## Errors')]
@@ -158,7 +173,7 @@ try:
     code, r = v1('[{"cmd":"set","path":"/strips/4/mute","value":false},{"cmd":"set","path":"/nope","value":1}]')
     check(code == 400 and r['error'].startswith('command 2: '), f'v1 batch checked whole (got {r})')
     check(v1('{"cmd":"recall","scene":"Gone"}')[0] == 400, 'v1 recall of a missing scene is 400')
-    code, r = v1('', '/api/v1/recorder/stop'); check(code == 200 and r['value'] is False, f'v1 recorder/stop (got {r})')
+    code, r = v1('', '/api/v1/recorder/stop', T); check(code == 200 and r['value'] is False, f'v1 recorder/stop (got {r})')
     # --- MIDI: the documented ops (no sequencer in the sandbox: bindings still work, ports do not)
     for body, want in [('op=midibind&src=cc:1:7&target=/strips/1/gain_db', 'CC 7 · ch 1 → Strip 1 (Voice): fader'),
                        ('op=midibind&src=note:1:16&target=/strips/1/mute', 'Note 16 · ch 1 → Strip 1 (Voice): mute'),
@@ -175,8 +190,10 @@ try:
     h, b = req('POST', '/api/v1/command', '{"cmd":"toggle","path":"/strips/1/mute"}')
     check(h.startswith('HTTP/1.1 403') and b == '{"error":"forbidden"}', 'v1 403 without X-BananaSplit, as JSON')
 finally:
-    subprocess.run([binary, '--quit', '--gui-port', str(port)], env=env, capture_output=True, timeout=20)
+    q = subprocess.run([binary, '--quit', '--gui-port', str(port)], env=env, capture_output=True, timeout=20)
+    check(q.returncode == 0, f'--quit reads the token file (got {q.returncode} {q.stderr!r})')
     try: p.wait(timeout=10)
     except subprocess.TimeoutExpired: p.kill()
+    check(not os.path.exists(os.path.join(tmp, 'bananasplit', 'BananaSplit.token')), 'the token file is removed on quit')
 print(f'api_doc: {len(checks)} checks' + (f', FAILED: {bad}' if bad else ', all pass'))
 sys.exit(1 if bad else 0)

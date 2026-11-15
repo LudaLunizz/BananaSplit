@@ -19,6 +19,7 @@ so there is one copy to fix and review instead of three.
 | `cmd.rs` | `POST /api/cmd` as a typed `Cmd`: `Cmd::parse` reads and checks the form (it needs no mixer, so its rules are tested alone). |
 | `apply.rs` | `apply(hub, Cmd)`: doing it on the mixer; `command(hub, body)` is parse, then apply. |
 | `api.rs` | `ApiError { status, msg }`: every refusal the server makes. Its body is the message as plain text, or `{"error":"..."}` for a client that sends `Accept: application/json` (the page and the deck do). A request that works answers as before: plain text for a command, JSON for a state or a list. |
+| `token.rs` | the API token (#166): made at each start, written next to the port note for this user only, checked in constant time; which ops and paths need it is `Cmd::needs_token` and `Target::needs_token`. The page, deck and window get it in the URL fragment (`#t=`), a window process in its environment. |
 | `peer.rs`, `portdir.rs` | the per-system readers and choices that need no system call (see below). All three apps. |
 | `winmsg.rs` | what the mixer and its window say to each other: `ToWindow` and `FromWindow`, with the line each is on the wire. All three apps: the window processes read and write the lines, macOS passes the same messages through its event loop. |
 | `window.rs` | the window process (`bananasplit --window`) as seen from the mixer. Linux and Windows; macOS has its window in its own process. |
@@ -47,7 +48,7 @@ Rules:
   table of connections) and `portdir.rs` (the folder of the port note), compiled
   as `#[cfg(any(target_os = "...", test))]`: an app only contains its own, and
   `cargo test` on any system, Linux CI included, tests all three.
-* Do not touch the localhost checks (Host, Origin, custom header, same user) or
+* Do not touch the localhost checks (Host, Origin, custom header, same user, token) or
   the window process's isolation and reaping without a test that shows why.
 
 The page (`gui.html`) is one file too. It holds the parts that only one system

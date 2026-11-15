@@ -1362,13 +1362,16 @@ fn icon_file() -> Option<std::path::PathBuf> {
 /// The window process. Returns when the mixer goes away or says `quit`.
 pub fn main(args: &[String]) -> ExitCode {
     crate::sys::close_inherited_fds();
-    let opts = match parse_args(args) {
+    let mut opts = match parse_args(args) {
         Ok(o) => o,
         Err(e) => {
             hello(Hello::Fail(e.to_string()));
             return ExitCode::from(2);
         }
     };
+    // The mixer passes the API token in the environment: the page reads it
+    // from its fragment.
+    opts.url = crate::gui::token::url_from_env(&opts.url, std::env::var_os(crate::gui::token::ENV));
     // WebKitGTK's DMA-BUF renderer shows an empty window on many setups
     // (`dmabuf_works`); there the shared-memory path is used. Where it works
     // it stays on: the shared-memory path copies every frame, and makes

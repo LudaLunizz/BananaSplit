@@ -30,11 +30,15 @@
 //! `WindowProc` (`window.rs`, Linux and Windows), or the app's own window in
 //! this process (macOS).
 //!
-//! Security: listens on 127.0.0.1 only. Every request must carry a `Host`
-//! naming this server (defeats DNS rebinding). A `POST` must also carry
-//! `X-BananaSplit: 1` and, if the browser sends one, a same-origin `Origin`; a
-//! custom header forces a CORS preflight, which this server never grants,
-//! so other web pages open in the browser cannot drive the mixer.
+//! Security: listens on 127.0.0.1 only, and answers only processes of its own
+//! user (`peer_allowed`). Every request must carry a `Host` naming this server
+//! (defeats DNS rebinding). A `POST` must also carry `X-BananaSplit: 1` and, if
+//! the browser sends one, a same-origin `Origin`; a custom header forces a CORS
+//! preflight, which this server never grants, so other web pages open in the
+//! browser cannot drive the mixer. The operations with effects outside the
+//! mixer (quit, updates, recording, opening things, sending audio over the
+//! network) also need the token of this start (`token.rs`), from a file only
+//! the user can read.
 //!
 //! # The platform contract: `crate::gui_platform`
 //!
@@ -52,6 +56,7 @@
 //! | `autostart_enabled()`, `set_autostart(on)` | starting at login |
 //! | `menu_installed()`, `install()` | the application menu entry (Start menu, ...) |
 //! | `port_dir()`, `create_private_dir(dir)` | where a running GUI notes its port |
+//! | `random_bytes(buf)`, `write_private_file(path, text)` | the token: the system's random source, a file only the user can read |
 //! | `peer_is_ours(peer, us)` | whose process is at the other end of a loopback connection |
 //! | `get(path)` | extra `GET` endpoints of the system (`None`: not ours) |
 //! | `command(hub, op, form)` | extra `op`s of `POST /api/cmd` (`None`: not ours) |
@@ -78,6 +83,8 @@ use std::time::Duration;
 // `cargo test` everywhere (see each file).
 pub mod peer;
 pub mod portdir;
+// The token for the operations with effects outside the mixer.
+pub mod token;
 
 // The API: what it refuses with (`api`), a command read and checked (`cmd`) and
 // done (`apply`).
@@ -91,6 +98,7 @@ pub mod v1;
 // side is each app's `midi::io()`.
 pub mod midi;
 pub use api::ApiError;
+#[allow(unused_imports, reason = "the tray menus of Windows and macOS (and the tests)")]
 pub use apply::command;
 pub use cmd::Form;
 
@@ -223,10 +231,32 @@ pub struct Hub {
     pub fades: v1::Fades,
     /// MIDI, once `start_midi` has run.
     midi: std::sync::OnceLock<Arc<midi::Midi>>,
+    /// The token of this start (`token.rs`; empty if the system gave no random
+    /// bytes: then the protected operations are closed). Never in a state.
+    api_token: String,
+    /// Where it is written (`note_port`), for the refusal's message.
+    token_file: Mutex<Option<PathBuf>>,
+    /// The port the server listens on (0 until `start`).
+    port: std::sync::atomic::AtomicU16,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A new token from the system's random source; empty if there is none (the
+/// protected operations then stay closed, and BananaSplit says why).
+fn new_token() -> String {
+    let mut b = [0u8; token::BYTES];
+    match crate::gui_platform::random_bytes(&mut b) {
+        Ok(()) => token::hex(&b),
+        Err(e) => {
+            eprintln!(
+                "bananasplit: warning: no API token ({e}): what needs it (quit, record, updates) is refused over HTTP"
+            );
+            String::new()
+        }
+    }
 }
 
 impl Hub {
@@ -265,7 +295,32 @@ impl Hub {
             updater: Mutex::new(None),
             fades: v1::Fades::default(),
             midi: std::sync::OnceLock::new(),
+            api_token: new_token(),
+            token_file: Mutex::new(None),
+            port: std::sync::atomic::AtomicU16::new(0),
         })
+    }
+
+    /// Does `given` (an `X-BananaSplit-Token` header) match this start's token?
+    pub fn token_matches(&self, given: Option<&str>) -> bool {
+        given.is_some_and(|t| token::same(t, &self.api_token))
+    }
+
+    /// The refusal of a protected operation without the token.
+    pub fn token_refused(&self) -> ApiError {
+        token::refused(lock(&self.token_file).as_deref())
+    }
+
+    /// The page's address with the token in its fragment: for the window and a
+    /// browser this BananaSplit opens itself. Never printed.
+    pub fn page_url(&self, port: u16) -> String {
+        token::with_fragment(&url(port), &self.api_token)
+    }
+
+    /// The touch deck's address with the token (`op=deck`).
+    pub fn deck_url(&self) -> Option<String> {
+        let port = self.port.load(SeqCst);
+        (port != 0).then(|| token::with_fragment(&format!("{}deck", url(port)), &self.api_token))
     }
 
     pub fn set_updater(&self, u: Arc<crate::gui_platform::Updater>) {
@@ -1128,6 +1183,11 @@ pub fn csrf_ok(req: &Req, port: u16) -> bool {
     req.header("x-bananasplit") == Some("1") && same_origin(req, port)
 }
 
+/// The request carries this start's token (`X-BananaSplit-Token`).
+fn token_ok(req: &Req, hub: &Hub) -> bool {
+    hub.token_matches(req.header("x-bananasplit-token"))
+}
+
 fn reason(code: u16) -> &'static str {
     match code {
         200 => "OK",
@@ -1261,7 +1321,7 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
             let Ok(body) = std::str::from_utf8(&req.body) else {
                 return fail(&mut s, Some(&req), &ApiError::new(400, "body is not UTF-8"), "");
             };
-            match v1_post(hub, p, body) {
+            match v1_post(hub, p, body, token_ok(&req, hub)) {
                 Ok(j) => respond(&mut s, 200, "application/json", j.as_bytes(), ""),
                 Err(e) => fail(&mut s, Some(&req), &e, ""),
             }
@@ -1273,7 +1333,7 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
             let Ok(body) = std::str::from_utf8(&req.body) else {
                 return fail(&mut s, Some(&req), &ApiError::new(400, "body is not UTF-8"), "");
             };
-            match command(hub, body) {
+            match apply::command_over_http(hub, body, token_ok(&req, hub)) {
                 Ok(m) => respond(&mut s, 200, text, m.as_bytes(), ""),
                 Err(e) => fail(&mut s, Some(&req), &e, ""),
             }
@@ -1290,10 +1350,10 @@ fn handle(mut s: TcpStream, hub: &Hub, port: u16) {
 
 /// The `POST`s of API v1: the command endpoint and the shortcuts (recorder,
 /// player, scenes).
-fn v1_post(hub: &Hub, path: &str, body: &str) -> Result<String, ApiError> {
-    let short = |c: &str| v1::command(hub, c);
+fn v1_post(hub: &Hub, path: &str, body: &str, token_ok: bool) -> Result<String, ApiError> {
+    let short = |c: &str| v1::command_over_http(hub, c, token_ok);
     match path {
-        "/api/v1/command" => v1::command(hub, body),
+        "/api/v1/command" => v1::command_over_http(hub, body, token_ok),
         "/api/v1/recorder/start" => short(r#"{"cmd":"set","path":"/recorder/recording","value":true}"#),
         "/api/v1/recorder/stop" => short(r#"{"cmd":"set","path":"/recorder/recording","value":false}"#),
         "/api/v1/player/play" => short(r#"{"cmd":"set","path":"/player/state","value":"playing"}"#),
@@ -1368,6 +1428,7 @@ pub fn start(hub: Arc<Hub>, port: u16, explicit: bool) -> Result<u16, String> {
         Err(e) => return Err(format!("cannot listen on 127.0.0.1:{port} for the GUI: {e}")),
     };
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    hub.port.store(port, SeqCst);
     let h = hub.clone();
     std::thread::Builder::new()
         .name("bs-fades".into())
@@ -1429,11 +1490,25 @@ fn port_file(client: &str) -> Option<PathBuf> {
     Some(portdir::file(&crate::gui_platform::port_dir()?, client))
 }
 
-/// Note the port this GUI listens on.
-pub fn note_port(client: &str, port: u16) {
+/// The token file of the GUI for `client` (`bananasplit/<client>.token`, next
+/// to the port note).
+fn token_file(client: &str) -> Option<PathBuf> {
+    Some(portdir::token_file(&crate::gui_platform::port_dir()?, client))
+}
+
+/// Note the port this GUI listens on, and its token (first, so that whoever
+/// finds the port finds the token too). The token file is readable by this
+/// user only from the moment it exists (`write_private_file`).
+pub fn note_port(hub: &Hub, client: &str, port: u16) {
     let Some(f) = port_file(client) else { return };
     if let Some(d) = f.parent() {
         crate::gui_platform::create_private_dir(d);
+    }
+    if let Some(t) = token_file(client).filter(|_| !hub.api_token.is_empty()) {
+        match crate::gui_platform::write_private_file(&t, &format!("{}\n", hub.api_token)) {
+            Ok(()) => *lock(&hub.token_file) = Some(t),
+            Err(e) => eprintln!("bananasplit: warning: cannot write {}: {e}", t.display()),
+        }
     }
     let tmp = f.with_extension("port-tmp");
     if std::fs::write(&tmp, format!("{port}\n")).is_ok() && std::fs::rename(&tmp, &f).is_err() {
@@ -1441,13 +1516,33 @@ pub fn note_port(client: &str, port: u16) {
     }
 }
 
-/// Remove the note again, if it is still this GUI's.
-pub fn forget_port(client: &str, port: u16) {
+/// Remove the notes again, if they are still this GUI's.
+pub fn forget_port(hub: &Hub, client: &str, port: u16) {
     if let Some(f) = port_file(client)
         && noted(&f) == Some(port)
     {
         let _ = std::fs::remove_file(&f);
     }
+    if let Some(t) = token_file(client)
+        && read_token_file(&t).is_some_and(|t| token::same(&t, &hub.api_token))
+    {
+        let _ = std::fs::remove_file(&t);
+    }
+}
+
+fn read_token_file(f: &std::path::Path) -> Option<String> {
+    token::parse_file(&std::fs::read_to_string(f).ok()?).map(str::to_string)
+}
+
+/// The token of the running GUI for `client`, from its file.
+pub fn running_token(client: &str) -> Option<String> {
+    read_token_file(&token_file(client)?)
+}
+
+/// The page of the running GUI for `client` on `port`, with its token if the
+/// file has it: for a browser or window a second start opens. Never printed.
+pub fn running_page_url(client: &str, port: u16) -> String {
+    running_token(client).map_or_else(|| url(port), |t| token::with_fragment(&url(port), &t))
 }
 
 fn noted(f: &std::path::Path) -> Option<u16> {
@@ -1495,12 +1590,13 @@ pub fn probe(port: u16, client: &str) -> bool {
 /// Ask a running BananaSplit GUI to bring its window up. False if nothing
 /// (or an older BananaSplit without this request) answered.
 pub fn request_show(port: u16, token: &str) -> bool {
-    post_cmd(port, &format!("op=show&token={}", url_encode(token))).is_some_and(|(code, _)| code == 200)
+    post_cmd(port, &format!("op=show&token={}", url_encode(token)), None).is_some_and(|(code, _)| code == 200)
 }
 
-/// Ask a running BananaSplit GUI to quit.
-pub fn request_quit(port: u16) -> Option<(u16, String)> {
-    post_cmd(port, "op=quit")
+/// Ask the running BananaSplit GUI for `client` on `port` to quit, with the
+/// token from its file.
+pub fn request_quit(client: &str, port: u16) -> Option<(u16, String)> {
+    post_cmd(port, "op=quit", running_token(client).as_deref())
 }
 
 fn url_encode(s: &str) -> String {
@@ -1515,7 +1611,7 @@ fn url_encode(s: &str) -> String {
     o
 }
 
-fn post_cmd(port: u16, body: &str) -> Option<(u16, String)> {
+fn post_cmd(port: u16, body: &str, api_token: Option<&str>) -> Option<(u16, String)> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok()?;
     if !peer_allowed(&s) {
@@ -1523,8 +1619,9 @@ fn post_cmd(port: u16, body: &str) -> Option<(u16, String)> {
     }
     let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
+    let key = api_token.filter(|t| token::valid(t)).map_or(String::new(), |t| format!("{}: {t}\r\n", token::HEADER));
     let req = format!(
-        "POST /api/cmd HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-BananaSplit: 1\r\nContent-Type: application/x-www-form-urlencoded\r\n\
+        "POST /api/cmd HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-BananaSplit: 1\r\n{key}Content-Type: application/x-www-form-urlencoded\r\n\
          Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
@@ -2481,7 +2578,9 @@ mod tests {
             assert!(out.contains("Content-Type: application/json\r\n"), "v1 always answers JSON: {out}");
             (out[9..12].parse().unwrap(), out.rsplit("\r\n\r\n").next().unwrap().to_string())
         };
-        let post = |path: &str, body: &str| send("POST", path, body, "X-BananaSplit: 1\r\n");
+        // (with the token: what needs it is tested in `the_token_guards_what_reaches_outside`)
+        let key = format!("X-BananaSplit: 1\r\nX-BananaSplit-Token: {}\r\n", h.api_token);
+        let post = |path: &str, body: &str| send("POST", path, body, &key);
         let cmd = |body: &str| post("/api/v1/command", body);
         let sh = &h.shared;
 
@@ -2733,8 +2832,8 @@ mod tests {
             "a success is plain text"
         );
         // the program that talks to a running one (`--quit`, `--update`) asks for nothing special: the plain message
-        assert_eq!(post_cmd(port, "op=gain&ch=0&v=x"), Some((400, "gain must be a number".to_string())));
-        assert_eq!(post_cmd(port, "op=gain&ch=0&v=-3"), Some((200, "-3.0 dB".to_string())));
+        assert_eq!(post_cmd(port, "op=gain&ch=0&v=x", None), Some((400, "gain must be a number".to_string())));
+        assert_eq!(post_cmd(port, "op=gain&ch=0&v=-3", None), Some((200, "-3.0 dB".to_string())));
         // event stream delivers published state
         let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
         write!(s, "GET /api/events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
@@ -2755,5 +2854,86 @@ mod tests {
         }
         h.close();
         h.recorder.shutdown();
+    }
+
+    /// The operations with effects outside the mixer need this start's token;
+    /// mixer controls do not; no answer ever shows the token.
+    #[test]
+    fn the_token_guards_what_reaches_outside() {
+        let h = hub();
+        let port = start(h.clone(), 0, true).unwrap();
+        let tok = h.api_token.clone();
+        assert!(token::valid(&tok), "a token is made at every start");
+        assert_ne!(tok, hub().api_token, "and a new one each time");
+        let send = |path: &str, body: &str, hdr: &str| -> (u16, String) {
+            let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+            write!(
+                s,
+                "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-BananaSplit: 1\r\n{hdr}Content-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            let mut out = String::new();
+            let _ = s.read_to_string(&mut out);
+            (out[9..12].parse().unwrap(), out.split_once("\r\n\r\n").unwrap().1.to_string())
+        };
+        let right = format!("X-BananaSplit-Token: {tok}\r\n");
+        let mut wrong = tok.clone();
+        wrong.replace_range(..1, if tok.starts_with('0') { "1" } else { "0" });
+        let wrong = format!("X-BananaSplit-Token: {wrong}\r\n");
+        let folder = std::env::temp_dir().join(format!("bananasplit-token-test-{}", std::process::id()));
+        let recset = format!("op=recset&folder={}", url_encode(&folder.display().to_string()));
+        let before = h.recorder.settings().folder;
+        // missing, wrong: refused, with where the token is; nothing changed
+        for hdr in ["", wrong.as_str(), "X-BananaSplit-Token: \r\n"] {
+            let (code, msg) = send("/api/cmd", &recset, hdr);
+            assert_eq!(code, 403, "{hdr:?}");
+            assert!(msg.contains("X-BananaSplit-Token") && msg.contains("open BananaSplit's window"), "{msg}");
+            assert!(!msg.contains(&tok));
+        }
+        assert_eq!(h.recorder.settings().folder, before);
+        assert_eq!(send("/api/cmd", "op=rec&v=1", "").0, 403);
+        assert!(!h.recorder.is_recording());
+        assert_eq!(send("/api/cmd", "op=quit", "").0, 403);
+        assert!(!h.take_requests().contains(&Request::Quit));
+        // JSON when asked for it
+        let (code, msg) = send("/api/cmd", "op=quit", "Accept: application/json\r\n");
+        assert!(code == 403 && msg.starts_with("{\"error\":\"this needs BananaSplit's token"), "{msg}");
+        // right: done
+        assert_eq!(send("/api/cmd", &recset, &right).0, 200);
+        assert_eq!(h.recorder.settings().folder, folder.display().to_string());
+        assert_eq!(post_cmd(port, "op=quit", Some(&tok)), Some((200, "quitting".to_string())), "what --quit sends");
+        assert!(h.take_requests().contains(&Request::Quit));
+        // mixer controls need none
+        assert_eq!(send("/api/cmd", "op=mute&ch=0&v=1", "").0, 200);
+        assert!(h.shared.strips[0].mute.load(Relaxed));
+        // API v1: the shortcuts and the paths, a batch refused whole
+        assert_eq!(send("/api/v1/recorder/start", "", "").0, 403);
+        assert!(!h.recorder.is_recording());
+        let set = |p: &str, v: &str| format!(r#"{{"cmd":"set","path":"{p}","value":{v}}}"#);
+        assert_eq!(send("/api/v1/command", &set("/vban/out/1/to", "\"192.168.1.9\""), "").0, 403);
+        let batch = format!("[{},{}]", set("/strips/2/gain_db", "-7"), set("/vban/on", "true"));
+        let (code, msg) = send("/api/v1/command", &batch, "");
+        assert!(code == 403 && msg.contains("X-BananaSplit-Token"), "{msg}");
+        assert_ne!(h.shared.strips[1].gain_db.load(), -7.0, "nothing in the batch was done");
+        assert_eq!(send("/api/v1/command", &batch, &right).0, 200);
+        assert_eq!(h.shared.strips[1].gain_db.load(), -7.0);
+        assert_eq!(send("/api/v1/command", &set("/strips/3/gain_db", "-5"), "").0, 200);
+        assert_eq!(send("/api/v1/command", &set("/vban/on", "false"), &wrong).0, 403);
+        // no answer shows the token (state, paths, page, deck)
+        h.publish("{\"x\":1}".into());
+        for path in ["/", "/deck", "/api/state", "/api/v1/state", "/api/v1/paths", "/api/takes", "/api/ping"] {
+            let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+            write!(s, "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").unwrap();
+            let mut out = String::new();
+            let _ = s.read_to_string(&mut out);
+            assert!(out.starts_with("HTTP/1.1 200") && !out.contains(&tok), "{path}");
+        }
+        // the addresses this BananaSplit opens carry it in the fragment only
+        assert_eq!(h.page_url(port), format!("http://127.0.0.1:{port}/#t={tok}"));
+        assert_eq!(h.deck_url(), Some(format!("http://127.0.0.1:{port}/deck#t={tok}")));
+        h.close();
+        h.recorder.shutdown();
+        let _ = std::fs::remove_dir_all(&folder);
     }
 }
