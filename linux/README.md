@@ -529,9 +529,13 @@ New in 2.6:
 
 The changes in each version, newest first.
 
-### Not released yet
+### What's new in 2.9.3
 
+* **Recording stops before the disk is full** (#164): with less than 1 GB free on the recordings drive, a running take is finished cleanly (every file plays) and recording stops; below 1 GB a new take does not start. The recorder panel says why (`disk.low`, `rec.error`).
+* **A bug in a mixing cycle no longer stops BananaSplit** (#163): that cycle (a few milliseconds) plays silence and mixing goes on, on Linux, Windows and macOS. Counted as `panics` in the state, red in the terminal view.
+* **API v1 reaches more** (#165): paths for each EQ band (on, type, frequency, gain, Q), every gate and compressor setting, VBAN (on/off, port, each stream) and the player (play, pause, stop, seek, take, sends). MIDI controls can drive the numbers and switches among them. `/api/cmd` keeps working for the page and the deck but gets no new ops.
 * **A token for what reaches beyond the mixer** (#166): quitting, updates, starting with the system, the app menu entry, opening folders, recording (and its folder) and VBAN out now need a token BananaSplit writes at each start to a file only you can read (`$XDG_RUNTIME_DIR/bananasplit/BananaSplit.token`; Windows `%LOCALAPPDATA%`, macOS `~/Library/Caches`). The window, the touch deck opened from the menu (new: MENU ▸ **Open the touch deck**) and `--quit` get it by themselves; mixer controls (faders, mutes, routing, EQ, scenes, player) work without it, so the deck and Companion keep working. Scripts that quit or record send `X-BananaSplit-Token` (see `docs/api.md`).
+* **Docs** (#162): why BananaSplit next to other mixers, what runs where on each OS, what pre-alpha means, a MIDI guide (`docs/midi.md`), Windows latency, and stale statements fixed.
 
 ### What's new in 2.9.2
 

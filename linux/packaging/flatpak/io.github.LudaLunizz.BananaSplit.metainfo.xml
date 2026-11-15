@@ -29,6 +29,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.9.3" date="2026-11-15">
+      <description>
+        <p>Recording stops cleanly below 1 GB free disk space; a bug in one audio cycle plays silence instead of stopping the mixer; API v1 and MIDI reach EQ bands, gate and compressor settings, VBAN and the player; quitting, updates, autostart, folders, recording and VBAN out need a token from a file only you can read; new documentation.</p>
+      </description>
+    </release>
     <release version="2.9.2" date="2026-11-15">
       <description>
         <p>Fixes: no crash when started within seconds of boot; on Windows the Disk line shows the real free space again, and an audio stream in an unexpected state is rebuilt instead of stopping the mixer.</p>
