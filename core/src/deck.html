@@ -149,6 +149,32 @@ main[hidden] { display: none; }
 <div id="toast"></div>
 <script>
 "use strict";
+// The API token (#166). BananaSplit opens its window, a browser and the deck with it in the
+// fragment (#t=..., which is never sent to a server). Read it once, take it out of the address
+// bar, keep it for this tab only. It goes with every command; the ones with effects outside the
+// mixer (quit, record, updates, opening folders, VBAN out) are refused without it.
+const API_TOKEN = (() => {
+  const m = /^#t=([0-9a-f]{64})$/.exec(location.hash);
+  if (m) history.replaceState(null, "", location.pathname + location.search);
+  try {
+    if (m) sessionStorage.setItem("bananasplit-token", m[1]);
+    return m ? m[1] : sessionStorage.getItem("bananasplit-token");
+  } catch (e) {
+    return m ? m[1] : null; // no storage: only this load has it
+  }
+})();
+function cmdHeaders() {
+  const h = { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" };
+  if (API_TOKEN) h["X-BananaSplit-Token"] = API_TOKEN;
+  return h;
+}
+// A refusal for want of the token, in words for this page.
+function tokenNote(r, text) {
+  if (r.status !== 403 || !/X-BananaSplit-Token/.test(text)) return text;
+  return API_TOKEN
+    ? "BananaSplit has restarted since this page was opened: open it again from BananaSplit's window"
+    : "Open BananaSplit's window (or the deck from its menu) to use this";
+}
 // Same numbers as gui.html and engine.rs: 6 input strips, then buses V1 V2 V3 B1 B2.
 const NUM_STRIPS = 6, BUS_IDS = ["V1", "V2", "V3", "B1", "B2"];
 const MIN_DB = -60, MAX_DB = 12;
@@ -205,10 +231,10 @@ async function send(params) {
   try {
     const r = await fetch("/api/cmd", {
       method: "POST",
-      headers: { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
+      headers: cmdHeaders(),
       body: new URLSearchParams(params).toString(),
     });
-    if (!r.ok) toast(await answerText(r));
+    if (!r.ok) toast(tokenNote(r, await answerText(r)));
     return r.ok;
   } catch (e) {
     toast("BananaSplit is not answering");

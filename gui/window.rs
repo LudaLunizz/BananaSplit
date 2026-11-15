@@ -105,7 +105,13 @@ impl WindowProc {
     /// there is neither a window nor a tray icon (then use a browser).
     pub fn spawn(o: &WinOpts) -> Result<WindowProc, String> {
         let mut cmd = crate::gui_platform::window_command()?;
-        cmd.arg(WINDOW_FLAG).arg(o.url).arg("--close-to-tray").arg(if o.close_to_tray { "1" } else { "0" });
+        // The API token goes in its environment, not on its command line
+        // (which every user can list): the window puts it back in the fragment.
+        let (url, api_token) = super::token::split_fragment(o.url);
+        if let Some(t) = api_token {
+            cmd.env(super::token::ENV, t);
+        }
+        cmd.arg(WINDOW_FLAG).arg(url).arg("--close-to-tray").arg(if o.close_to_tray { "1" } else { "0" });
         if o.hidden {
             cmd.arg("--hidden");
         }

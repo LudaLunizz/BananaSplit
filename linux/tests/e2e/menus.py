@@ -25,6 +25,17 @@ import time
 import urllib.error
 import urllib.request
 
+
+def read_token(run_dir):
+    """The running mixer's API token (#166), from its file next to the port note."""
+    d = os.path.join(run_dir, "bananasplit")
+    try:
+        names = [n for n in os.listdir(d) if n.endswith(".token")]
+        return open(os.path.join(d, names[0])).read().strip() if names else ""
+    except OSError:
+        return ""
+
+
 binary, here = sys.argv[1], sys.argv[2]
 port = 19700 + random.randint(0, 200)
 home = tempfile.mkdtemp(prefix="bs-menus-")
@@ -33,7 +44,8 @@ cfg_path = os.path.join(home, "bananasplit", "bananasplit.ini")
 os.makedirs(os.path.dirname(cfg_path))
 with open(cfg_path, "w") as f:
     f.write(f"[global]\ncreate_cables = true\n[recorder]\nfolder = {home}/rec\n")
-env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=home, LD_LIBRARY_PATH=here, PATH=os.path.join(here, "fakebin") + ":" + os.environ["PATH"],
+run = os.path.join(home, "run")  # its own: the port note and the API token
+env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=home, XDG_RUNTIME_DIR=run, LD_LIBRARY_PATH=here, PATH=os.path.join(here, "fakebin") + ":" + os.environ["PATH"],
            PACTL_LOG=log_path, PACTL_DEVICES="1", PACTL_STREAMS="1", MOCKJACK_CABLES="1", MOCKJACK_DEVICES="1",
            MOCKJACK_REPORT=os.path.join(home, "report.txt"), MOCKJACK_REALTIME="1", MOCKJACK_CYCLES="100000000")
 for k in ("DISPLAY", "WAYLAND_DISPLAY"):
@@ -58,7 +70,8 @@ def check(ok, what):
 def post(**kw):
     data = "&".join(f"{k}={urllib.request.quote(str(v))}" for k, v in kw.items()).encode()
     r = urllib.request.Request(url + "/api/cmd", data=data,
-                               headers={"X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded"})
+                               headers={"X-BananaSplit": "1", "X-BananaSplit-Token": read_token(run),
+                                        "Content-Type": "application/x-www-form-urlencoded"})
     try:
         with urllib.request.urlopen(r, timeout=8) as resp:
             return resp.status, resp.read().decode()

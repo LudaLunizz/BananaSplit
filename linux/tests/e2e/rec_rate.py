@@ -31,6 +31,17 @@ import time
 import urllib.request
 import wave
 
+
+def read_token(run_dir):
+    """The running mixer's API token (#166), from its file next to the port note."""
+    d = os.path.join(run_dir, "bananasplit")
+    try:
+        names = [n for n in os.listdir(d) if n.endswith(".token")]
+        return open(os.path.join(d, names[0])).read().strip() if names else ""
+    except OSError:
+        return ""
+
+
 binary, mock, secs, expect_files = sys.argv[1], sys.argv[2], float(sys.argv[3]), int(sys.argv[4])
 extra = dict(a.split("=", 1) for a in sys.argv[5:])
 fmt = extra.pop("REC_FORMAT", "wav24")
@@ -42,7 +53,8 @@ os.makedirs(os.path.join(home, ".config/bananasplit"))
 with open(os.path.join(home, ".config/bananasplit/bananasplit.ini"), "w") as f:
     f.write(f"[global]\ncreate_cables = false\n[strip1]\nconnect = ^system:capture_\nroutes = A1\nmono = false\n"
             f"[recorder]\nfolder = {rec}\nlinks = 1\nformat = {fmt}\nbitrate = 320\nplay_to = A2\n")
-env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=os.path.join(home, ".config"), LD_LIBRARY_PATH=mock,
+run = os.path.join(home, "run")  # its own: the port note and the API token
+env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=os.path.join(home, ".config"), XDG_RUNTIME_DIR=run, LD_LIBRARY_PATH=mock,
            MOCKJACK_REPORT=os.path.join(home, "report.txt"), MOCKJACK_REALTIME="1", MOCKJACK_CYCLES="100000000",
            MOCKJACK_TONE="1000", **extra)
 for k in ("DISPLAY", "WAYLAND_DISPLAY", "PIPEWIRE_LATENCY"):
@@ -67,7 +79,8 @@ def check(ok, what):
 def cmd(**kw):
     data = "&".join(f"{k}={v}" for k, v in kw.items()).encode()
     r = urllib.request.Request(url + "/api/cmd", data=data,
-                               headers={"X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded"})
+                               headers={"X-BananaSplit": "1", "X-BananaSplit-Token": read_token(run),
+                                        "Content-Type": "application/x-www-form-urlencoded"})
     return urllib.request.urlopen(r, timeout=5).read().decode()
 
 

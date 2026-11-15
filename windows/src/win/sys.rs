@@ -201,6 +201,17 @@ pub fn same_user(peer: SocketAddr, us: SocketAddr) -> bool {
     }
 }
 
+/// Fill `buf` from the system's preferred random number generator
+/// (`BCryptGenRandom`), for the API token.
+pub fn random_bytes(buf: &mut [u8]) -> Result<(), String> {
+    let len = u32::try_from(buf.len()).map_err(|_| "too many random bytes asked for".to_string())?;
+    // SAFETY: `buf` is a live, writable buffer of `len` bytes; no algorithm
+    // handle is passed, as BCRYPT_USE_SYSTEM_PREFERRED_RNG requires.
+    let status =
+        unsafe { BCryptGenRandom(std::ptr::null_mut(), buf.as_mut_ptr(), len, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+    if status == 0 { Ok(()) } else { Err(format!("BCryptGenRandom failed (NTSTATUS {status:#x})")) }
+}
+
 /// Current local time as `YYYY-MM-DD_HH-MM-SS` (for recording file names).
 pub fn local_timestamp() -> String {
     let mut t =

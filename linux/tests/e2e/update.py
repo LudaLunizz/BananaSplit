@@ -38,6 +38,17 @@ import time
 import urllib.error
 import urllib.request
 
+
+def read_token(run_dir):
+    """The running mixer's API token (#166), from its file next to the port note."""
+    d = os.path.join(run_dir, "bananasplit")
+    try:
+        names = [n for n in os.listdir(d) if n.endswith(".token")]
+        return open(os.path.join(d, names[0])).read().strip() if names else ""
+    except OSError:
+        return ""
+
+
 binary, here = sys.argv[1], sys.argv[2]
 failed = []
 TITLE = "updater (update.py)"
@@ -212,7 +223,8 @@ class Mixer:
         with open(self.cfg, "w") as f:
             f.write(f"[global]\ncreate_cables = false\n[gui]\n{gui}[recorder]\nfolder = {self.home}/rec\n")
         self.marker = os.path.join(self.home, "restarted.txt")
-        env = dict(os.environ, HOME=self.home, XDG_CONFIG_HOME=self.home, XDG_CACHE_HOME=os.path.join(self.home, "cache"),
+        self.run = os.path.join(self.home, "run")  # its own: the port note and the API token
+        env = dict(os.environ, HOME=self.home, XDG_CONFIG_HOME=self.home, XDG_RUNTIME_DIR=self.run, XDG_CACHE_HOME=os.path.join(self.home, "cache"),
                    XDG_DATA_HOME=os.path.join(self.home, "data"), LD_LIBRARY_PATH=here,
                    MOCKJACK_REPORT=os.path.join(self.home, "report.txt"), MOCKJACK_REALTIME="1", MOCKJACK_CYCLES="100000000",
                    BANANASPLIT_UPDATE_SOURCE=fake.url, BANANASPLIT_UPDATE_KEY=PUBKEY, BANANASPLIT_UPDATE_DELAY=delay,
@@ -245,7 +257,8 @@ class Mixer:
     def post(self, **kw):
         data = "&".join(f"{k}={urllib.request.quote(str(v))}" for k, v in kw.items()).encode()
         r = urllib.request.Request(self.url + "/api/cmd", data=data,
-                                   headers={"X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded"})
+                                   headers={"X-BananaSplit": "1", "X-BananaSplit-Token": read_token(self.run),
+                                            "Content-Type": "application/x-www-form-urlencoded"})
         try:
             with urllib.request.urlopen(r, timeout=8) as resp:
                 return resp.status, resp.read().decode()

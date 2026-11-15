@@ -670,6 +670,15 @@ unsafe extern "system" {
     pub fn EqualSid(a: *mut c_void, b: *mut c_void) -> BOOL;
 }
 
+/// `BCryptGenRandom` with no algorithm handle: the system's preferred RNG.
+pub const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
+
+#[cfg_attr(windows, link(name = "bcrypt"))]
+unsafe extern "system" {
+    /// bcrypt.h; returns an NTSTATUS (0: success).
+    pub fn BCryptGenRandom(algorithm: *mut c_void, buffer: *mut u8, len: u32, flags: u32) -> i32;
+}
+
 #[cfg_attr(windows, link(name = "avrt"))]
 unsafe extern "system" {
     pub fn AvSetMmThreadCharacteristicsW(task: *const u16, index: *mut u32) -> HANDLE;

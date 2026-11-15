@@ -82,13 +82,24 @@ TMP=$(mktemp -d); cp "$HERE/e2e.ini" "$TMP/bananasplit.ini"
 unset MOCKJACK_CABLES PACTL_LOG XDG_CONFIG_HOME
 export MOCKJACK_REPORT="$TMP/report.txt" MOCKJACK_IMPULSE_CYCLE=1200 MOCKJACK_CYCLES=20000
 PORT=18791; URL="http://127.0.0.1:$PORT"
-LD_LIBRARY_PATH="$HERE" "$BIN" --gui --no-open --gui-port $PORT --config "$TMP/bananasplit.ini" 2>"$TMP/stderr.txt" &
+# its own runtime folder: the port note and the API token (#166) go there
+RUNDIR="$TMP/run"
+TOKEN_FILE="$TMP/run/bananasplit/BananaSplit.token"
+XDG_RUNTIME_DIR="$RUNDIR" LD_LIBRARY_PATH="$HERE" "$BIN" --gui --no-open --gui-port $PORT --config "$TMP/bananasplit.ini" 2>"$TMP/stderr.txt" &
 PID=$!
 trap 'rc=$?; kill $PID 2>/dev/null; exit $rc' EXIT   # never leave BananaSplit running if a check fails
-cmd() { curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' --data "$1" "$URL/api/cmd"; }
+# what the page sends: the custom header, and the token (from its file, as a script reads it)
+cmd() { curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' -H "X-BananaSplit-Token: $(cat "$TOKEN_FILE" 2>/dev/null)" --data "$1" "$URL/api/cmd"; }
 i=0; until curl -sf "$URL/api/ping" >/dev/null 2>&1; do i=$((i+1)); [ $i -lt 200 ] || fail "GUI did not come up"; sleep 0.05; done
 curl -s "$URL/" | grep -q '<title>BananaSplit</title>' || fail "page not served"
 [ "$(curl -s -o /dev/null -w '%{http_code}' --data 'op=mute&ch=0&v=1' "$URL/api/cmd")" = 403 ] || fail "POST without X-BananaSplit accepted"
+# the token: a file for this user only; quitting and recording need it, a mixer control does not
+[ "$(stat -c %a "$TOKEN_FILE")" = 600 ] || fail "token file mode: $(stat -c %a "$TOKEN_FILE")"
+[ "$(curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' --data 'op=quit' "$URL/api/cmd")" = 403 ] || fail "quit without the token accepted"
+grep -q "X-BananaSplit-Token" "$TMP/resp" || fail "the refusal does not name the header: $(cat "$TMP/resp")"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-BananaSplit: 1' -H 'X-BananaSplit-Token: 0000000000000000000000000000000000000000000000000000000000000000' --data 'op=rec&v=1' "$URL/api/cmd")" = 403 ] || fail "a wrong token accepted"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-BananaSplit: 1' --data 'op=mute&ch=1&v=0' "$URL/api/cmd")" = 200 ] || fail "a mixer control needs no token"
+curl -s "$URL/api/state" | grep -q "$(cat "$TOKEN_FILE")" && fail "the state shows the token"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "$URL/api/state")" = 403 ] || fail "foreign Host accepted"
 # another user on this computer is refused (run as root, the test acts as nobody)
 if [ "$(id -u)" = 0 ] && command -v setpriv >/dev/null; then
@@ -100,7 +111,7 @@ if [ "$(id -u)" = 0 ] && command -v setpriv >/dev/null; then
 else
   echo "E2E SKIP: another user's requests (needs root and setpriv to act as another user)"
 fi
-LD_LIBRARY_PATH="$HERE" "$BIN" --gui --no-open --gui-port $PORT --config "$TMP/bananasplit.ini" 2>"$TMP/second.txt" || fail "second --gui failed"
+XDG_RUNTIME_DIR="$RUNDIR" LD_LIBRARY_PATH="$HERE" "$BIN" --gui --no-open --gui-port $PORT --config "$TMP/bananasplit.ini" 2>"$TMP/second.txt" || fail "second --gui failed"
 grep -q "already running" "$TMP/second.txt" || fail "second --gui did not find the running one"
 [ "$(cmd 'op=link&ch=0&v=1')" = 200 ] || fail "link strip 1"
 [ "$(cmd 'op=link&ch=6&v=1')" = 200 ] || fail "link V1"
@@ -138,6 +149,8 @@ trap - EXIT
 cat "$TMP/stderr.txt"
 [ $RC -eq 0 ] || fail "gui: exit code $RC"
 grep -q "GUI at $URL/" "$TMP/stderr.txt" || fail "GUI URL not printed"
+[ ! -e "$TOKEN_FILE" ] || fail "the token file was left behind"
+grep -q "#t=" "$TMP/stderr.txt" && fail "the token was printed"
 grep -q "^mode = multi$" "$TMP/bananasplit.ini" && grep -q "^links = 1,V1$" "$TMP/bananasplit.ini" || fail "recorder settings not saved on quit"
 sed -n '/^\[bus.V2\]$/,/^\[/p' "$TMP/bananasplit.ini" | grep -q "^eq = on$" || fail "EQ on not saved"
 grep -q "^eq1 = lowcut 80 +0 0.71$" "$TMP/bananasplit.ini" && grep -q "^eq4 = bell 1500 -4.5 1$" "$TMP/bananasplit.ini" || fail "EQ bands not saved"
@@ -173,12 +186,12 @@ TMP=$(mktemp -d)
 export PACTL_LOG="$TMP/pactl.log" MOCKJACK_REPORT="$TMP/report.txt"
 sed 's/^create_cables = false$/create_cables = true/' "$HERE/e2e.ini" > "$TMP/bananasplit.ini"
 URL="http://127.0.0.1:18792"
-LD_LIBRARY_PATH="$HERE" "$BIN" --gui --no-open --gui-port 18792 --no-cables --config "$TMP/bananasplit.ini" 2>"$TMP/stderr.txt" &
+XDG_RUNTIME_DIR="$TMP/run" LD_LIBRARY_PATH="$HERE" "$BIN" --gui --no-open --gui-port 18792 --no-cables --config "$TMP/bananasplit.ini" 2>"$TMP/stderr.txt" &
 PID=$!
 trap 'rc=$?; kill $PID 2>/dev/null; exit $rc' EXIT
 i=0; until curl -sf "$URL/api/ping" >/dev/null 2>&1; do i=$((i+1)); [ $i -lt 200 ] || fail "4a: GUI did not come up"; sleep 0.05; done
 curl -s -o /dev/null -H 'X-BananaSplit: 1' --data 'op=save' "$URL/api/cmd"
-curl -s -o /dev/null -H 'X-BananaSplit: 1' --data 'op=quit' "$URL/api/cmd"
+curl -s -o /dev/null -H 'X-BananaSplit: 1' -H "X-BananaSplit-Token: $(cat "$TMP/run/bananasplit/BananaSplit.token")" --data 'op=quit' "$URL/api/cmd"
 RC=0; wait $PID || RC=$?; trap - EXIT
 [ $RC -eq 0 ] || fail "4a: exit code $RC"
 grep -q "^create_cables = true$" "$TMP/bananasplit.ini" || fail "--no-cables was written into the config"
@@ -391,17 +404,17 @@ curl -sf "http://127.0.0.1:$P/api/ping" >/dev/null || fail "7: the GUI is gone a
 # the update: a new file at the same place (as dpkg and install.sh do it)
 cp "$TMP/bin/bananasplit" "$TMP/bin/.new" && mv "$TMP/bin/.new" "$TMP/bin/bananasplit"
 readlink "/proc/$PID/exe" | grep -q "(deleted)" || fail "7: the update simulation did not replace the file"
-[ "$(curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' --data 'op=autostart&v=1' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: autostart: $(cat "$TMP/resp")"
+[ "$(curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' -H "X-BananaSplit-Token: $(cat "$TMP/run/bananasplit/BananaSplit.token")" --data 'op=autostart&v=1' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: autostart: $(cat "$TMP/resp")"
 AUTO="$TMP/home/.config/autostart/bananasplit.desktop"
 grep -qx "Exec=$TMP/bin/bananasplit --gui --hidden" "$AUTO" || fail "7: autostart Exec after an update: $(grep Exec "$AUTO")"
 grep -qx "TryExec=$TMP/bin/bananasplit" "$AUTO" || fail "7: autostart TryExec"
-[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-BananaSplit: 1' --data 'op=autostart&v=0' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: autostart off"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-BananaSplit: 1' -H "X-BananaSplit-Token: $(cat "$TMP/run/bananasplit/BananaSplit.token")" --data 'op=autostart&v=0' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: autostart off"
 [ ! -e "$AUTO" ] || fail "7: autostart file not removed"
 # Added to the app menu, then Start with the system: the autostart entry
 # starts the copy the menu starts, not this one (a download folder, say),
 # whichever was clicked first.
-[ "$(curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' --data 'op=install' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: install: $(cat "$TMP/resp")"
-[ "$(curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' --data 'op=autostart&v=1' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: autostart after install: $(cat "$TMP/resp")"
+[ "$(curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' -H "X-BananaSplit-Token: $(cat "$TMP/run/bananasplit/BananaSplit.token")" --data 'op=install' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: install: $(cat "$TMP/resp")"
+[ "$(curl -s -o "$TMP/resp" -w '%{http_code}' -H 'X-BananaSplit: 1' -H "X-BananaSplit-Token: $(cat "$TMP/run/bananasplit/BananaSplit.token")" --data 'op=autostart&v=1' "http://127.0.0.1:$P/api/cmd")" = 200 ] || fail "7: autostart after install: $(cat "$TMP/resp")"
 grep -qx "Exec=$TMP/home/.local/bin/bananasplit --gui --hidden" "$AUTO" || fail "7: autostart after Add to the app menu: $(grep Exec "$AUTO")"
 env HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" "$TMP/home/.local/bin/bananasplit" --uninstall >/dev/null 2>&1 || fail "7: uninstall"
 [ ! -e "$AUTO" ] && [ ! -e "$TMP/home/.local/bin/bananasplit" ] || fail "7: uninstall left the autostart entry or the copy"
@@ -409,6 +422,7 @@ env HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" "$TMP/home/.local/bin/b
 RC=0; wait $PID || RC=$?; trap - EXIT
 [ $RC -eq 0 ] || fail "7: exit code $RC after --quit"
 [ ! -e "$NOTE" ] || fail "7: the port note was left behind"
+[ ! -e "$TMP/run/bananasplit/BananaSplit.token" ] || fail "7: the token file was left behind"
 (app --quit) 2>"$TMP/quit2.txt" && fail "7: --quit without a running GUI succeeded"
 grep -q "no BananaSplit GUI is running" "$TMP/quit2.txt" || fail "7: --quit message: $(cat "$TMP/quit2.txt")"
 kill $BLOCK 2>/dev/null; wait $BLOCK 2>/dev/null || true

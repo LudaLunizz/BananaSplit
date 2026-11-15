@@ -349,7 +349,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
 
     let port = gui::start(hub.clone(), opts.port, opts.explicit_port)?;
     gui::start_midi(&hub, win::midi::io());
-    gui::note_port(&cfg.client_name, port);
+    gui::note_port(&hub, &cfg.client_name, port);
     let url = gui::url(port);
     let mut notes = notes;
     if port != opts.port {
@@ -364,7 +364,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
         starting: None,
         start_hidden: false,
         show_when_ready: false,
-        url: url.clone(),
+        url: hub.page_url(port),
         recording: false,
     };
     // Started after the first frame is published (it takes a moment). In the
@@ -632,7 +632,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     hub.close();
     takes.shutdown();
     updater.shutdown();
-    gui::forget_port(&cfg.client_name, port);
+    gui::forget_port(&hub, &cfg.client_name, port);
     ctx.rec.shutdown();
     ctx.player.shutdown();
     ctx.vban.shutdown();
@@ -709,7 +709,7 @@ fn main() -> ExitCode {
     if args.quit {
         let defq = Config::default();
         if let Some(p) = gui::find_running(&defq.client_name, args.explicit_port.then_some(args.port))
-            && let Some((code, _)) = gui::request_quit(p)
+            && let Some((code, _)) = gui::request_quit(&defq.client_name, p)
             && code == 200
         {
             return ExitCode::SUCCESS;
@@ -717,7 +717,7 @@ fn main() -> ExitCode {
         if let Ok(c) = Config::load_or_default(&args.path)
             && let Some(p) = gui::find_running(&c.client_name, args.explicit_port.then_some(args.port))
         {
-            let _ = gui::request_quit(p);
+            let _ = gui::request_quit(&c.client_name, p);
             return ExitCode::SUCCESS;
         }
         eprintln!("no running BananaSplit found");
@@ -749,7 +749,7 @@ fn main() -> ExitCode {
         }
         // Its window comes to the front: this start may pass that on.
         sys::allow_foreground();
-        if !gui::request_show(port, "") && !gui_platform::open_window(&url) {
+        if !gui::request_show(port, "") && !gui_platform::open_window(&gui::running_page_url(&cfg.client_name, port)) {
             return fail(
                 &format!("BananaSplit is already running at {url}, but its window could not be opened"),
                 false,

@@ -219,8 +219,11 @@ function Window-State {
     "$mine; foreground: $fgName [$fgPid] hwnd $fg"
 }
 function Post-Cmd([string]$body) {
+    # the API token (#166): next to the port note, read again each time (a restart makes a new one)
+    $tf = Get-ChildItem "$work\Local\bananasplit\*.token" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $tok = if ($tf) { (Get-Content -Raw $tf.FullName).Trim() } else { '' }
     (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop -Method Post -Uri "$url/api/cmd" `
-        -Headers @{ 'X-BananaSplit' = '1' } -ContentType 'application/x-www-form-urlencoded' -Body $body).Content
+        -Headers @{ 'X-BananaSplit' = '1'; 'X-BananaSplit-Token' = $tok } -ContentType 'application/x-www-form-urlencoded' -Body $body).Content
 }
 # A mixer started when the default port was taken uses another one.
 function Use-NotedPort {

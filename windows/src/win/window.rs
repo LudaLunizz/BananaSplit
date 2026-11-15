@@ -178,13 +178,16 @@ fn show(window: &Window) {
 /// `bananasplit --window …`: runs until the mixer goes away or says `quit`
 /// (or, when started by hand, until the window is closed).
 pub fn main(args: &[String]) -> ExitCode {
-    let opts = match parse_args(args) {
+    let mut opts = match parse_args(args) {
         Ok(o) => o,
         Err(e) => {
             hello(Hello::Fail(e.to_string()));
             return ExitCode::from(2);
         }
     };
+    // The mixer passes the API token in the environment: the page reads it
+    // from its fragment.
+    opts.url = crate::gui::token::url_from_env(&opts.url, std::env::var_os(crate::gui::token::ENV));
     match run(opts) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

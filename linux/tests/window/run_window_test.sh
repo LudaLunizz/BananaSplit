@@ -69,7 +69,9 @@ tray_start() { : > "$T/tray.log"; : > "$T/cmd"; "$PYTHON" "$HERE/fake_tray.py" "
 tray_stop() { kill "$TRAY" 2>/dev/null; wait "$TRAY" 2>/dev/null || true; TRAY=""; }
 tray() { echo "$1" >> "$T/cmd"; }
 state() { curl -s "$URL/api/state"; }
-quit_api() { curl -s -o /dev/null -H 'X-BananaSplit: 1' --data op=quit "$URL/api/cmd"; wait "$PID" || fail "exit code $? after quit"; PID=""; }
+# the API token (#166): in the runtime folder, next to the port note
+tok() { cat "${XDG_RUNTIME_DIR:-$HOME/.cache}/bananasplit/BananaSplit.token" 2>/dev/null; }
+quit_api() { curl -s -o /dev/null -H 'X-BananaSplit: 1' -H "X-BananaSplit-Token: $(tok)" --data op=quit "$URL/api/cmd"; wait "$PID" || fail "exit code $? after quit"; PID=""; }
 winpid() { win | sed -n 's/.*"pid": \([0-9]*\).*/\1/p' | head -1; }
 nowin() { for p in /proc/[0-9]*; do tr '\0' ' ' < "$p/cmdline" 2>/dev/null | grep -q -e "--window http://127.0.0.1:$PORT/" && return 1; done; return 0; }
 
@@ -155,7 +157,7 @@ echo "WINDOW PASS: with close_to_tray = false, closing the window quits BananaSp
 cfg ""
 : > "$T/browser.log"
 start "$NO_WEBKIT"
-waitfor 'grep -q "^--app=$URL/$" "$T/browser.log"' "no browser app window without WebKitGTK"
+waitfor 'grep -q "^--app=$URL/#t=[0-9a-f]\{64\}$" "$T/browser.log"' "no browser app window without WebKitGTK"
 grep -q "WebKitGTK not found" "$T/out.txt" || fail "no message about the missing WebKitGTK"
 waitfor '[ "$(grep -c "^registered " "$T/tray.log")" -ge 1 ]' "W4: no tray icon"
 waitfor 'grep -q "1:Show BananaSplit" "$T/tray.log"' "W4: tray menu"
@@ -218,7 +220,7 @@ tray_start
 : > "$T/out.txt"
 start "$WITH_WEBKIT"
 waitfor mapped "the window did not appear (W8)"
-curl -s -o /dev/null -H 'X-BananaSplit: 1' --data 'op=rec&v=1' "$URL/api/cmd"
+curl -s -o /dev/null -H 'X-BananaSplit: 1' -H "X-BananaSplit-Token: $(tok)" --data 'op=rec&v=1' "$URL/api/cmd"
 waitfor 'state | grep -q "\"rec\":{\"on\":true"' "recording did not start (W8)"
 waitfor 'grep -q "3:Stop recording" "$T/tray.log"' "tray does not show the recording (W8)"
 cp "$BIN" "$BIN.new" && mv "$BIN.new" "$BIN"   # the update

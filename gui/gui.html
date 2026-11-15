@@ -1233,6 +1233,7 @@ useLook(document.documentElement.dataset.look || "classic");
         <button class="mi" role="menuitem" data-op="save"><span class="chk"></span>Save settings</button>
         <button class="mi" role="menuitem" data-op="reconnect"><span class="chk"></span>Reconnect devices</button>
         <button class="mi" role="menuitem" data-op="openfolder"><span class="chk"></span>Open the recordings folder</button>
+        <button class="mi" role="menuitem" data-op="deck"><span class="chk"></span>Open the touch deck</button>
         <div class="msep"></div>
         <div class="mrow caps">Theme <span class="segs" id="lookseg"><button data-look-v="classic">Classic</button><button data-look-v="console">Console</button></span></div>
         <div class="mrow caps">Mode <span class="segs" id="themeseg"><button data-theme-v="dark">Dark</button><button data-theme-v="light">Light</button><button data-theme-v="auto">Auto</button></span></div>
@@ -1508,6 +1509,32 @@ useLook(document.documentElement.dataset.look || "classic");
 
 <script>
 "use strict";
+// The API token (#166). BananaSplit opens its window, a browser and the deck with it in the
+// fragment (#t=..., which is never sent to a server). Read it once, take it out of the address
+// bar, keep it for this tab only. It goes with every command; the ones with effects outside the
+// mixer (quit, record, updates, opening folders, VBAN out) are refused without it.
+const API_TOKEN = (() => {
+  const m = /^#t=([0-9a-f]{64})$/.exec(location.hash);
+  if (m) history.replaceState(null, "", location.pathname + location.search);
+  try {
+    if (m) sessionStorage.setItem("bananasplit-token", m[1]);
+    return m ? m[1] : sessionStorage.getItem("bananasplit-token");
+  } catch (e) {
+    return m ? m[1] : null; // no storage: only this load has it
+  }
+})();
+function cmdHeaders() {
+  const h = { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" };
+  if (API_TOKEN) h["X-BananaSplit-Token"] = API_TOKEN;
+  return h;
+}
+// A refusal for want of the token, in words for this page.
+function tokenNote(r, text) {
+  if (r.status !== 403 || !/X-BananaSplit-Token/.test(text)) return text;
+  return API_TOKEN
+    ? "BananaSplit has restarted since this page was opened: open it again from BananaSplit's window"
+    : "Open BananaSplit's window (or the deck from its menu) to use this";
+}
 // The system this page is shown on, set on <html> by the server: some parts of the page are only for one.
 const PLATFORM = document.documentElement.dataset.platform || "linux", MAC = PLATFORM === "macos";
 // The window is drawn by the Safari this Mac has (WKWebView). One before
@@ -1617,10 +1644,10 @@ async function send(params, quiet) {
   try {
     const r = await fetch("/api/cmd", {
       method: "POST",
-      headers: { "X-BananaSplit": "1", "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
+      headers: cmdHeaders(),
       body: new URLSearchParams(params).toString(),
     });
-    const text = await answerText(r);
+    const text = tokenNote(r, await answerText(r));
     if (!r.ok) toast(text, true); else if (!quiet) toast(text, false);
     return r.ok;
   } catch (e) {

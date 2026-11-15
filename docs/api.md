@@ -2,8 +2,9 @@
 
 The mixer's window, the touch deck (`/deck`) and `bananasplit --quit` all talk to a small HTTP
 server that every BananaSplit (Linux, Windows, macOS) runs on the same computer. Anything on that
-computer, run by the same user, can use it the same way: set a fader, start a recording, read the
-meters.
+computer, run by the same user, can use it the same way: set a fader, read the meters, recall a
+scene. What reaches beyond the mixer (quitting, updates, recording, opening folders, sending audio
+over the network) also needs a [token](#the-token) from a file only you can read (from 2.9.2).
 
 This describes the API of the BananaSplit it ships with; where a part came later, its first version
 is named next to it. There are two ways to change things:
@@ -22,6 +23,7 @@ cannot disagree.
 
 * [Reaching it](#reaching-it)
 * [What it checks](#what-it-checks)
+* [The token](#the-token)
 * [Endpoints](#endpoints)
 * [`POST /api/cmd`: the commands](#post-apicmd-the-commands)
 * [The state](#the-state)
@@ -56,11 +58,87 @@ Every request has to pass these, or it is refused with a 403 before anything is 
   (*"forbidden"*). Programs (curl, scripts) send neither header and pass.
 * **`POST` also needs `X-BananaSplit: 1`** (*"forbidden"* without it). A custom header makes a
   browser ask first, which the server never allows, so other pages cannot press buttons.
+* **The protected operations also need the token** (from 2.9.2): the `X-BananaSplit-Token` header
+  with the contents of the token file. See [The token](#the-token).
+
+### Who can do what
+
+* **Other users** on the same computer are refused, on Linux, Windows and macOS (macOS from
+  2.8.15): the first check above.
+* **Web pages** you open in a browser are refused: `Host`, `Origin`/`Sec-Fetch-Site` and the custom
+  header keep them out.
+* **Programs you run** are trusted with the mixer controls (faders, mutes, routing, EQ, gate and
+  compressor, scenes, the player, channel names): that is what the deck, Bitfocus Companion and
+  simple scripts use, and they need nothing more. For the [protected operations](#the-token) they
+  need the token, which only a program that can read your files has. That keeps out programs that
+  can reach 127.0.0.1 but not your files (a sandboxed app, say); a program that runs as you without a
+  sandbox can read the file, as it can read everything else of yours.
 
 Limits: a request header of at most 16 KB, a body of at most 64 KB, a `Content-Length` (chunked
 bodies are refused with 411), 32 connections at a time (a 33rd gets 503 *"busy"*) and 8 event
 streams (*"too many windows open"*). Every answer closes the connection (`Connection: close`),
 except the event stream.
+
+## The token
+
+At every start BananaSplit makes a new random token (256 bits from the system's random source) and
+writes it to `bananasplit/<JACK client name>.token`, next to the port note and with the same name
+(so `BananaSplit.token` for the default client), readable by your user only (mode 0600 on Linux and
+macOS, from the moment it exists; on Windows in your own `%LOCALAPPDATA%`). It is removed when
+BananaSplit quits. The file holds the token (64 hex digits) and a newline.
+
+| System | Token file |
+|---|---|
+| Linux | `$XDG_RUNTIME_DIR/bananasplit/BananaSplit.token` (`~/.cache/bananasplit/...` without it) |
+| Linux, Flatpak | `$XDG_RUNTIME_DIR/app/io.github.LudaLunizz.BananaSplit/bananasplit/BananaSplit.token` |
+| Windows | `%LOCALAPPDATA%\bananasplit\BananaSplit.token` |
+| macOS | `~/Library/Caches/bananasplit/BananaSplit.token` |
+
+Send it in the **`X-BananaSplit-Token`** header. Without it, or with a wrong one (an old token from
+before a restart), a protected operation is refused with **403** and a message that names the header
+and the file; nothing else is done, and a v1 batch with one protected command in it is refused whole.
+The token is compared in constant time and never appears in an answer (the state, the paths, the
+page). Everything else works without it.
+
+**Protected** (needs the token):
+
+| API | What |
+|---|---|
+| `POST /api/cmd` | `quit`, `update` (every `a`), `install`, `autoupdate`, `autostart`, `openfolder`, `deck`, `rec`, `recset` with a `folder`, `vban`, `vbanout`; on Windows and macOS `cables` with `a` = `page`, `splitter`, `sound` or `midi` |
+| API v1 paths | `/recorder/recording`, `/vban/on`, `/vban/out/<n>/...` (every setting of an outgoing stream) |
+| API v1 shortcuts | `POST /api/v1/recorder/start`, `POST /api/v1/recorder/stop` |
+
+Not protected: every other op and path (levels, mutes, solo, routing and sends, record arming
+(`link`, `/strips/<n>/record`), EQ, gate, compressor, limiter, channel names, the recorder's mode,
+format and bitrate, incoming VBAN streams and the VBAN port, the player, scenes, the channel menus,
+theme and window settings, MIDI) and every `GET`.
+
+**Who has it.** The window BananaSplit opens, a browser it opens instead, and the touch deck opened
+from its menu (*Open the touch deck*) get it in the address's fragment (`#t=…`, which a browser never
+sends to a server), read it once, take it out of the address bar and keep it for that tab only
+(`sessionStorage`). The window process gets it in its environment, not on its command line.
+`bananasplit --quit` and a second `bananasplit --gui` read the file. A page or deck you open by hand
+(`http://127.0.0.1:8790/deck`) works for the mixer controls; its protected buttons (the deck's
+REC) say *"Open BananaSplit's window (or the deck from its menu) to use this"*. MIDI controllers run
+inside BananaSplit and need no token.
+
+```sh
+# Linux (macOS: T=$(cat ~/Library/Caches/bananasplit/BananaSplit.token))
+T=$(cat "${XDG_RUNTIME_DIR:-$HOME/.cache}/bananasplit/BananaSplit.token")
+curl -s -H 'X-BananaSplit: 1' -H "X-BananaSplit-Token: $T" -X POST localhost:8790/api/v1/recorder/start
+curl -s -H 'X-BananaSplit: 1' -H "X-BananaSplit-Token: $T" --data 'op=quit' localhost:8790/api/cmd
+```
+
+```powershell
+# Windows (PowerShell)
+$t = (Get-Content -Raw "$env:LOCALAPPDATA\bananasplit\BananaSplit.token").Trim()
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8790/api/v1/recorder/start `
+  -Headers @{ 'X-BananaSplit' = '1'; 'X-BananaSplit-Token' = $t }
+```
+
+Bitfocus Companion (its *Generic HTTP* module) and other tools that cannot read a file can do every
+mixer control without the token; to start and stop recording from them, paste the token in as a
+header after each BananaSplit start, or run a small script that reads the file.
 
 ## Endpoints
 
@@ -81,7 +159,7 @@ except the event stream.
 | `GET /api/v1/paths` | Every value API v1 can change, with its range and value now. |
 | `POST /api/v1/command` | One command or a batch, as JSON. |
 | `POST /api/v1/scenes/{name}/recall` | Load a saved scene. |
-| `POST /api/v1/recorder/start`, `.../stop` | Start or stop recording. |
+| `POST /api/v1/recorder/start`, `.../stop` | Start or stop recording ([token](#the-token)). |
 | `POST /api/v1/player/play`, `.../pause`, `.../stop` | Play, pause or stop the player. |
 
 Anything else under a known method is a 404; other methods are 405 (`Allow: GET, POST`).
@@ -141,6 +219,7 @@ number.
 | `recset` | any of `mode` (`mix` or `multi`), `format` (`mp3`, `wav16`, `wav24`, `wav32f`), `kbps` (128, 160, 192, 224, 256, 320), `folder` | Recorder settings; what is not given stays. | `ok`, or `applies to the next recording` |
 | `name` | `ch`, `v` | Rename a channel: 1 to 32 characters, no control characters. | `ok` |
 | `openfolder` | | Open the recorder's folder in the file manager. | `opened <folder>` |
+| `deck` | | Open the touch deck in the browser, with the token (from 2.9.2). | `opening the touch deck in your browser` |
 
 **EQ, gate and compressor**
 
@@ -397,7 +476,7 @@ curl -s -H "$H" -H "$J" --data '{"cmd":"step","path":"/strips/2/gain_db","by":3}
 curl -s -H "$H" -H "$J" --data '[{"cmd":"fade","path":"/buses/V1/gain_db","to":-20,"ms":500},
   {"cmd":"set","path":"/strips/3/sends/B1","value":true}]' localhost:$P/api/v1/command
 curl -s -H "$H" -X POST localhost:$P/api/v1/scenes/Live/recall
-curl -s -H "$H" -X POST localhost:$P/api/v1/recorder/start
+curl -s -H "$H" -H "X-BananaSplit-Token: $T" -X POST localhost:$P/api/v1/recorder/start   # T: the token
 
 # EQ band 2 of strip 1: a bell at 3 kHz, +4 dB, Q 1.4 (one batch, checked whole first)
 curl -s -H "$H" -H "$J" --data '[{"cmd":"set","path":"/strips/1/eq/2/type","value":"bell"},
@@ -410,8 +489,8 @@ curl -s -H "$H" -H "$J" --data '[{"cmd":"set","path":"/strips/2/comp","value":tr
   {"cmd":"set","path":"/strips/2/comp/ratio","value":4},
   {"cmd":"fade","path":"/strips/2/comp/threshold_db","to":-24,"ms":2000}]' localhost:$P/api/v1/command
 curl -s -H "$H" -H "$J" --data '{"cmd":"step","path":"/strips/1/gate/release_ms","by":50}' localhost:$P/api/v1/command
-# VBAN: receive "Stream1" from any sender into strip 6, send B1 to 192.168.1.20
-curl -s -H "$H" -H "$J" --data '[{"cmd":"set","path":"/vban/on","value":true},
+# VBAN: receive "Stream1" from any sender into strip 6, send B1 to 192.168.1.20 (the token: VBAN out)
+curl -s -H "$H" -H "$J" -H "X-BananaSplit-Token: $T" --data '[{"cmd":"set","path":"/vban/on","value":true},
   {"cmd":"set","path":"/vban/in/1/from","value":"any"},
   {"cmd":"set","path":"/vban/in/1/strip","value":6},
   {"cmd":"set","path":"/vban/in/1/on","value":true},
@@ -441,7 +520,7 @@ A request that cannot be done is answered with a 4xx or 5xx status and its messa
 | Status | When |
 |---|---|
 | 400 | A command that is wrong or cannot be done (the message says why), a body that is not UTF-8, a request that cannot be read. |
-| 403 | Another user, a wrong `Host`, a request from another site or without `X-BananaSplit: 1`. |
+| 403 | Another user, a wrong `Host`, a request from another site or without `X-BananaSplit: 1`, a protected operation without the right [token](#the-token). |
 | 404 | An unknown path, a recording that is not there, no updater. |
 | 405 | A method other than `GET` or `POST`. |
 | 408, 411, 413, 431 | A request that did not arrive in time, has no `Content-Length`, is too large, or has too large a header. |
@@ -451,6 +530,7 @@ A request that cannot be done is answered with a 4xx or 5xx status and its messa
 
 ```sh
 P=8790; H='X-BananaSplit: 1'
+T=$(cat "${XDG_RUNTIME_DIR:-$HOME/.cache}/bananasplit/BananaSplit.token")   # the token (Linux)
 
 curl -s localhost:$P/api/state | head -c 300                       # the state, once
 curl -sN localhost:$P/api/events                                   # the state as it changes
@@ -459,7 +539,7 @@ curl -s -H "$H" --data 'op=gain&ch=0&v=-6' localhost:$P/api/cmd    # strip 1 to 
 curl -s -H "$H" --data 'op=mute&ch=3&v=1'  localhost:$P/api/cmd    # strip 4 muted      -> ok
 curl -s -H "$H" --data 'op=route&ch=6&bus=3&v=1' localhost:$P/api/cmd   # V1 sends to B1
 curl -s -H "$H" --data 'op=link&ch=0&v=1' localhost:$P/api/cmd && \
-curl -s -H "$H" --data 'op=rec&v=1' localhost:$P/api/cmd           # record strip 1
+curl -s -H "$H" -H "X-BananaSplit-Token: $T" --data 'op=rec&v=1' localhost:$P/api/cmd   # record strip 1
 curl -s -H "$H" --data 'op=scene&name=Live&act=load' localhost:$P/api/cmd
 
 curl -s -H "$H" --data 'op=gain&ch=0&v=loud' localhost:$P/api/cmd                       # gain must be a number
@@ -467,7 +547,7 @@ curl -s -H "$H" -H 'Accept: application/json' --data 'op=gain&ch=0&v=loud' local
                                                                   # {"error":"gain must be a number"}
 ```
 
-In JavaScript (the page does exactly this):
+In JavaScript (the page does this, and adds `X-BananaSplit-Token` when it was opened with the token):
 
 ```js
 const r = await fetch("/api/cmd", {

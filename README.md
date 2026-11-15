@@ -71,6 +71,7 @@ Some design choices, and the reasons written down for them:
 | `buffer_size` setting | The period asked of PipeWire | Not used | The IO cycle asked of each device |
 | Latency documentation | Measured round trips and tuning ([Latency](linux/README.md#latency)) | How the buffers work, no measured figures ([Latency and buffers](windows/README.md#latency-and-buffers)) | The buffer setting, no measured figures ([Devices](macos/README.md#devices)) |
 | Local API answers only your own user | Yes (`/proc/net/tcp`) | Yes (Windows' TCP tables) | Yes (the kernel's TCP list; IPv4 only) |
+| Quit, record, update, VBAN out need the API token (from 2.9.2) | Yes | Yes | Yes |
 | Window and tray | GTK 3 + WebKitGTK, StatusNotifierItem tray | WebView2, notification area | WKWebView, menu bar |
 | Packages | .deb, portable .tar.gz, Flatpak | Standalone .exe in a zip | App in a zip, signed ad hoc (not with a Developer ID) |
 
@@ -143,7 +144,7 @@ The full Linux manual covering configuration, latency tuning, VBAN and the recor
 
 ### Control it from other programs
 
-Every BananaSplit serves a small local HTTP API on `127.0.0.1:8790`, the one its own window uses: read the state and the meters, set faders, start a recording. It is described in [`docs/api.md`](docs/api.md).
+Every BananaSplit serves a small local HTTP API on `127.0.0.1:8790`, the one its own window uses: read the state and the meters, set faders, start a recording. It is described in [`docs/api.md`](docs/api.md). Mixer controls need nothing more; quitting, recording, updates, opening folders and sending audio over the network also need the token BananaSplit writes at each start to a file only you can read (`bananasplit/BananaSplit.token` next to its port note, see [The token](docs/api.md#the-token)). Scripts read that file; Bitfocus Companion can do every mixer control without it.
 
 ### Windows
 
