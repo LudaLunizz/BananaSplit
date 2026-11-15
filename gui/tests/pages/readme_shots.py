@@ -55,6 +55,8 @@ TAKES = [{'key': f'2026-11-1{d}_{t}', 'n': i + 1, 'when': f'2026-11-1{d} {t.repl
           'secs': secs, 'sr': 48000, 'fmt': 'MP3 320 kbit/s', 'bytes': int(secs * 40000)}
          for i, (d, t, secs) in enumerate([(2, '20-15-02', 1740.0), (3, '21-02-40', 3310.0), (4, '19-48-11', 2285.0)])]
 SHOW = {'theme': 'dark', 'rec_on': False}
+# LOOK=console (environment): the pictures in that look instead of Classic
+LOOK = os.environ.get('LOOK', 'classic')
 NAMES = [('Mic', 'Yeti Stereo Microphone Analog Stereo', 'Yeti Stereo Microphone'), ('Discord', 'Discord', 'Discord'),
          ('Desktop', 'system', 'system'), ('Game', 'Game', 'Game'), ('Music', 'Strawberry', 'Strawberry'), ('Aux', 'Firefox', 'Firefox'),
          ('Speakers', 'Starship/Matisse HD Audio Controller Analog Stereo', 'Speakers'), ('Headphones', 'Yeti Stereo Microphone Analog Stereo', 'Headphones'),
@@ -109,7 +111,7 @@ def lived_in(s):
     s['player'] = {'state': 'playing', 'take': TAKES[1]['key'], 'pos': 1204.3, 'dur': TAKES[1]['secs'], 'underruns': 0, 'error': None}
     s['playTo'] = 0b00011
     s['scene'], s['scenes'] = 'Streaming', ['Streaming', 'Podcast', 'Quiet night']
-    s['app']['theme'] = SHOW['theme']; s['app']['listen'] = NAMES[6][1]
+    s['app']['theme'] = SHOW['theme']; s['app']['look'] = LOOK; s['app']['listen'] = NAMES[6][1]
     s['vban'].update({'on': True, 'ips': [{'if': 'eth0', 'ip': '192.0.2.2', 'bc': '192.0.2.255'}], 'listening': 6980, 'seen': []})
     s['vban']['out'][0].update({'on': True, 'name': 'Linux', 'to': '192.0.2.20', 'src': 10, 'state': 'ok', 'text': 'to 192.0.2.20:6980 · 48 kHz · stereo · 16-bit', 'packets': 5200})
     s['update']['current'] = '2.9.0'
@@ -154,7 +156,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         p = self.path.split('?')[0]
         if p == '/':
-            attrs = ' data-theme="dark" data-zoom="1"' + (f' data-platform="{platform}"' if attr else '')
+            attrs = ' data-theme="dark" data-zoom="1"' + ('' if LOOK == 'classic' else f' data-look="{LOOK}"') + (f' data-platform="{platform}"' if attr else '')
             html = PAGE.replace('<html lang="en">', f'<html lang="en"{attrs}>', 1)
             self.send(200, 'text/html; charset=utf-8', html)
         elif p == '/api/events':
@@ -250,7 +252,7 @@ def shot(name):
 def go(theme='dark'):
     SHOW['theme'] = theme
     call('POST', f'{S}/url', {'url': f'http://127.0.0.1:{PORT}/'})
-    wait('document.body && /ENGINE|engine/.test(document.body.innerText)', 'the first state')
+    wait('document.body && /engine/i.test(document.body.innerText)', 'the first state')
     js('const st = document.createElement("style"); st.textContent = ".pk span { contain: layout style !important; width: 40px; }"; document.head.append(st)')
     time.sleep(1.5)  # the meters' peak hold fills in from the levels
 

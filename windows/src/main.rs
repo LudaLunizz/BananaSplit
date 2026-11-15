@@ -338,7 +338,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     let hub =
         gui::Hub::new(ctx.shared.clone(), rec.clone(), ctx.vban.clone(), ctx.player.clone(), takes.clone(), scenes);
     hub.set_names(channel_names(cfg));
-    hub.set_look(cfg.gui.theme, cfg.gui.zoom);
+    hub.set_look(&cfg.gui);
     hub.autostart.store(desktop::autostart_enabled(), SeqCst);
     hub.installed.store(desktop::menu_installed(), SeqCst);
     hub.cable_welcome.store(opts.cable_welcome, SeqCst);
@@ -429,15 +429,19 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
                 Request::Show(_) => window.show(cfg),
                 Request::Theme(t) => {
                     cfg.gui.theme = t;
-                    hub.set_look(cfg.gui.theme, cfg.gui.zoom);
+                    hub.set_look(&cfg.gui);
                 }
                 Request::CloseToTray(b) => {
                     cfg.gui.close_to_tray = b;
                     window.send(gui::ToWindow::CloseToTray(b));
                 }
+                Request::Look(l) => {
+                    cfg.gui.look = l;
+                    hub.set_look(&cfg.gui);
+                }
                 Request::Zoom(z) => {
                     cfg.gui.zoom = z;
-                    hub.set_look(cfg.gui.theme, cfg.gui.zoom);
+                    hub.set_look(&cfg.gui);
                 }
                 Request::Listen(d) => cfg.gui.listen = Some(d),
                 Request::Scene(name) => cfg.gui.scene = name,

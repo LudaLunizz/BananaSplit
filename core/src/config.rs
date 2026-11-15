@@ -281,6 +281,36 @@ impl Theme {
     }
 }
 
+/// The page's theme set: its whole look, each with a dark and a light
+/// version (`Theme` picks between those).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Look {
+    /// The look BananaSplit had up to 2.9.0.
+    #[default]
+    Classic,
+    /// Neutral greys, a flat console; colour only for what a channel is and does.
+    Console,
+}
+
+impl Look {
+    pub const ALL: [Look; 2] = [Look::Classic, Look::Console];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Look::Classic => "classic",
+            Look::Console => "console",
+        }
+    }
+
+    pub fn parse(v: &str) -> Result<Look, String> {
+        let v = v.trim().to_ascii_lowercase();
+        Look::ALL
+            .into_iter()
+            .find(|l| l.as_str() == v)
+            .ok_or_else(|| format!("unknown look {v:?} (expected classic or console)"))
+    }
+}
+
 pub const MIN_ZOOM: f32 = 0.5;
 pub const MAX_ZOOM: f32 = 2.0;
 
@@ -288,6 +318,9 @@ pub const MAX_ZOOM: f32 = 2.0;
 #[derive(Debug, Clone, PartialEq)]
 pub struct GuiConfig {
     pub theme: Theme,
+    /// The theme set. Written only when not Classic, so an older
+    /// BananaSplit can still read the file.
+    pub look: Look,
     /// Closing the window keeps BananaSplit running (in the tray, or
     /// minimized if there is no tray); off = closing it quits.
     pub close_to_tray: bool,
@@ -311,6 +344,7 @@ impl Default for GuiConfig {
     fn default() -> Self {
         GuiConfig {
             theme: Theme::Dark,
+            look: Look::Classic,
             close_to_tray: true,
             zoom: 1.0,
             window: None,
@@ -656,6 +690,7 @@ impl Config {
                 },
                 Section::Gui => match k {
                     "theme" => cfg.gui.theme = Theme::parse(v).map_err(err)?,
+                    "look" => cfg.gui.look = Look::parse(v).map_err(err)?,
                     "close_to_tray" => cfg.gui.close_to_tray = parse_bool(v).map_err(err)?,
                     "zoom" => cfg.gui.zoom = parse_zoom(v).map_err(err)?,
                     "window" => cfg.gui.window = parse_window_size(v).map_err(err)?,
@@ -834,6 +869,9 @@ impl Config {
         let g = &self.gui;
         let _ = writeln!(o, "\n[gui]");
         let _ = writeln!(o, "theme = {}", g.theme.as_str());
+        if g.look != Look::Classic {
+            let _ = writeln!(o, "look = {}", g.look.as_str());
+        }
         let _ = writeln!(o, "close_to_tray = {}", g.close_to_tray);
         let _ = writeln!(o, "zoom = {}", g.zoom);
         let _ = writeln!(o, "window = {}", g.window.map_or(String::new(), |(w, h)| format!("{w}x{h}")));
@@ -1267,6 +1305,7 @@ mod tests {
         c.recorder.play_to = 0b01001;
         c.gui = GuiConfig {
             theme: Theme::Auto,
+            look: Look::Classic,
             close_to_tray: false,
             zoom: 1.25,
             window: Some((1600, 900)),
@@ -1279,6 +1318,11 @@ mod tests {
         assert!(text.contains(
             "\n[gui]\ntheme = auto\nclose_to_tray = false\nzoom = 1.25\nwindow = 1600x900\nscene = Live Room 06\n"
         ));
+        // Classic is not written (older versions refuse unknown keys); another look is
+        c.gui.look = Look::Console;
+        let text = c.to_ini();
+        assert_eq!(Config::parse(&text).unwrap(), c);
+        assert!(text.contains("\n[gui]\ntheme = auto\nlook = console\nclose_to_tray = false\n"));
         assert!(!text.contains("auto_update"), "off (the default) is not written: an older BananaSplit reads the file");
         assert!(!text.contains("listen"), "not asked yet: not written");
         // the device the user listens on: kept as written, "" = none chosen
@@ -1300,6 +1344,7 @@ mod tests {
             "[strip1]\npan = left\n",
             "[strip1]\ntrim_db = nan\n",
             "[gui]\ntheme = blue\n",
+            "[gui]\nlook = fancy\n",
             "[gui]\nzoom = 3\n",
             "[gui]\nzoom = x\n",
             "[gui]\nscene = ../x\n",

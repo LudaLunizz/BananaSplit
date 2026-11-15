@@ -1228,7 +1228,7 @@ fn run_gui(
     }
     let hub = gui::Hub::new(shared.clone(), rec.clone(), vban.clone(), player.clone(), takes.clone(), scenes);
     hub.set_names(channel_names(cfg));
-    hub.set_look(cfg.gui.theme, cfg.gui.zoom);
+    hub.set_look(&cfg.gui);
     hub.autostart.store(desktop::autostart_enabled(), SeqCst);
     hub.installed.store(desktop::menu_installed(), SeqCst);
     hub.set_client(&backend.client_name);
@@ -1337,11 +1337,15 @@ fn run_gui(
                 gui::Request::Show(token) => window.show(cfg, &token),
                 gui::Request::Theme(t) => {
                     cfg.gui.theme = t;
-                    hub.set_look(cfg.gui.theme, cfg.gui.zoom);
+                    hub.set_look(&cfg.gui);
+                }
+                gui::Request::Look(l) => {
+                    cfg.gui.look = l;
+                    hub.set_look(&cfg.gui);
                 }
                 gui::Request::Zoom(z) => {
                     cfg.gui.zoom = z;
-                    hub.set_look(cfg.gui.theme, cfg.gui.zoom);
+                    hub.set_look(&cfg.gui);
                 }
                 gui::Request::Listen(d) => cfg.gui.listen = Some(d),
                 gui::Request::CloseToTray(on) => {

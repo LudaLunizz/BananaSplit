@@ -165,6 +165,7 @@ number.
 |---|---|---|---|
 | `scene` | `name` (1 to 40 letters, digits, spaces and ``- _ . , ( ) & + ' !``, not starting with a dot), `act` (`load`, `save`, `delete`) | | `scene "Live" saved` ... |
 | `theme` | `v` (`dark`, `light`, `auto`) | | `ok` |
+| `look` | `v` (`classic`, `console`) | *New:* the theme set: the page's whole look, each with its own dark and light (`theme`). | `ok` |
 | `zoom` | `v` (0.5 to 2.0) | | `ok` |
 | `listen` | `v` a device's client name (empty: none) | The output device you listen on (from 2.8.27): bus cards playing to it get a blue border. | `ok` |
 | `closetray` | `v` flag | "Closing the window keeps it running". | `ok` |
@@ -210,7 +211,7 @@ times a second while there is something to show). It is one JSON object:
 | `takes` | `rev` (goes up when the list changes), `count`, `newest` (key or `null`). The list itself is `GET /api/takes`. |
 | `disk` | `total` and `free` bytes where recordings go, or `null`. |
 | `scene`, `scenes` | The current scene's name (empty: none) and the saved scenes. |
-| `app` | `theme`, `closeToTray`, `zoom`, `listen` (from 2.8.27: the device you listen on, `""` = none, `null` = not asked yet), `autostart`, `installed` (in the application menu), `window` (`app`: its own window, `browser`, `none`), `tray`, `platform` (*new*: `linux`, `windows` or `macos`) and, on Windows and macOS only, `welcome` (the first-start cables window is still to be shown). |
+| `app` | `theme`, `look` (*new*: `classic` or `console`), `closeToTray`, `zoom`, `listen` (from 2.8.27: the device you listen on, `""` = none, `null` = not asked yet), `autostart`, `installed` (in the application menu), `window` (`app`: its own window, `browser`, `none`), `tray`, `platform` (*new*: `linux`, `windows` or `macos`) and, on Windows and macOS only, `welcome` (the first-start cables window is still to be shown). |
 | `midi` | From 2.9.0, once MIDI runs: `available` (false: no MIDI on this system, `error` says why), `in`, `out` (the chosen ports, `""` = none), `inOpen`, `outOpen`, `ins`, `outs` (the ports there are now), `error` (`null` or why a port did not open), `last` (the last message received, as text), `learn` (`null`, or `src`, `name` and the suggested `mode` of the control caught, each `null` until one is moved), `bindings` (each `src`, `name`, `target`, `label`, `mode`, `takeover`, `feedback`). |
 | `update` | `null` (no updater), or `auto`, `phase` (`idle`, `checking`, `current`, `available`, `downloading`, `prepared`, `installing`, `ready`, `failed`), `current`, `latest`, `installed` (versions, or `null`), `message`, `got`, `total` (bytes), `method` (`replace`, `package`, `manual`), `canInstall`, `checkedAgo` (seconds or `null`), `rev`. |
 

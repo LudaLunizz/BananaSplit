@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <title>BananaSplit</title>
-<style>
+<!-- One stylesheet per look (theme set), each with its dark and light
+     version. The server puts data-look on <html> (none = classic); the
+     script below switches on only that look's sheet before anything is drawn. -->
+<style data-look="classic">
 /* Palette measured from the BananaSplit studio design (dark), plus a light
    variant. data-theme on <html> is set by BananaSplit when it serves the
    page (dark | light; none = follow the desktop). */
@@ -589,7 +592,624 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
   .vtable tr { display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px; border-top: 1px solid var(--card-edge); padding: 6px 0; }
   .vtable td.st { grid-column: 1 / -1; }
 }
+
+/* ---- parts of the shared page that only other looks show ---- */
+:root { --wave-played: var(--teal); }
+.fader .tn, .qlbl { display: none; }
 </style>
+<style data-look="console" media="not all">
+/* A neutral console: greys carry the surface, colour is kept for what a
+   channel is (green inputs, blue V1–V3, purple B1–B2) and what it
+   is doing (meters, mute, solo, record, the borders). data-theme on <html>
+   is set by BananaSplit when it serves the page (dark | light; none = follow
+   the desktop). */
+:root {
+  --bg: #0f1011;           /* window */
+  --panel: #17181a;        /* header and bottom bar */
+  --panel-edge: #2a2c2f;
+  --card: #1c1d1f;         /* strips, recorder */
+  --card-edge: #313437;
+  --sunk: #090a0b;         /* meter wells, fader slots, waveform, readouts */
+  --raised: #2a2c2f;       /* buttons */
+  --raised-edge: #404347;
+  --row: #232527;
+  --chip: #232527;
+  --off: #2d3033;          /* unlit meter segment, empty bars */
+  --wave-dim: #4b4f53;     /* waveform not played yet */
+  --knob: #2c2e31;
+  --knob-ring: #5a5e63;
+  --tick: #4a4e52;
+  --slot-line: #26282a;
+  --cap: #e4e6e8;
+  --cap-edge: #a3a7ab;
+  --text: #e8e9ea;
+  --muted: #9a9ea2;
+  --dim: #5b5f63;
+  --green: #4fc884;        /* input strips, meters, "online", playing */
+  --accent: #e8e9ea;       /* the chosen one of a set, the played waveform */
+  --on-accent: #0f1011;    /* text on --accent */
+  --purple: #b98cf5;       /* B1–B2 */
+  --blue: #6ea8f7;         /* V1–V3 */
+  --amber: #ecb743;
+  --red: #f2555f;
+  --sel: #2fb37a;
+  --focus: #7aa7ff;
+  --overlay: rgba(0, 0, 0, .7);
+  --seg-muted: #6a6e72;    /* a muted channel's input level */
+  --limit: #e9d75a;        /* a bus limiter's line (kept faint) */
+  --listen: #4f9dff;       /* border of the buses you listen on */
+  --streamed: #f2d14b;     /* border of a bus an app takes sound from */
+  --sw: 108px;             /* narrowest strip */
+  --swmax: 168px;          /* widest strip */
+  --font: "Inter", "Cantarell", "Ubuntu", "Noto Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Ubuntu Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #e6e7e8; --panel: #f3f3f4; --panel-edge: #d2d4d6; --card: #fafafa; --card-edge: #cfd1d4;
+  --sunk: #dddfe1; --raised: #eeeeef; --raised-edge: #c3c6c9; --row: #efeff0; --chip: #ebecec;
+  --off: #cbced1; --knob: #e4e5e6; --knob-ring: #93979b; --tick: #a4a8ac; --slot-line: #c2c5c8;
+  --cap: #ffffff; --cap-edge: #c9ccd0; --text: #131416; --muted: #595d61; --dim: #a5a9ad;
+  --green: #17945f; --accent: #1d1f21; --on-accent: #ffffff; --purple: #9147cf; --blue: #2c6fcb; --amber: #b67a07; --red: #d6303f;
+  --sel: #0b9a6f; --focus: #2f6fed; --overlay: rgba(230, 231, 232, .82); --wave-dim: #b4b8bc; --seg-muted: #9a9ea2;
+  --limit: #a38c00; --listen: #1f6fd8; --streamed: #b39100;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #e6e7e8; --panel: #f3f3f4; --panel-edge: #d2d4d6; --card: #fafafa; --card-edge: #cfd1d4;
+    --sunk: #dddfe1; --raised: #eeeeef; --raised-edge: #c3c6c9; --row: #efeff0; --chip: #ebecec;
+    --off: #cbced1; --knob: #e4e5e6; --knob-ring: #93979b; --tick: #a4a8ac; --slot-line: #c2c5c8;
+    --cap: #ffffff; --cap-edge: #c9ccd0; --text: #131416; --muted: #595d61; --dim: #a5a9ad;
+    --green: #17945f; --accent: #1d1f21; --on-accent: #ffffff; --purple: #9147cf; --blue: #2c6fcb; --amber: #b67a07; --red: #d6303f;
+    --sel: #0b9a6f; --focus: #2f6fed; --overlay: rgba(230, 231, 232, .82); --wave-dim: #b4b8bc; --seg-muted: #9a9ea2;
+    --limit: #a38c00; --listen: #1f6fd8; --streamed: #b39100;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+html { background: var(--bg); }
+body { background: var(--bg); color: var(--text); font: 11px/1.3 var(--font); overflow: hidden; -webkit-font-smoothing: antialiased; }
+/* Only when the window is smaller than the smallest layout (see layout()). */
+body.scroll { overflow: auto; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* The small label over a control or a section. */
+.caps { text-transform: uppercase; letter-spacing: .05em; font-size: 9px; font-weight: 600; color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* The whole console is laid out at the window's size divided by the zoom
+   factor and scaled to fill the window exactly (layout() sets both). */
+#app { position: absolute; left: 0; top: 0; transform-origin: 0 0; display: flex; flex-direction: column; }
+#app > .top, #app > .bottom { flex: none; }
+
+/* ---- header -------------------------------------------------------------- */
+.top {
+  background: var(--panel); border-bottom: 1px solid var(--panel-edge);
+  padding: 8px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-height: 46px;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.brand .logo { font-weight: 700; font-size: 14px; cursor: default; user-select: none; }
+#eggbox { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.72); cursor: default; }
+#eggbox[hidden] { display: none; }
+#eggbox img { max-width: 80vw; max-height: 80vh; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,.6); }
+.brand .sub { color: var(--muted); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topright { margin-left: auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.engine { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.engine .dot { color: var(--green); }
+.engine.off, .engine.off .dot { color: var(--red); }
+.dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.fmt { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.fmt.warn { color: var(--amber); }
+.hbtn {
+  background: var(--raised); border: 1px solid var(--raised-edge); border-radius: 4px; padding: 0 10px; height: 28px;
+  display: inline-flex; align-items: center; gap: 7px; font-size: 10.5px; white-space: nowrap;
+}
+.hbtn:hover, .hbtn[aria-expanded="true"] { border-color: var(--muted); }
+.hbtn .dot { color: var(--dim); }
+.hbtn .dot.ok { color: var(--green); } .hbtn .dot.wait { color: var(--amber); } .hbtn .dot.err { color: var(--red); }
+.hbtn .caret { font-size: 9px; color: var(--muted); }
+.menuwrap { position: relative; }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 250px; padding: 4px;
+  background: var(--card); border: 1px solid var(--raised-edge); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+}
+.menu[hidden] { display: none; }
+.mi { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 0; border-radius: 3px; padding: 6px 10px; font-size: 11px; }
+.mi:hover, .mi:focus-visible { background: var(--raised); }
+.mi .chk { width: 14px; flex: none; }
+.mi .kb { margin-left: auto; color: var(--muted); font-size: 10px; }
+.mi.danger { color: var(--red); }
+.mi[disabled] { opacity: .45; cursor: default; }
+.msep { height: 1px; background: var(--card-edge); margin: 4px; }
+.mhead { padding: 6px 10px 4px; }
+.mrow { display: flex; align-items: center; gap: 6px; padding: 4px 10px; }
+.mrow .segs { margin-left: auto; }
+
+/* ---- the desk ------------------------------------------------------------ */
+.desk { flex: 1 1 auto; min-height: 0; display: flex; gap: 14px; align-items: stretch; justify-content: center; padding: 10px 16px 14px; }
+.group { display: flex; flex-direction: column; gap: 6px; min-height: 0; min-width: 0; }
+.group h2 { margin: 0 0 0 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.group h2 span { color: var(--dim); }
+/* Groups grow in proportion to their strips, so every strip gets the same width. */
+.group.n6 { flex: 6 6 calc(6 * var(--sw) + 30px); max-width: calc(6 * var(--swmax) + 30px); }
+.group.n3 { flex: 3 3 calc(3 * var(--sw) + 12px); max-width: calc(3 * var(--swmax) + 12px); }
+.group.n2 { flex: 2 2 calc(2 * var(--sw) + 6px); max-width: calc(2 * var(--swmax) + 6px); }
+.group.rec { margin-left: 6px; flex: 3 1 330px; min-width: 330px; max-width: 620px; }
+.strips { display: flex; gap: 6px; flex: 1 1 auto; min-height: 0; }
+
+.strip {
+  --acc: var(--green);
+  flex: 1 1 0; min-width: 0; background: var(--card); border: 1px solid var(--card-edge); border-radius: 4px;
+  padding: 2px 9px 10px; display: flex; flex-direction: column; position: relative;
+}
+.strip.busA { --acc: var(--blue); }
+.strip.busB { --acc: var(--purple); }
+/* Borders that say what a channel is doing (paintRing): green = selected,
+   red = being recorded, yellow = an app (Discord, OBS) takes sound from it,
+   blue = it plays to the output you listen on. Several at once: rings, in
+   that order from the inside out. */
+.strip.sel { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel); }
+#listendlg { width: min(460px, calc(100vw - 32px)); }
+#mididlg { width: min(860px, calc(100vw - 32px)); }
+.midiports { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.midiports select { min-width: 220px; }
+.midilearn { margin: 12px 0 6px; padding: 10px 12px; border-radius: 4px; background: var(--row); display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.midilearn select { max-width: 320px; }
+.midilearn .caught { font-weight: 600; }
+#midilast { font-variant-numeric: tabular-nums; }
+#midibindings input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--sel); }
+.lslist { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 4px; }
+.lslist label { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 4px; background: var(--row); cursor: pointer; }
+.lslist label:has(input:checked) { box-shadow: inset 0 0 0 1px var(--listen); }
+.lslist small { display: block; color: var(--muted); font-size: 10px; }
+.lslist input { accent-color: var(--listen); }
+.strip.dim > :not(.sh) { opacity: .45; }
+/* The name plate: the channel's colour along the strip's top edge. */
+.sh { display: flex; gap: 6px; align-items: center; min-height: 30px; cursor: default; }
+.sh .bar { position: absolute; left: 0; right: 0; top: 0; height: 2px; border-radius: 3px 3px 0 0; background: var(--acc); }
+.sh .nm { flex: 1; min-width: 0; }
+.name {
+  display: block; width: 100%; border: 0; background: none; padding: 0; text-align: left; color: var(--text);
+  font-weight: 600; font-size: 12.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default;
+}
+.rename { width: 100%; font-weight: 600; font-size: 12px; padding: 0 3px; border: 1px solid var(--focus); border-radius: 3px; background: var(--sunk); color: var(--text); }
+/* The channel's menu button: what it takes in / plays on. */
+.devb {
+  display: flex; align-items: center; gap: 5px; width: 100%; height: 22px; padding: 0 5px 0 6px; text-align: left;
+  border: 1px solid var(--card-edge); border-radius: 3px; background: var(--sunk); color: var(--muted); font-size: 9.5px;
+}
+.devb:hover, .devb[aria-expanded="true"] { color: var(--text); border-color: var(--muted); }
+.devb .dk { color: var(--dim); flex: none; font-size: 8px; font-weight: 700; letter-spacing: .04em; }
+.devb .dt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.devb .caret { font-size: 9px; flex: none; }
+.devb.none .dt { color: var(--dim); }
+.led { width: 6px; height: 6px; border-radius: 50%; background: var(--off); flex: none; transition: background .15s; }
+.led.on { background: var(--green); }
+.led.clip { background: var(--red); }
+
+.lbl { display: flex; align-items: center; justify-content: space-between; min-height: 18px; }
+.gainrow { margin-top: 10px; }
+.pill {
+  border: 1px solid var(--raised-edge); background: var(--raised); color: var(--muted); border-radius: 3px;
+  height: 18px; padding: 0 6px; font-size: 8.5px; font-weight: 700; letter-spacing: .03em;
+}
+.pill:hover { color: var(--text); }
+.pill[aria-pressed="true"] { color: #0b1015; background: var(--acc); border-color: var(--acc); }
+.gainrow .pills { display: flex; gap: 3px; margin-left: 4px; }
+.gainrow .pills .pill { padding: 0 5px; }
+.knobrow { display: flex; align-items: center; gap: 9px; margin-top: 5px; }
+/* A knob: its line (in the channel's colour) is the value. */
+.knob {
+  --a: 0deg; width: 30px; height: 30px; border-radius: 50%; position: relative; flex: none;
+  background: linear-gradient(color-mix(in srgb, var(--knob) 82%, #fff), var(--knob));
+  box-shadow: 0 0 0 1px var(--knob-ring), 0 2px 3px rgba(0, 0, 0, .35); cursor: ns-resize; touch-action: none;
+}
+.knob.small { width: 26px; height: 26px; }
+.knob .ptr { position: absolute; inset: 0; transform: rotate(var(--a)); }
+.knob .ptr::before { content: ""; position: absolute; left: calc(50% - 1px); top: 2px; width: 2px; height: 40%; background: var(--acc); border-radius: 1px; }
+.kval { font-size: 10.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* The meter and the fader take whatever height the window gives. */
+.lvl { display: flex; justify-content: space-between; flex: 1 1 0; min-height: 110px; margin-top: 12px; padding: 0 1px; }
+/* (the 6px above and below the segments are what showLimit() counts with) */
+.meter { width: 20px; background: var(--sunk); border-radius: 3px; padding: 6px 3px; display: flex; gap: 2px; }
+.mcol { flex: 1; display: flex; flex-direction: column-reverse; gap: 2px; }
+.seg { flex: 1; border-radius: 1px; background: var(--off); }
+.seg.g { background: var(--green); } .seg.a { background: var(--amber); } .seg.r { background: var(--red); }
+/* muted (or soloed out): what comes in, greyed */
+.seg.x { background: var(--seg-muted); }
+.fader { position: relative; width: 44px; touch-action: none; cursor: ns-resize; }
+.fader .slot { position: absolute; left: 50%; top: 0; bottom: 0; width: 6px; margin-left: -3px; background: var(--sunk); border-radius: 3px; box-shadow: 0 0 0 1px var(--slot-line); }
+.fader .tick { position: absolute; left: 8px; right: 8px; height: 0; border-top: 1px solid var(--tick); }
+.fader .tick.zero { border-top-color: var(--muted); left: 4px; right: 4px; }
+/* a line's dB, to the left of the fader */
+.fader .tn {
+  position: absolute; right: calc(100% - 1px); transform: translateY(50%); pointer-events: none;
+  font-size: 8px; line-height: 1; font-weight: 400; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.fader .capf {
+  position: absolute; left: 50%; width: 28px; height: 15px; margin-left: -14px; bottom: calc(var(--p, .8) * (100% - 15px));
+  background: linear-gradient(var(--cap), var(--cap-edge)); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5), 0 2px 5px rgba(0, 0, 0, .4);
+}
+.fader .capf::after { content: ""; position: absolute; left: 3px; right: 3px; top: 7px; height: 1px; background: rgba(0, 0, 0, .6); }
+/* A bus's limiter, like Voicemeeter's "Lim": a yellow-edged box on the meter
+   that you drag up and down; its lower edge is the limit (a thin line), the
+   segments it covers are the ones the bus can no longer reach. The same
+   level shows as a thin line on the fader. Brighter while it holds the
+   sound down; dim at the top of the meter while it is off. */
+.meter { position: relative; }
+.meter .lim { position: absolute; left: 1px; right: 1px; height: 0; border-top: 1px solid var(--limit); opacity: .7; pointer-events: none; transition: opacity .25s; }
+.meter .limbox {
+  position: absolute; left: -5px; right: -5px; height: 28px; z-index: 1;
+  bottom: min(var(--lb, 0px), calc(100% - 29px));
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  border: 1px solid var(--limit); border-radius: 2px; background: color-mix(in srgb, var(--sunk) 82%, transparent);
+  color: var(--limit); font-size: 8px; line-height: 9px; font-weight: 600;
+  cursor: ns-resize; touch-action: none; opacity: .75; transition: opacity .2s;
+}
+.meter .limbox b { font-weight: 700; font-size: 9px; }
+.meter .limbox:hover, .meter .limbox:focus-visible, .meter.limdrag .limbox { opacity: 1; }
+.meter.limoff .limbox { opacity: .4; border-style: dashed; }
+.meter.limoff .limbox:hover, .meter.limoff .limbox:focus-visible { opacity: .8; }
+.fader .lim { position: absolute; left: 8px; right: 8px; height: 0; border-top: 1px solid var(--limit); opacity: .45; pointer-events: none; transition: opacity .25s; }
+.fader.limoff .lim, .meter.limoff .lim { display: none; }
+.fader.limiting .lim { opacity: .9; }
+.meter.limiting .lim, .meter.limiting .limbox { opacity: 1; }
+.pkrow { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding: 0 1px; min-height: 26px; }
+.pk { display: flex; flex-direction: column; gap: 2px; }
+.pk small { font-size: 8px; letter-spacing: .05em; color: var(--dim); font-weight: 700; }
+.pk span { color: var(--muted); font-size: 9.5px; display: block; height: 12px; line-height: 12px; contain: strict; }
+.pk span.hot { color: var(--red); font-weight: 700; }
+/* the fader's level: type a number here */
+.fval {
+  width: 50px; text-align: center; border: 1px solid var(--card-edge); border-radius: 3px; background: var(--sunk); padding: 3px 0;
+  font-size: 10.5px; font-variant-numeric: tabular-nums;
+}
+.fval:hover { border-color: var(--raised-edge); }
+.fval:focus { border-color: var(--focus); outline: none; }
+.panrow { margin-top: 10px; }
+.btns { display: flex; gap: 4px; margin-top: 12px; }
+.btn {
+  flex: 1; height: 24px; border-radius: 3px; background: var(--raised); border: 1px solid var(--raised-edge); color: var(--text);
+  font-size: 9px; font-weight: 700; letter-spacing: .03em; padding: 0;
+}
+.btn:hover { border-color: var(--muted); }
+/* lit, like a console's keys */
+.btn.mute[aria-pressed="true"] { color: #0b1015; border-color: var(--red); background: var(--red); }
+.btn.solo[aria-pressed="true"] { color: #0b1015; border-color: var(--amber); background: var(--amber); }
+.btns .spacer { flex: 1; }
+.foot { padding-top: 10px; height: 46px; flex: none; }
+.routes { display: flex; gap: 2px; margin-top: 4px; }
+.rt {
+  flex: 1; height: 19px; padding: 0; border-radius: 3px; border: 1px solid var(--raised-edge); background: var(--raised);
+  color: var(--muted); font-size: 8.5px; font-weight: 700;
+}
+.rt:hover { color: var(--text); }
+.rt.a[aria-pressed="true"] { color: #0b1015; background: var(--blue); border-color: var(--blue); }
+.rt.b[aria-pressed="true"] { color: #0b1015; background: var(--purple); border-color: var(--purple); }
+.rt.self { visibility: hidden; }
+.rt.loop:not([aria-pressed="true"]) { opacity: .35; cursor: not-allowed; }
+/* a bus's sources: inputs on one line, the other buses below. Pressed: it
+   goes straight in; dashed: it only gets here through another bus; ringed:
+   its sound is coming out of this bus right now */
+.foot.from { display: flex; align-items: center; gap: 5px; padding-top: 8px; }
+.foot.from > .caps { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 8px; }
+.srcs { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.srcs .routes { margin-top: 0; }
+.srcs .rt { height: 17px; }
+.rt.in[aria-pressed="true"] { color: #0b1015; background: var(--green); border-color: var(--green); }
+.rt.via:not([aria-pressed="true"]) { color: var(--text); border-style: dashed; border-color: var(--muted); }
+.rt.in.via:not([aria-pressed="true"]) { border-color: var(--green); }
+.rt.a.via:not([aria-pressed="true"]) { border-color: var(--blue); }
+.rt.b.via:not([aria-pressed="true"]) { border-color: var(--purple); }
+.rt.live { box-shadow: 0 0 0 1.5px var(--text); }
+
+/* ---- recorder ------------------------------------------------------------- */
+.card { background: var(--card); border: 1px solid var(--card-edge); border-radius: 4px; }
+.recorder { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 14px 12px; display: flex; flex-direction: column; }
+.rech { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.state {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  font-size: 9px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; color: var(--muted);
+}
+.state.rec { color: var(--red); }
+.state.rec .dot { animation: blink 1s steps(1) infinite; }
+.state.play { color: var(--green); }
+.state.warn { color: var(--amber); }
+@keyframes blink { 50% { opacity: .2; } }
+@media (prefers-reduced-motion: reduce) { .state.rec .dot, .t-rec.on .ic { animation: none; } }
+.wave { margin-top: 12px; background: var(--sunk); border: 1px solid var(--card-edge); border-radius: 3px; padding: 8px 10px 7px; position: relative;
+  flex: 1 1 120px; min-height: 104px; max-height: 400px; display: flex; flex-direction: column; }
+.waveh { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; min-height: 22px; }
+.waveh .t { line-height: 1.5; }
+.waveh .t b { color: var(--text); font-weight: 600; }
+.nav { display: flex; gap: 3px; flex: none; }
+.nav button { width: 22px; height: 20px; border-radius: 3px; border: 1px solid var(--raised-edge); background: var(--raised); color: var(--muted); padding: 0; font-size: 12px; line-height: 1; }
+.nav button:hover:not([disabled]) { color: var(--text); }
+.nav button[disabled] { opacity: .35; cursor: default; }
+#wavec { display: block; width: 100%; flex: 1 1 auto; min-height: 50px; height: 50px; margin-top: 4px; cursor: pointer; }
+.wavef { min-height: 11px; margin-top: 2px; }
+/* Texts that change on every frame (time code, levels) sit in boxes of a fixed
+   size (contain: strict), so a new value lays out only that box, not the page. */
+.tc { display: flex; align-items: baseline; gap: 12px; flex: 1 1 0; min-width: 0; height: 26px; contain: strict; }
+.tc .time { font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; line-height: 26px; }
+.tc .fmt2 { font-size: 9.5px; color: var(--muted); white-space: nowrap; }
+.transport { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 12px; }
+.transport button {
+  height: 34px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .03em;
+  color: var(--text); background: var(--raised); border: 1px solid var(--raised-edge);
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.transport button:hover { border-color: var(--muted); }
+.t-play .ic { color: var(--green); }
+.t-rec .ic { color: var(--red); }
+.t-play.on { color: #0b1015; background: var(--green); border-color: var(--green); }
+.t-rec.on { color: #0b1015; background: var(--red); border-color: var(--red); }
+.t-play.on .ic, .t-rec.on .ic { color: inherit; }
+.t-rec.on .ic { animation: blink 1s steps(1) infinite; }
+.ic { display: inline-block; flex: none; }
+.ic.play { width: 0; height: 0; border-style: solid; border-width: 5px 0 5px 8px; border-color: transparent transparent transparent currentColor; }
+.ic.pause { width: 8px; height: 10px; border-left: 3px solid currentColor; border-right: 3px solid currentColor; }
+.ic.rec { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+.ic.stop { width: 9px; height: 9px; background: currentColor; border-radius: 1px; }
+.sect { margin-top: 14px; }
+.segs { display: inline-flex; border: 1px solid var(--raised-edge); border-radius: 3px; overflow: hidden; }
+.segs button { border: 0; background: var(--raised); color: var(--muted); height: 20px; padding: 0 9px; font-size: 9px; font-weight: 600; }
+.segs button + button { border-left: 1px solid var(--raised-edge); }
+.segs button:hover:not([disabled]) { color: var(--text); }
+.segs button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.segs button[disabled] { opacity: .5; cursor: default; }
+.playto { display: flex; gap: 2px; width: 160px; }
+.playto .rt { height: 20px; }
+.armed { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-top: 7px; }
+.arm {
+  display: flex; align-items: center; gap: 7px; height: 26px; padding: 0 8px; border-radius: 3px;
+  background: var(--row); border: 1px solid var(--row); text-align: left; min-width: 0;
+}
+.arm:hover { border-color: var(--raised-edge); }
+.arm .dot { color: var(--dim); }
+.arm[aria-pressed="true"] .dot { color: var(--red); }
+.arm b { font-size: 9.5px; font-weight: 600; flex: none; }
+.arm span { font-size: 9.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arm[aria-pressed="true"] span { color: var(--text); }
+.folder { display: flex; gap: 4px; align-items: center; margin-top: 7px; }
+.folder input { flex: 1; min-width: 0; height: 26px; border-radius: 3px; border: 1px solid var(--card-edge); background: var(--sunk); padding: 0 8px; font-size: 10px; }
+.folder input:disabled { opacity: .6; }
+.small-btn { height: 26px; border-radius: 3px; border: 1px solid var(--raised-edge); background: var(--raised); padding: 0 10px; font-size: 9px; font-weight: 700; letter-spacing: .03em; }
+.small-btn:hover { border-color: var(--muted); }
+.disk { margin-top: auto; padding-top: 14px; }
+.dbar { height: 3px; border-radius: 2px; background: var(--off); margin-top: 7px; overflow: hidden; }
+.dbar i { display: block; height: 100%; width: 0; background: var(--muted); border-radius: 2px; }
+.dbar i.low { background: var(--red); }
+.warnline { color: var(--amber); font-size: 10px; margin: 10px 0 0; }
+
+/* ---- bottom bar ------------------------------------------------------------ */
+.bottom {
+  background: var(--panel); border-top: 1px solid var(--panel-edge); padding: 10px 16px 12px;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px) minmax(280px, 346px); gap: 26px; align-items: start;
+}
+/* every input: its name, level bar and the buses it goes to */
+.qm { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 20px; margin-top: 8px; }
+.qbar { border: 0; background: none; padding: 0; text-align: left; min-width: 0; }
+.qbar .caps { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track { height: 4px; border-radius: 2px; background: var(--off); margin-top: 6px; overflow: hidden; }
+/* scaled, not resized: a level change then needs no layout of the page */
+.track i { display: block; height: 100%; width: 100%; border-radius: 2px; background: var(--green); transform-origin: left center; transform: scaleX(0); transition: transform .08s linear; will-change: transform; }
+.qroute { display: flex; gap: 4px; margin-top: 6px; }
+.qroute i { font-style: normal; font-size: 8px; font-weight: 700; color: var(--dim); }
+.qroute i.a { color: var(--blue); } .qroute i.b { color: var(--purple); }
+.qbar.sel .caps { color: var(--text); }
+/* every output: its id, name, level bar and level */
+.outs { display: grid; gap: 5px; margin-top: 8px; }
+.orow { display: grid; grid-template-columns: 20px minmax(0, 104px) minmax(60px, 1fr) 40px; align-items: center; gap: 8px; font-size: 9.5px; border: 0; background: none; padding: 0; text-align: left; }
+.orow b { font-size: 9px; font-weight: 700; color: var(--blue); }
+.orow.b b { color: var(--purple); }
+.orow span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 9.5px; }
+.orow .track { margin-top: 0; }
+.orow .track i { background: var(--blue); }
+.orow.b .track i { background: var(--purple); }
+.orow.muted .track i { background: var(--seg-muted); }
+.orow em { font-style: normal; font-size: 9.5px; text-align: right; color: var(--text); display: block; height: 12px; line-height: 12px; contain: strict; }
+.orow.sel span { color: var(--text); }
+.qbar.muted .track i { background: var(--seg-muted) !important; }
+.session { padding: 0 0 0 18px; min-height: 92px; border-left: 1px solid var(--panel-edge); }
+.session h3 { margin: 0; font-size: 9px; letter-spacing: .05em; font-weight: 600; text-transform: uppercase; color: var(--muted); }
+.session h3 span { color: var(--text); }
+.session p { margin: 8px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.session p.err { color: var(--red); }
+/* a long status (every connection that failed, say) keeps to three lines,
+   so the bottom bar never grows into the strips; all of it is in its tooltip */
+.session #status { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+.session .stats { font-size: 9.5px; }
+.session .stats b { color: var(--text); font-weight: 600; }
+.session .stats .bad { color: var(--red); }
+
+/* ---- dialogs ---------------------------------------------------------------- */
+dialog { border: 1px solid var(--card-edge); border-radius: 6px; padding: 0; background: var(--card); color: var(--text); width: min(940px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+dialog::backdrop { background: var(--overlay); }
+.dlg-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--card-edge); }
+.dlg-head h3 { margin: 0; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; margin-right: auto; }
+.dlg-body { padding: 14px 18px 18px; overflow: auto; }
+.tool { border: 1px solid var(--raised-edge); background: var(--raised); border-radius: 4px; padding: 0 12px; height: 30px; font-size: 9.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+.tool:hover { border-color: var(--muted); }
+.switch { min-width: 64px; }
+.switch[aria-pressed="true"] { background: var(--purple); border-color: var(--purple); color: #0b1015; }
+.switch.vb[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.eqgraph { width: 100%; height: auto; display: block; background: var(--sunk); border-radius: 4px; touch-action: none; user-select: none; }
+.eqgraph .grid { stroke: var(--off); stroke-width: 1; }
+.eqgraph .grid.zero { stroke: var(--tick); }
+.eqgraph text { fill: var(--muted); font: 11px var(--font); }
+.eqgraph .sum { fill: none; stroke: var(--purple); stroke-width: 2.5; }
+.eqgraph .one { fill: none; stroke: var(--dim); stroke-width: 1; }
+.eqgraph .h { cursor: grab; outline: none; }
+.eqgraph .h circle { fill: var(--purple); stroke: #fff; stroke-width: 1.5; }
+.eqgraph .h.off circle { fill: var(--dim); }
+.eqgraph .h text { fill: #0b1015; font: 700 11px var(--font); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.eqgraph .h:focus-visible circle { stroke: var(--focus); stroke-width: 3; }
+.eqgraph.off .sum { stroke: var(--muted); stroke-dasharray: 4 4; }
+.dyngrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .dyngrid { grid-template-columns: 1fr; } }
+.dyncard { border: 1px solid var(--card-edge); border-radius: 4px; padding: 12px; background: var(--row); display: flex; flex-direction: column; gap: 10px; }
+.dyncard.off .dynfields { opacity: .55; }
+.dyncard .bhead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 10px; letter-spacing: .03em; text-transform: uppercase; }
+.dynfields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.dynfields label { display: flex; flex-direction: column; gap: 3px; font-size: 9px; color: var(--muted); letter-spacing: .03em; text-transform: uppercase; }
+.dynfields input { width: 100%; border: 1px solid var(--raised-edge); border-radius: 3px; padding: 3px 7px; background: var(--sunk); min-height: 26px; font-size: 11px; color: var(--text); }
+.grrow { display: flex; align-items: center; gap: 8px; font-size: 9px; color: var(--muted); letter-spacing: .03em; text-transform: uppercase; }
+.grbar { flex: 1; height: 8px; border-radius: 4px; background: var(--sunk); overflow: hidden; display: flex; justify-content: flex-end; }
+.grbar i { display: block; height: 100%; width: 0; background: var(--amber); transition: width .08s linear; }
+.grrow .num { min-width: 52px; text-align: right; color: var(--text); }
+.dynnote { font-size: 10.5px; color: var(--muted); margin: 0; }
+.bands { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.band { border: 1px solid var(--card-edge); border-radius: 4px; padding: 9px; display: flex; flex-direction: column; gap: 6px; background: var(--row); }
+.band.off { opacity: .55; }
+.band .bhead { display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 10px; letter-spacing: .03em; text-transform: uppercase; }
+.band label { display: flex; flex-direction: column; gap: 3px; font-size: 9px; color: var(--muted); letter-spacing: .03em; text-transform: uppercase; }
+.band input, .band select, .vtable input, .vtable select, .field input {
+  width: 100%; border: 1px solid var(--raised-edge); border-radius: 3px; padding: 3px 7px; background: var(--sunk); min-height: 26px; font-size: 11px; text-transform: none; letter-spacing: 0; color: var(--text);
+}
+.vtable select { width: auto; }
+.vtable input.w-name { min-width: 130px; }
+.vtable input.w-ip { min-width: 120px; }
+.vtable input.w-num { width: 72px; }
+.band input:disabled { opacity: .45; }
+.tiny { border: 1px solid var(--raised-edge); background: var(--raised); border-radius: 3px; padding: 0 8px; min-height: 24px; font-size: 9px; font-weight: 700; letter-spacing: .03em; }
+.tiny[aria-pressed="true"] { background: var(--purple); border-color: var(--purple); color: #0b1015; }
+.vtable { width: 100%; border-collapse: collapse; margin: 6px 0 14px; }
+.vtable th { text-align: left; font-size: 9px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 2px 4px; }
+.vtable td { padding: 3px 4px; vertical-align: middle; }
+.vtable td.st { font-size: 10px; color: var(--muted); min-width: 180px; }
+.vtable tr.on td.st { color: var(--text); }
+.vtable .tiny[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.sdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); margin-right: 6px; vertical-align: middle; }
+.sdot.ok { background: var(--green); } .sdot.wait { background: var(--amber); } .sdot.err { background: var(--red); }
+.vnote { font-size: 10.5px; color: var(--muted); margin: 0 0 6px; }
+.vban h4 { margin: 10px 0 2px; font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; }
+.seen { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+.here { border: 1px solid var(--card-edge); background: var(--row); border-radius: 5px; padding: 10px 12px; margin: 0 0 12px; }
+.here .caps { display: block; margin-bottom: 7px; }
+.iplist { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--raised-edge); background: var(--sunk); border-radius: 4px; padding: 4px 6px 4px 10px; }
+.ip b { font: 600 13px var(--mono); color: var(--text); letter-spacing: .02em; user-select: all; }
+.ip small { color: var(--muted); font-size: 9.5px; }
+.ip.dim b { color: var(--muted); font-size: 11.5px; }
+.here p { margin: 8px 0 0; color: var(--muted); font-size: 10.5px; }
+.vbip { font: 600 9.5px var(--mono); letter-spacing: 0; text-transform: none; color: var(--text); }
+.seen div { border: 1px dashed var(--raised-edge); border-radius: 4px; padding: 4px 8px; font-size: 10.5px; display: flex; gap: 8px; align-items: center; }
+#scenedlg { width: min(420px, calc(100vw - 32px)); }
+/* ---- updates ---- */
+.hbtn .udot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); margin-left: -2px; }
+.hbtn .udot[hidden] { display: none; }
+.mi .kb.new { color: var(--amber); font-weight: 700; letter-spacing: .03em; text-transform: uppercase; font-size: 9px; }
+#upddlg { width: min(560px, calc(100vw - 32px)); }
+.upd p { margin: 0 0 8px; font-size: 11.5px; line-height: 1.45; }
+.upd .upd-msg { font-size: 12.5px; color: var(--text); }
+.upd .upd-msg.err { color: var(--red); }
+.upd .upd-when { color: var(--muted); font-size: 10px; }
+.upd-bar { height: 6px; border-radius: 3px; background: var(--sunk); overflow: hidden; margin: 4px 0 10px; }
+.upd-bar[hidden] { display: none; }
+.upd-bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+.upd-acts { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+.upd-acts [hidden] { display: none; }
+.upd .tool:disabled { opacity: .45; cursor: default; }
+.upd-notes { border: 1px solid var(--card-edge); background: var(--row); border-radius: 5px; padding: 10px 12px; margin: 0 0 14px; }
+.upd-notes[hidden] { display: none; }
+.upd-notes h4 { margin: 0 0 6px; font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; }
+.upd-notes pre { margin: 0; max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.45 var(--font); color: var(--text); }
+.upd-auto { display: flex; gap: 12px; align-items: flex-start; border-top: 1px solid var(--card-edge); padding-top: 12px; }
+.upd-auto p { margin: 0; color: var(--muted); font-size: 10.5px; }
+.upd-auto b { color: var(--text); font-size: 11.5px; }
+
+/* ---- virtual cables ---- */
+#cabdlg { width: min(620px, calc(100vw - 32px)); }
+.cab p, .cab li { margin: 0 0 8px; font-size: 11.5px; line-height: 1.45; }
+.cab .cab-state { font-size: 12.5px; color: var(--text); }
+.cab .cab-state.ok { color: var(--green); }
+.cab h4 { margin: 14px 0 6px; font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; }
+.cab ol, .cab ul { margin: 0 0 8px; padding-left: 20px; }
+.cab .warn { color: var(--amber); }
+.cab .muted { color: var(--muted); }
+.cab [hidden] { display: none; }
+
+/* ---- a Safari too old for this page (macOS 11 and 12 not updated) ---- */
+.too-old { max-width: 520px; margin: 72px auto; padding: 0 24px; font-size: 13px; line-height: 1.5; }
+.too-old b { display: block; margin-bottom: 8px; font-size: 15px; }
+
+/* ---- parts only one system shows: <html data-platform="..."> is set by the server ---- */
+html[data-platform="linux"] [data-only]:not([data-only~="linux"]),
+html[data-platform="windows"] [data-only]:not([data-only~="windows"]),
+html[data-platform="macos"] [data-only]:not([data-only~="macos"]),
+html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none !important; }
+
+/* ---- a channel's menu (what it takes in / plays on) ---- */
+.cmenu {
+  position: absolute; z-index: 40; width: 318px; max-height: 560px; overflow-y: auto; padding: 8px;
+  background: var(--card); border: 1px solid var(--card-edge); border-radius: 6px; box-shadow: 0 16px 44px rgba(0, 0, 0, .5);
+  font-size: 11px; cursor: default;
+}
+.cmenu[hidden] { display: none; }
+.cmenu h4 { margin: 2px 6px 6px; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+.cmenu h4 small { color: var(--muted); font-weight: 600; letter-spacing: .03em; }
+.cmenu .cs { margin: 8px 6px 3px; }
+.cmenu .ci { display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left; background: none; border: 0; border-radius: 4px; padding: 6px 8px; }
+.cmenu .ci:hover:not([disabled]), .cmenu .ci:focus-visible { background: var(--raised); }
+.cmenu .ci[disabled] { opacity: .5; cursor: default; }
+.cmenu .ck { width: 14px; height: 14px; flex: none; border-radius: 4px; border: 1px solid var(--raised-edge); margin-top: 1px; display: grid; place-items: center; font-size: 10px; font-weight: 800; color: var(--on-accent); }
+.cmenu .ci[aria-checked="true"] .ck { background: var(--accent); border-color: var(--accent); }
+.cmenu .cl { flex: 1; min-width: 0; }
+.cmenu .cl b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmenu .cl small { display: block; color: var(--muted); font-size: 9.5px; margin-top: 2px; overflow-wrap: anywhere; }
+.cmenu .tag { flex: none; font-size: 9px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--raised-edge); border-radius: 4px; padding: 1px 4px; margin-top: 1px; }
+.cmenu .warn { color: var(--amber); }
+.cmenu .empty { color: var(--muted); font-size: 10px; padding: 3px 8px 6px; }
+.cmenu .cfoot { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--card-edge); margin-top: 8px; padding: 8px 6px 2px; }
+.cmenu .cfoot small { color: var(--muted); font-size: 9.5px; }
+.cmenu .cfoot .tiny { white-space: nowrap; flex: none; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field p { margin: 0; color: var(--muted); font-size: 10px; }
+.dlg-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.tool.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+#overlay { position: fixed; inset: 0; display: none; place-items: center; background: var(--overlay); z-index: 50; }
+#overlay.show { display: grid; }
+#overlay div { background: var(--card); border: 1px solid var(--card-edge); border-radius: 6px; padding: 22px 26px; max-width: 440px; }
+#overlay h3 { margin: 0 0 8px; font-size: 13px; }
+#overlay p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .bands { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vtable thead { display: none; }
+  .vtable tr { display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px; border-top: 1px solid var(--card-edge); padding: 6px 0; }
+  .vtable td.st { grid-column: 1 / -1; }
+}
+
+/* ---- the shared page in this look ------------------------------------------
+   The page's markup is the same for every look; this one leaves some parts
+   out and moves the time code to the top of the recorder. */
+:root { --wave-played: var(--accent); }
+.lvlh, .leds, .qm-t, .tlbl, .rech h3, .brand .sub .tag { display: none; }
+/* the mixer's own name, only when it was given one */
+.brand .sub.caps { margin: 0; text-transform: none; letter-spacing: 0; font-size: 10.5px; font-weight: 400; color: var(--muted); }
+.brand .sub b { font-weight: 400; }
+.brand .sub:not([data-own]) { display: none; }
+.hbtn .caret, .devb .caret { font-size: 6.5px; }
+.recorder { position: relative; }
+.rech { position: absolute; top: 14px; right: 14px; height: 26px; }
+.tc { order: -1; flex: none; margin-top: 0; padding-right: 84px; }
+.session.card { background: none; border: 0; border-left: 1px solid var(--panel-edge); border-radius: 0; }
+</style>
+<script>
+function useLook(l) {
+  if (!document.querySelector('style[data-look="' + l + '"]')) l = "classic";
+  document.querySelectorAll("style[data-look]").forEach(function (s) { s.media = s.dataset.look === l ? "all" : "not all"; });
+  if (l === "classic") delete document.documentElement.dataset.look; else document.documentElement.dataset.look = l;
+  return l;
+}
+useLook(document.documentElement.dataset.look || "classic");
+</script>
 </head>
 <body>
 <div id="eggbox" hidden><img id="eggimg" alt=""></div>
@@ -597,7 +1217,7 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
 <header class="top">
   <div class="brand">
     <div class="logo">BananaSplit<span id="egg">.</span></div>
-    <div class="sub caps">Virtual audio mixer &nbsp;•&nbsp; <b id="client">BananaSplit</b></div>
+    <div class="sub caps" id="sub"><span class="tag">Virtual audio mixer &nbsp;•&nbsp; </span><b id="client">BananaSplit</b></div>
   </div>
   <div class="topright">
     <div class="engine" id="engine" role="status"><i class="dot"></i><span id="engtxt">Engine online</span></div>
@@ -614,7 +1234,8 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
         <button class="mi" role="menuitem" data-op="reconnect"><span class="chk"></span>Reconnect devices</button>
         <button class="mi" role="menuitem" data-op="openfolder"><span class="chk"></span>Open the recordings folder</button>
         <div class="msep"></div>
-        <div class="mrow caps">Theme <span class="segs" id="themeseg"><button data-theme-v="dark">Dark</button><button data-theme-v="light">Light</button><button data-theme-v="auto">Auto</button></span></div>
+        <div class="mrow caps">Theme <span class="segs" id="lookseg"><button data-look-v="classic">Classic</button><button data-look-v="console">Console</button></span></div>
+        <div class="mrow caps">Mode <span class="segs" id="themeseg"><button data-theme-v="dark">Dark</button><button data-theme-v="light">Light</button><button data-theme-v="auto">Auto</button></span></div>
         <div class="mrow caps">Zoom <span class="segs"><button id="zoomout" aria-label="Smaller">−</button><button id="zoomval" aria-label="Normal size">100%</button><button id="zoomin" aria-label="Larger">+</button></span></div>
         <div class="msep"></div>
         <button class="mi" role="menuitemcheckbox" id="m-autostart" aria-checked="false"><span class="chk"></span>Start with the system</button>
@@ -666,7 +1287,7 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
 
 <footer class="bottom">
   <div class="qm-t"><div class="caps">Quick mix</div><div class="big">Input activity &amp; routing</div></div>
-  <div class="qm" id="qm"></div>
+  <div class="inputs-q"><div class="caps qlbl">Inputs · 1–6</div><div class="qm" id="qm"></div></div>
   <div class="outputs"><div class="caps">Buses · V1–B2</div><div class="outs" id="outs"></div></div>
   <div class="card session"><h3>Session &nbsp;/&nbsp; <span id="sessname">No scene</span></h3><p id="status" role="status">Connecting to BananaSplit…</p><p class="stats" id="stats"></p></div>
 </footer>
@@ -1188,8 +1809,11 @@ function buildStrip(ch) {
   fader.append(el("i", "slot"));
   for (const d of [12, 0, -12, -24, -36]) {
     const t = el("i", "tick" + (d === 0 ? " zero" : ""));
-    t.style.bottom = `calc(${dbToPos(d)} * (100% - 15px) + 7.5px)`;
-    fader.append(t);
+    // its dB beside the line (the looks that show it)
+    const n = el("b", "tn", d > 0 ? "+" + d : d < 0 ? "−" + -d : "0");
+    n.setAttribute("aria-hidden", "true");
+    t.style.bottom = n.style.bottom = `calc(${dbToPos(d)} * (100% - 15px) + 7.5px)`;
+    fader.append(t, n);
   }
   u.cap = el("i", "capf");
   fader.append(u.cap);
@@ -1852,7 +2476,7 @@ function drawWave() {
   const g = c.getContext("2d");
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
-  const teal = cssVar("--teal"), dimc = cssVar("--wave-dim"), offc = cssVar("--off"), amber = cssVar("--amber"), red = cssVar("--red");
+  const played = cssVar("--wave-played"), dimc = cssVar("--wave-dim"), offc = cssVar("--off"), amber = cssVar("--amber"), red = cssVar("--red");
   const bars = Math.floor(w / 6);
   const mid = h / 2;
   // v: 0..1 of full scale; the square root shows quiet passages too
@@ -1880,7 +2504,7 @@ function drawWave() {
     let v = 0;
     const a = Math.floor(i * n / bars), b = Math.max(a + 1, Math.floor((i + 1) * n / bars));
     for (let k = a; k < b && k < n; k++) v = Math.max(v, wave.peaks[k]);
-    bar(i, v / 100, (i + 0.5) / bars <= pos ? teal : dimc);
+    bar(i, v / 100, (i + 0.5) / bars <= pos ? played : dimc);
   }
   if (P && P.take === key) {
     g.fillStyle = amber;
@@ -1967,6 +2591,18 @@ document.querySelectorAll("[data-theme-v]").forEach((b) => b.addEventListener("c
   hold("theme", 1500);
   applyTheme(b.dataset.themeV);
   send({ op: "theme", v: b.dataset.themeV }, true);
+}));
+// The look (theme set): its own stylesheet, so sizes change: lay out again.
+function applyLook(l) {
+  l = useLook(l);
+  document.querySelectorAll("[data-look-v]").forEach((b) => setPressed(b, b.dataset.lookV === l));
+  layout();
+}
+document.querySelectorAll("[data-look-v]").forEach((b) => b.addEventListener("click", (e) => {
+  e.stopPropagation();
+  hold("look", 1500);
+  applyLook(b.dataset.lookV);
+  send({ op: "look", v: b.dataset.lookV }, true);
 }));
 // A name too long for its strip gets a smaller font (down to 9px) before it
 // is cut with an ellipsis. (Measured unrounded: scrollWidth rounds.)
@@ -2302,6 +2938,9 @@ function render(S) {
   if (full) {
     // top bar
     setText($("client"), S.client);
+    // whether the mixer has a name of its own (some looks show only that)
+    const own = S.client !== "BananaSplit";
+    if (("own" in $("sub").dataset) !== own) { if (own) $("sub").dataset.own = ""; else delete $("sub").dataset.own; }
     const sr = (S.sr / 1000).toFixed(S.sr % 1000 ? 1 : 0);
     setText($("fmt"), sr + " kHz · " + S.period.toFixed(2) + " ms");
     $("engine").classList.remove("off");
@@ -2314,6 +2953,7 @@ function render(S) {
       if (curT !== t) applyTheme(t);
       document.querySelectorAll("[data-theme-v]").forEach((b) => setPressed(b, b.dataset.themeV === t));
   }
+  if (!held("look") && S.app.look && S.app.look !== (document.documentElement.dataset.look || "classic")) applyLook(S.app.look);
   if (!held("zoom") && S.app.zoom !== userZoom) { userZoom = S.app.zoom; layout(); }
   if (!held("autostart")) setChecked($("m-autostart"), S.app.autostart);
   if (!held("tray")) setChecked($("m-tray"), S.app.closeToTray);
@@ -3333,7 +3973,7 @@ $("busesA").append(...[6, 7, 8].map(buildStrip));
 $("busesB").append(...[9, 10].map(buildStrip));
 select(0);
 applyTheme(document.documentElement.dataset.theme || "auto");
-layout();
+applyLook(document.documentElement.dataset.look || "classic");
 if (document.fonts) document.fonts.ready.then(() => ui.forEach((u) => fitName(u, true)));
 lastMsg = performance.now();
 connect();
