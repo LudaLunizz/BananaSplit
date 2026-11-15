@@ -778,8 +778,8 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     jnum(&mut o, i.cpu as f64, 1);
     let _ = write!(
         o,
-        ",\"xruns\":{},\"oversize\":{},\"cables\":{},\"devRev\":{},\"status\":",
-        i.xruns, i.oversize, i.cables, f.dev_rev
+        ",\"xruns\":{},\"oversize\":{},\"panics\":{},\"cables\":{},\"devRev\":{},\"status\":",
+        i.xruns, i.oversize, i.panics, i.cables, f.dev_rev
     );
     jstr(&mut o, &plain(f.status));
     let any_solo = sh.strips.iter().any(|s| s.solo.load(Relaxed));
@@ -1813,6 +1813,7 @@ mod tests {
             cpu: f32::NAN,
             xruns: 3,
             oversize: 0,
+            panics: 0,
             lat_in: 128,
             lat_out: 256,
             cables: 8,

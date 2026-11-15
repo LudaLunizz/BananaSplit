@@ -21,7 +21,7 @@
 use super::ffi::*;
 use super::route::{self, DevInfo};
 use bananasplit::config::Config;
-use bananasplit::engine::{AtomicF32, BUS_IDS, Engine, NUM_BUSES, NUM_STRIPS, Shared};
+use bananasplit::engine::{AtomicF32, BUS_IDS, Engine, NUM_BUSES, NUM_STRIPS, Shared, guard_cycle};
 use bananasplit::player::PlayTap;
 use bananasplit::recorder::RecTap;
 use bananasplit::ring::{DriftReader, Producer, ring};
@@ -821,33 +821,43 @@ fn master_thread(
         }
         let t0 = Instant::now();
 
-        // 1) strips: pull every device feeding a strip, summed
-        for (s, readers) in strips.iter_mut().enumerate() {
-            if readers.is_empty() {
-                eng.clear_input(s, 0, n);
-                eng.clear_input(s, 1, n);
-                continue;
-            }
-            in_l[..n].fill(0.0);
-            in_r[..n].fill(0.0);
-            for (k, rd) in readers.iter_mut().enumerate() {
-                rd.read(&mut in_l[..n], &mut in_r[..n], true);
-                if rd.glitches != glitch_seen[s][k] {
-                    shared.xruns.fetch_add(rd.glitches - glitch_seen[s][k], Relaxed);
-                    glitch_seen[s][k] = rd.glitches;
+        // 1) + 2) behind `guard_cycle`: a panic in them is counted
+        // (`Shared::panics`), this block's buses are silenced, and the thread
+        // goes on with the same state (see `guard_cycle` for what is assumed
+        // about it). Steps 3 and 4 then hand that silence to the devices, so
+        // the master and the rings keep their pace.
+        let ran = guard_cycle(&shared.panics, || {
+            // 1) strips: pull every device feeding a strip, summed
+            for (s, readers) in strips.iter_mut().enumerate() {
+                if readers.is_empty() {
+                    eng.clear_input(s, 0, n);
+                    eng.clear_input(s, 1, n);
+                    continue;
                 }
+                in_l[..n].fill(0.0);
+                in_r[..n].fill(0.0);
+                for (k, rd) in readers.iter_mut().enumerate() {
+                    rd.read(&mut in_l[..n], &mut in_r[..n], true);
+                    if rd.glitches != glitch_seen[s][k] {
+                        shared.xruns.fetch_add(rd.glitches - glitch_seen[s][k], Relaxed);
+                        glitch_seen[s][k] = rd.glitches;
+                    }
+                }
+                eng.load_input(s, 0, &in_l[..n]);
+                eng.load_input(s, 1, &in_r[..n]);
             }
-            eng.load_input(s, 0, &in_l[..n]);
-            eng.load_input(s, 1, &in_r[..n]);
-        }
 
-        // 2) mix (same engine as on Linux)
-        {
+            // 2) mix (same engine as on Linux)
             let mut outs = bus.each_mut().map(|pair| {
                 let [l, r] = pair;
                 [&mut l[..n], &mut r[..n]]
             });
             eng.process(&mut outs);
+        });
+        if !ran {
+            for ch in bus.iter_mut().flatten() {
+                ch[..n].fill(0.0);
+            }
         }
 
         // 3) master device, written directly

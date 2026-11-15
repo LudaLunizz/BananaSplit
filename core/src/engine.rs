@@ -211,6 +211,9 @@ pub struct Shared {
     pub xruns: AtomicU32,
     /// Cycles larger than MAX_FRAMES (output was silenced).
     pub oversize_cycles: AtomicU32,
+    /// Audio cycles that panicked and were played as silence (see
+    /// [`guard_cycle`]). Only grows.
+    pub panics: AtomicU32,
     /// Channels linked to the recorder: bit 0..5 = strips 1..6,
     /// bit 6..10 = buses V1..B2 (see [`crate::recorder::source_id`]).
     pub rec_links: AtomicU16,
@@ -255,6 +258,38 @@ impl Shared {
     pub fn toggle_rec_link(&self, src: usize) {
         if src < NUM_STRIPS + NUM_BUSES {
             self.rec_links.fetch_xor(1 << src, Relaxed);
+        }
+    }
+}
+
+/// Run one audio cycle so that a panic in it does not end the audio thread
+/// (or, in a JACK callback, abort the whole process): `true` if `cycle`
+/// returned, `false` if it panicked. Then `panics` has gone up by one and the
+/// caller must write silence to every output of this cycle, since `cycle` may
+/// have left them half written.
+///
+/// On the normal path this is one `catch_unwind`: no allocation, no lock. The
+/// panic path allocates (the panic message, its payload, the panic hook's
+/// output), which is accepted for a cycle that is already lost.
+///
+/// What is assumed about the state a panic leaves behind: the engine and its
+/// taps hold plain numbers, buffers and single-producer rings whose indexes
+/// are published (Release) only after the slots are written, and no lock is
+/// held in a cycle. So a cycle cut short cannot break memory safety or leave a
+/// lock poisoned; at worst some filter, gain or reader state is as far as the
+/// cycle got (a click, a few frames missing in a recording or a stream), and
+/// the next cycle runs from there. That is why the caller goes on with the
+/// same state instead of rebuilding it (`AssertUnwindSafe`).
+#[inline]
+pub fn guard_cycle(panics: &AtomicU32, cycle: impl FnOnce()) -> bool {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(cycle)) {
+        Ok(()) => true,
+        Err(payload) => {
+            // Dropped here (freeing is no worse than the allocations the
+            // panic already made); kept, a panic in every cycle would leak.
+            drop(payload);
+            panics.fetch_add(1, Relaxed);
+            false
         }
     }
 }
@@ -1120,6 +1155,39 @@ mod tests {
         rig.run(N, |_, _, _| 0.0);
         rig.run(N, |_, _, _| 0.01);
         assert!(rig.bus(0, 0).iter().all(|&x| approx(x, 0.01 * db_to_gain(MAX_GAIN_DB))));
+    }
+
+    /// A cycle that panics half way: the guard catches it, counts it, the
+    /// caller silences the outputs, and the next cycle mixes as before.
+    #[test]
+    fn a_panicking_cycle_is_silenced_counted_and_survived() {
+        let (mut rig, sh) = Rig::new();
+        sh.strips[0].routes.store(1, Relaxed);
+        rig.run(N, |_, _, _| 0.0); // the gains fade in
+        rig.run(N, |_, _, _| 0.5);
+        assert!(rig.bus(0, 0).iter().all(|&x| approx(x, 0.5)));
+
+        // Silence the default hook's message for the panic the test makes.
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let ran = guard_cycle(&sh.panics, || {
+            rig.run(N, |_, _, _| 0.5);
+            rig.out[0][0] = 3.0; // half written
+            panic!("a bug in the cycle");
+        });
+        std::panic::set_hook(hook);
+        assert!(!ran);
+        assert_eq!(sh.panics.load(Relaxed), 1);
+        // what the backends do when the guard says false
+        for o in &mut rig.out {
+            o.fill(0.0);
+        }
+        assert!(rig.out.iter().flatten().all(|&x| x == 0.0));
+
+        let ran = guard_cycle(&sh.panics, || rig.run(N, |_, _, _| 0.5));
+        assert!(ran);
+        assert_eq!(sh.panics.load(Relaxed), 1);
+        assert!(rig.bus(0, 0).iter().all(|&x| approx(x, 0.5)));
     }
 
     #[test]
