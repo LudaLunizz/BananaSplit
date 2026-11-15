@@ -3159,6 +3159,7 @@ function renderRecorder(S, now, full) {
   if (silent) { cls = "warn"; txt = "Recording silence"; }
   else if (R.on) { cls = "rec"; txt = "Recording" + (free ? " · " + free : ""); }
   else if (playing) { cls = "play"; txt = "Playing"; }
+  else if (S.disk && S.disk.low) { cls = "warn"; txt = "Disk full · " + free; }
   else if (!linked) { cls = "warn"; txt = "Arm a track"; }
   else txt = "Ready" + (free ? " · " + free : "");
   setClass(pill, "state" + (cls ? " " + cls : ""));
@@ -3178,6 +3179,7 @@ function renderRecorder(S, now, full) {
   else if (P.error) warn = "Player: " + P.error;
   else if (R.dropped > 0) warn = R.dropped + " frames were lost because the disk was too slow; they are filled with silence.";
   else if (R.clipped > 0) warn = "Clipping: " + R.clipped + " samples were louder than full scale. Lower a gain, don't arm a strip together with a bus it feeds, or record 32-bit float.";
+  else if (S.disk && S.disk.low) warn = "Less than 1 GB left on this disk: BananaSplit does not record until there is more room.";
   else if (S.disk && S.disk.free < 2e9) warn = "Less than 2 GB left on this disk.";
   $("recwarn").hidden = !warn;
   setText($("recwarn"), warn);

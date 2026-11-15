@@ -948,7 +948,9 @@ pub fn state_json(sh: &Shared, f: &Frame) -> String {
     o.push_str("},\"disk\":");
     match x.disk {
         Some((total, free)) => {
-            let _ = write!(o, "{{\"total\":{total},\"free\":{free}}}");
+            // low: the recorder does not record (see recorder::MIN_FREE_BYTES)
+            let low = free < recorder::MIN_FREE_BYTES;
+            let _ = write!(o, "{{\"total\":{total},\"free\":{free},\"low\":{low}}}");
         }
         None => o.push_str("null"),
     }
@@ -1919,7 +1921,7 @@ mod tests {
             ),
             "{json}"
         );
-        assert!(json.contains(r#","player":{"state":"stopped","take":null,"pos":0.00,"dur":0.00,"underruns":0,"error":null},"playTo":1,"takes":{"rev":3,"count":2,"newest":"2026-10-21_14-03-05"},"disk":{"total":64000000000,"free":52000000000},"#), "{json}");
+        assert!(json.contains(r#","player":{"state":"stopped","take":null,"pos":0.00,"dur":0.00,"underruns":0,"error":null},"playTo":1,"takes":{"rev":3,"count":2,"newest":"2026-10-21_14-03-05"},"disk":{"total":64000000000,"free":52000000000,"low":false},"#), "{json}");
         let os = crate::gui_platform::PLATFORM;
         assert!(json.ends_with(&format!(r#""scene":"Live {lt}Room{gt}","scenes":["Live {lt}Room{gt}"],"app":{{"theme":"dark","look":"classic","closeToTray":true,"zoom":1,"listen":null,"autostart":false,"installed":true,"window":"app","tray":true,"platform":"{os}"}},"update":{{"auto":false,"phase":"idle"}}}}"#)), "{json}");
         // Windows and macOS add whether the cables welcome is still to come, and nothing else.

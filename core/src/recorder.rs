@@ -76,6 +76,11 @@ pub const DEFAULT_FOLDER: &str = "~/Music/BananaSplit";
 pub const DEFAULT_SPLIT_MINUTES: u32 = 60;
 /// Longest `split` accepted (one day).
 pub const MAX_SPLIT_MINUTES: u32 = 24 * 60;
+/// Recording stops, and does not start, when the disk of the recordings
+/// folder has less than this many bytes free (1 GB).
+pub const MIN_FREE_BYTES: u64 = 1_000_000_000;
+/// How often a running take looks at the free space (from the writer thread).
+pub const DISK_CHECK: Duration = Duration::from_secs(2);
 
 const HDR: usize = 5;
 /// Words before the samples of every block in the ring (see the module docs).
@@ -90,6 +95,18 @@ const CHUNK_FRAMES: usize = 4096;
 // ---------------------------------------------------------------------------
 // Source ids and settings
 // ---------------------------------------------------------------------------
+
+/// Asks the operating system about the disk a folder is on: `(total, free)`
+/// bytes, `None` if it cannot tell (each platform's `sys::disk_space`, the
+/// same query as the state's `disk`; see [`Recorder::with_free_space`]).
+pub type FreeSpace = fn(&Path) -> Option<(u64, u64)>;
+
+/// Why nothing more can be recorded into `folder` when its disk has `free`
+/// bytes left (`None`: enough room, or not known).
+pub fn low_disk(free: Option<u64>, folder: &Path) -> Option<String> {
+    (free? < MIN_FREE_BYTES)
+        .then(|| format!("less than {} GB free on the disk of {}", MIN_FREE_BYTES / 1_000_000_000, folder.display()))
+}
 
 /// Short id of a recorder source: `"1"`..`"6"` for strips, `"V1"`..`"B2"` for buses.
 pub fn source_id(i: usize) -> &'static str {
@@ -459,9 +476,10 @@ impl RecTap {
         self.cycles.load(SeqCst)
     }
 
-    /// Stop only if session `word` is still the active one (writer error path).
-    fn deactivate_if(&self, word: u32) {
-        let _ = self.state.compare_exchange(word, word & !ACTIVE, SeqCst, SeqCst);
+    /// Stop only if session `word` is still the active one (writer error
+    /// path, disk full). True if this stopped it.
+    fn deactivate_if(&self, word: u32) -> bool {
+        self.state.compare_exchange(word, word & !ACTIVE, SeqCst, SeqCst).is_ok()
     }
 
     pub fn is_active(&self) -> bool {
@@ -1178,6 +1196,11 @@ pub struct Take {
     /// `frames` at the last audible sample (see [`AUDIBLE`]).
     heard: u64,
     refreshed: Instant,
+    /// Asks how much room is left (none: never asked), how often, and when
+    /// it was last asked.
+    free_space: Option<FreeSpace>,
+    disk_every: Duration,
+    disk_checked: Instant,
 }
 
 impl Take {
@@ -1270,6 +1293,9 @@ impl Take {
             clipped: 0,
             heard: 0,
             refreshed: Instant::now(),
+            free_space: None,
+            disk_every: DISK_CHECK,
+            disk_checked: Instant::now(),
         };
         if t.tracks.iter().any(|tr| tr.thread.is_none()) {
             let _ = t.end();
@@ -1615,6 +1641,8 @@ pub struct Recorder {
     sample_rate: u32,
     max_data_bytes: u64,
     clock: Clock,
+    free_space: Option<FreeSpace>,
+    disk_every: Duration,
     inner: Mutex<Inner>,
     status: Arc<Mutex<Status>>,
     thread: Mutex<Option<JoinHandle<()>>>,
@@ -1654,6 +1682,8 @@ impl Recorder {
             sample_rate,
             max_data_bytes: max,
             clock: no_clock,
+            free_space: None,
+            disk_every: DISK_CHECK,
             inner: Mutex::new(Inner { settings, session: 0, tx: thread.as_ref().map(|_| tx) }),
             status,
             thread: Mutex::new(thread),
@@ -1664,6 +1694,15 @@ impl Recorder {
     /// midnight continues in the next day's folder.
     pub fn with_clock(mut self, clock: Clock) -> Recorder {
         self.clock = clock;
+        self
+    }
+
+    /// Tell the recorder how to ask for the free space where recordings go:
+    /// a take does not start, and a running take stops cleanly (its files
+    /// finished as by [`Recorder::stop`]), when less than [`MIN_FREE_BYTES`]
+    /// are left. The writer thread asks every [`DISK_CHECK`].
+    pub fn with_free_space(mut self, f: FreeSpace) -> Recorder {
+        self.free_space = Some(f);
         self
     }
 
@@ -1721,6 +1760,13 @@ impl Recorder {
         }
         let s = inner.settings.clone();
         validate_folder(&s.folder)?;
+        let root = expand_home(&s.folder);
+        if let Some(why) = self.free_space.and_then(|f| low_disk(f(&root).map(|d| d.1), &root)) {
+            // also in the status: a start from MIDI or the API shows why too
+            let msg = format!("not recording: {why}");
+            lock(&self.status).error = Some(msg.clone());
+            return Err(msg);
+        }
         let labels: Vec<String> = match s.mode {
             Mode::Mix => vec!["mix".into()],
             Mode::Multi => (0..NUM_SOURCES)
@@ -1738,7 +1784,8 @@ impl Recorder {
             max_data_bytes: self.max_data_bytes,
             split_secs: u64::from(s.split_minutes) * 60,
         };
-        let mut take = Take::create(&expand_home(&s.folder), &stamp, &labels, spec, self.clock)?;
+        let mut take = Take::create(&root, &stamp, &labels, spec, self.clock)?;
+        (take.free_space, take.disk_every) = (self.free_space, self.disk_every);
         inner.session = inner.session.wrapping_add(1);
         let session = inner.session;
         let multi = s.mode == Mode::Multi;
@@ -1829,12 +1876,7 @@ fn writer_thread(tap: &RecTap, status: &Mutex<Status>, rx: &mpsc::Receiver<Cmd>)
                 let _ = ack.send(());
             }
             Some(Cmd::Stop { cycles }) => {
-                // Wait until the audio thread has certainly finished its last
-                // block of this take (or give up if the server stalled).
-                let t0 = Instant::now();
-                while tap.cycles().wrapping_sub(cycles) < 2 && t0.elapsed() < Duration::from_secs(1) {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
+                wait_for_audio(tap, cycles);
                 drain(tap, &mut cur, status);
                 if let Some(t) = cur.take() {
                     finish(t, status);
@@ -1849,6 +1891,22 @@ fn writer_thread(tap: &RecTap, status: &Mutex<Status>, rx: &mpsc::Receiver<Cmd>)
         {
             fail(cur.take(), tap, status, &e);
         }
+        if let Some(t) = cur.as_mut()
+            && let Some(f) = t.free_space
+            && t.disk_checked.elapsed() >= t.disk_every
+        {
+            t.disk_checked = Instant::now();
+            if let Some(why) = low_disk(f(&t.root).map(|d| d.1), &t.root)
+                && stop_take(tap, t.word, status, format!("recording stopped: {why}"))
+            {
+                // the rest of the take, then its files, as on a stop
+                wait_for_audio(tap, tap.cycles());
+                drain(tap, &mut cur, status);
+                if let Some(t) = cur.take() {
+                    finish(t, status);
+                }
+            }
+        }
         if exit {
             if let Some(t) = cur.take() {
                 tap.deactivate_if(t.word);
@@ -1857,6 +1915,29 @@ fn writer_thread(tap: &RecTap, status: &Mutex<Status>, rx: &mpsc::Receiver<Cmd>)
             return;
         }
     }
+}
+
+/// Wait until the audio thread has certainly finished its last block of a
+/// stopped take (`cycles` read after the stop), or give up if the server stalled.
+fn wait_for_audio(tap: &RecTap, cycles: u32) {
+    let t0 = Instant::now();
+    while tap.cycles().wrapping_sub(cycles) < 2 && t0.elapsed() < Duration::from_secs(1) {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// The writer stops take `word` itself (as [`Recorder::stop`] would), with
+/// `why` in the status. False if it was not recording (not started yet, or
+/// already stopped: then a `Stop` is on its way).
+fn stop_take(tap: &RecTap, word: u32, status: &Mutex<Status>, why: String) -> bool {
+    let mut st = lock(status);
+    if !st.on || !tap.deactivate_if(word) {
+        return false;
+    }
+    st.on = false;
+    st.dropped = tap.dropped_frames();
+    st.error = Some(why);
+    true
 }
 
 /// Consume every complete block in the ring, writing those of the current take.
@@ -1947,6 +2028,7 @@ fn fail(t: Option<Take>, tap: &RecTap, status: &Mutex<Status>, e: &io::Error) {
 mod tests {
     use super::*;
     use crate::engine::{BUS_IDS, Engine, Shared};
+    use std::sync::atomic::AtomicU64;
 
     /// Minimal independent WAV reader: (format tag, channels, rate, bits, samples as f32).
     pub(crate) fn read_wav(path: &Path) -> (u16, u16, u32, u16, Vec<f32>) {
@@ -2696,6 +2778,96 @@ mod tests {
         let (_, _, _, _, s) = read_wav(&dir.join("E_mix.wav"));
         assert_eq!(s.len(), 100, "first part finalized with its 50 frames");
         rec.shutdown();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn low_disk_is_under_one_gb_and_unknown_is_fine() {
+        let f = Path::new("/rec");
+        assert_eq!(low_disk(None, f), None, "not known: record");
+        assert_eq!(low_disk(Some(MIN_FREE_BYTES), f), None);
+        assert_eq!(low_disk(Some(50_000_000_000), f), None);
+        assert_eq!(low_disk(Some(MIN_FREE_BYTES - 1), f).as_deref(), Some("less than 1 GB free on the disk of /rec"));
+        assert!(low_disk(Some(0), f).is_some());
+    }
+
+    fn wav_settings(dir: &Path) -> Settings {
+        Settings {
+            folder: dir.display().to_string(),
+            format: Format::Wav16,
+            kbps: 320,
+            mode: Mode::Mix,
+            split_minutes: 0,
+        }
+    }
+
+    #[test]
+    fn a_take_does_not_start_on_a_full_disk() {
+        fn full(_: &Path) -> Option<(u64, u64)> {
+            Some((64_000_000_000, 400_000_000))
+        }
+        fn unknown(_: &Path) -> Option<(u64, u64)> {
+            None
+        }
+        let dir = tmpdir("full");
+        let tap = RecTap::new();
+        let rec = Recorder::new(tap.clone(), 48000, wav_settings(&dir)).with_free_space(full);
+        let names: Vec<String> = (0..NUM_SOURCES).map(|i| i.to_string()).collect();
+        let e = rec.start(1, &names, "F").unwrap_err();
+        assert_eq!(e, format!("not recording: less than 1 GB free on the disk of {}", dir.display()));
+        let st = rec.status();
+        assert!(!st.on && !tap.is_active());
+        assert_eq!(st.error.as_deref(), Some(e.as_str()), "the reason is in the state too");
+        assert!(std::fs::read_dir(&dir).map_or(true, |mut d| d.next().is_none()), "no file made");
+        rec.shutdown();
+        // free space not known: records
+        let rec = Recorder::new(tap.clone(), 48000, wav_settings(&dir)).with_free_space(unknown);
+        rec.start(1, &names, "U").unwrap();
+        assert_eq!(rec.status().error, None);
+        rec.shutdown();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_take_stops_cleanly_when_the_disk_fills() {
+        static FREE: AtomicU64 = AtomicU64::new(50_000_000_000);
+        fn probe(_: &Path) -> Option<(u64, u64)> {
+            Some((64_000_000_000, FREE.load(SeqCst)))
+        }
+        let dir = tmpdir("fills");
+        let tap = RecTap::new();
+        let mut rec = Recorder::new(tap.clone(), 48000, wav_settings(&dir)).with_free_space(probe);
+        rec.disk_every = Duration::from_millis(5);
+        let names: Vec<String> = (0..NUM_SOURCES).map(|i| i.to_string()).collect();
+        rec.start(1, &names, "D").unwrap();
+        let mut rig = Rig::new();
+        for _ in 0..3 {
+            rig.cycle(&tap, 1, 64);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(rec.is_recording(), "enough room: still recording");
+        FREE.store(MIN_FREE_BYTES - 1, SeqCst);
+        let t0 = Instant::now();
+        while rec.is_recording() && t0.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!tap.is_active(), "audio thread told to stop");
+        // finished like a normal stop: header written, every frame in it
+        let t0 = Instant::now();
+        while rec.status().frames < 192 && t0.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let st = rec.status();
+        assert!(!st.on);
+        assert_eq!(
+            st.error.as_deref(),
+            Some(format!("recording stopped: less than 1 GB free on the disk of {}", dir.display()).as_str())
+        );
+        // and a new take is refused until there is room again
+        assert!(rec.start(1, &names, "D2").unwrap_err().contains("less than 1 GB"));
+        rec.shutdown();
+        let (_, ch, _, _, s) = read_wav(&dir.join("D_mix.wav"));
+        assert_eq!((ch, s.len()), (2, 2 * 192));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
