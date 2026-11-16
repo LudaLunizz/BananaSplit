@@ -24,12 +24,19 @@ use crate::util::ramp;
 use std::f64::consts::PI;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
 
+/// Number of bands in the EQ of every strip and bus.
 pub const BANDS: usize = 6;
+/// Lowest band frequency, Hz.
 pub const MIN_FREQ: f32 = 20.0;
+/// Highest band frequency, Hz. Below a 40.8 kHz sample rate the filter itself stops at 0.49 of the sample rate.
 pub const MAX_FREQ: f32 = 20_000.0;
+/// Lowest band gain, dB.
 pub const MIN_GAIN_DB: f32 = -24.0;
+/// Highest band gain, dB.
 pub const MAX_GAIN_DB: f32 = 24.0;
+/// Lowest band Q (a plain number, no unit): the widest setting.
 pub const MIN_Q: f32 = 0.1;
+/// Highest band Q (a plain number, no unit): the narrowest setting.
 pub const MAX_Q: f32 = 30.0;
 
 /// Parameters are smoothed and coefficients recomputed every SUB samples.
@@ -40,20 +47,28 @@ const GLIDE_S: f64 = 0.010;
 /// Length of an on/off cross-fade.
 const FADE_S: f64 = 0.010;
 
+/// The filter type of a band.
+///
+/// In [`BandParams`] it is stored as its `u8` number (the value after `=`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Kind {
+    /// Peaking filter: boosts or cuts around the frequency by the gain.
     Bell = 0,
+    /// Shelf that boosts or cuts everything below the frequency by the gain.
     LowShelf = 1,
+    /// Shelf that boosts or cuts everything above the frequency by the gain.
     HighShelf = 2,
     /// High-pass, 12 dB/octave.
     LowCut = 3,
     /// Low-pass, 12 dB/octave.
     HighCut = 4,
+    /// Narrow cut that removes the frequency. It has no gain; the Q sets the width.
     Notch = 5,
 }
 
 impl Kind {
+    /// Every type, in the order of its `u8` number (so `ALL[k as usize] == k`).
     pub const ALL: [Kind; 6] = [Kind::Bell, Kind::LowShelf, Kind::HighShelf, Kind::LowCut, Kind::HighCut, Kind::Notch];
 
     /// Name in the config file and the GUI protocol.
@@ -80,10 +95,18 @@ impl Kind {
         }
     }
 
+    /// The type with stored number `v`; a number that is no type gives [`Kind::Bell`].
     pub fn from_u8(v: u8) -> Kind {
         Kind::ALL.get(v as usize).copied().unwrap_or(Kind::Bell)
     }
 
+    /// The type named `v`, ignoring case and surrounding white space.
+    ///
+    /// Accepts the config names (`bell`, `lowshelf`, `highshelf`, `lowcut`, `highcut`, `notch`) and common aliases such as `peak`, `hp`, `lowpass`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the accepted types when `v` is not one of the names.
     pub fn parse(v: &str) -> Result<Kind, String> {
         match v.trim().to_ascii_lowercase().as_str() {
             "bell" | "peak" | "peaking" => Ok(Kind::Bell),
@@ -107,7 +130,9 @@ impl Kind {
 /// One band's settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Band {
+    /// Whether the band is active; an off band is bypassed.
     pub on: bool,
+    /// The filter type.
     pub kind: Kind,
     /// Hz, MIN_FREQ..MAX_FREQ.
     pub freq: f32,
@@ -137,9 +162,11 @@ pub const DEFAULT_BANDS: [Band; BANDS] = [
 pub fn round_freq(f: f32) -> f32 {
     f.round()
 }
+/// Round a gain to 0.1 dB.
 pub fn round_gain(g: f32) -> f32 {
     (g * 10.0).round() / 10.0
 }
+/// Round a Q to 0.01.
 pub fn round_q(q: f32) -> f32 {
     (q * 100.0).round() / 100.0
 }
@@ -172,6 +199,12 @@ impl Band {
 
     /// Parse `type freq_hz gain_db q [on|off]`. Values out of range are
     /// errors (a config typo must not silently become something else).
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when there are not 4 or 5 white-space separated
+    /// fields, the type is unknown, the frequency, gain or Q is not a number
+    /// or lies outside its range, or the last field is neither `on` nor `off`.
     pub fn parse(v: &str) -> Result<Band, String> {
         let t: Vec<&str> = v.split_whitespace().collect();
         if !(4..=5).contains(&t.len()) {
@@ -202,12 +235,20 @@ impl Band {
 // Shared (atomic) parameters
 // ---------------------------------------------------------------------------
 
+/// One band's settings as atomics, shared between the control threads and the audio thread.
+///
+/// Each field is read and written on its own with relaxed ordering, so a band read while it is being changed can mix old and new values for one cycle.
 #[derive(Debug)]
 pub struct BandParams {
+    /// Whether the band is active.
     pub on: AtomicBool,
+    /// The [`Kind`] as its `u8` number.
     pub kind: AtomicU8,
+    /// Frequency, Hz.
     pub freq: AtomicF32,
+    /// Gain, dB (ignored by cuts and the notch).
     pub gain_db: AtomicF32,
+    /// Q.
     pub q: AtomicF32,
 }
 
@@ -222,6 +263,7 @@ impl BandParams {
         }
     }
 
+    /// The band's current settings. Lock-free; the fields are read one by one.
     pub fn load(&self) -> Band {
         Band {
             on: self.on.load(Relaxed),
@@ -232,6 +274,7 @@ impl BandParams {
         }
     }
 
+    /// Set the band to `b`. Lock-free; the fields are written one by one and are not range-checked (see [`Band::sanitized`]).
     pub fn store(&self, b: &Band) {
         self.on.store(b.on, Relaxed);
         self.kind.store(b.kind as u8, Relaxed);
@@ -244,7 +287,9 @@ impl BandParams {
 /// One channel's EQ, as the UIs and the config see it.
 #[derive(Debug)]
 pub struct EqParams {
+    /// Whether the EQ as a whole is active; off bypasses every band.
     pub on: AtomicBool,
+    /// The six bands, lowest first as laid out in [`DEFAULT_BANDS`].
     pub bands: [BandParams; BANDS],
 }
 
@@ -255,20 +300,24 @@ impl Default for EqParams {
 }
 
 impl EqParams {
+    /// The current settings of all bands.
     pub fn bands(&self) -> [Band; BANDS] {
         std::array::from_fn(|i| self.bands[i].load())
     }
 
+    /// Set all bands to `bands` (values are stored as given, not range-checked).
     pub fn store_bands(&self, bands: &[Band; BANDS]) {
         for (p, b) in self.bands.iter().zip(bands) {
             p.store(b);
         }
     }
 
+    /// The whole EQ (switch and bands) as a plain value.
     pub fn settings(&self) -> EqSettings {
         EqSettings { on: self.on.load(Relaxed), bands: self.bands() }
     }
 
+    /// Set the bands and then the on/off switch from `s`.
     pub fn apply(&self, s: &EqSettings) {
         self.store_bands(&s.bands);
         self.on.store(s.on, Relaxed);
@@ -278,7 +327,9 @@ impl EqParams {
 /// One channel's EQ as stored in the config file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EqSettings {
+    /// Whether the EQ as a whole is active.
     pub on: bool,
+    /// The six bands.
     pub bands: [Band; BANDS],
 }
 
@@ -505,6 +556,7 @@ fn clean(v: f32) -> f32 {
 }
 
 impl EqRt {
+    /// An EQ for sample rate `sample_rate` (Hz) with the default bands, every band bypassed until it is first processed or reset.
     pub fn new(sample_rate: u32) -> EqRt {
         let b = DEFAULT_BANDS.map(|d| BandRt {
             kind: d.kind,
@@ -521,6 +573,9 @@ impl EqRt {
         eq
     }
 
+    /// Tune the filters for a new sample rate, in Hz.
+    ///
+    /// Rates below 8000 Hz are treated as 8000 Hz. The filter state is kept; the glide and fade steps and every band's coefficients are recomputed.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         self.sr = sample_rate.max(8000) as f64;
         let block = SUB as f64;

@@ -20,20 +20,30 @@
 //! A larger packet whose size does match its header is accepted (some
 //! senders other than Voicemeeter put 256 24-bit stereo samples in one).
 
+/// The four bytes `VBAN` every packet starts with.
 pub const MAGIC: &[u8; 4] = b"VBAN";
+/// The size of the header in bytes.
 pub const HEADER_LEN: usize = 28;
+/// The most bytes of samples one packet carries.
 pub const MAX_DATA: usize = 1436;
+/// The largest packet in bytes: a header and [`MAX_DATA`] bytes of samples.
 pub const MAX_PACKET: usize = HEADER_LEN + MAX_DATA;
 /// Samples per channel in one packet.
 pub const MAX_SAMPLES: usize = 256;
+/// The size of the stream name field in bytes.
 pub const NAME_LEN: usize = 16;
+/// The UDP port VBAN uses by default.
 pub const DEFAULT_PORT: u16 = 6980;
 
 const SR_MASK: u8 = 0x1F;
 const SUB_MASK: u8 = 0xE0;
+/// Sub-protocol value (in the top three bits of byte 4) for audio.
 pub const SUB_AUDIO: u8 = 0x00;
+/// Sub-protocol value for serial data.
 pub const SUB_SERIAL: u8 = 0x20;
+/// Sub-protocol value for text.
 pub const SUB_TEXT: u8 = 0x40;
+/// Sub-protocol value for service (control) packets.
 pub const SUB_SERVICE: u8 = 0x60;
 const TYPE_MASK: u8 = 0x07;
 const RESERVED: u8 = 0x08;
@@ -57,10 +67,15 @@ pub fn sr_index(rate: u32) -> Option<u8> {
 pub enum SampleFormat {
     /// 8-bit unsigned, 128 = zero.
     U8 = 0,
+    /// 16-bit signed integer.
     I16 = 1,
+    /// 24-bit signed integer, 3 bytes per sample.
     I24 = 2,
+    /// 32-bit signed integer.
     I32 = 3,
+    /// 32-bit floating point.
     F32 = 4,
+    /// 64-bit floating point.
     F64 = 5,
 }
 
@@ -68,6 +83,8 @@ impl SampleFormat {
     /// Formats BananaSplit can send.
     pub const SEND: [SampleFormat; 4] = [SampleFormat::I16, SampleFormat::I24, SampleFormat::I32, SampleFormat::F32];
 
+    /// The format for the data type bits (0 to 5) of the header; `None` for
+    /// the packed 10- and 12-bit types and anything unknown.
     pub fn from_bits(v: u8) -> Option<SampleFormat> {
         Some(match v {
             0 => SampleFormat::U8,
@@ -80,6 +97,7 @@ impl SampleFormat {
         })
     }
 
+    /// The size of one sample in bytes.
     pub fn bytes(self) -> usize {
         match self {
             SampleFormat::U8 => 1,
@@ -115,6 +133,14 @@ impl SampleFormat {
     }
 
     /// A format to send in (config / GUI).
+    ///
+    /// Accepts, ignoring case and surrounding spaces, `int16`, `int24`,
+    /// `int32` and `float32`, and short forms such as `16`, `s24`, `pcm32`
+    /// and `float`.
+    ///
+    /// # Errors
+    /// The text is not one of the four formats BananaSplit can send
+    /// ([`SampleFormat::SEND`]); `uint8` and `float64` are refused too.
     pub fn parse_send(v: &str) -> Result<SampleFormat, String> {
         match v.trim().to_ascii_lowercase().as_str() {
             "int16" | "16" | "pcm16" | "s16" => Ok(SampleFormat::I16),
@@ -129,17 +155,25 @@ impl SampleFormat {
 /// The fields of an audio packet's header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioHeader {
+    /// Index into [`SAMPLE_RATES`] (0 to 20 as [`parse`] gives it).
     pub sr_index: u8,
     /// Samples per channel, 1..=256.
     pub samples: usize,
     /// 1..=256.
     pub channels: usize,
+    /// The sample format of the data.
     pub format: SampleFormat,
+    /// The stream name, zero-padded to [`NAME_LEN`] bytes.
     pub name: [u8; NAME_LEN],
+    /// The frame counter, 1 more for each packet of the stream.
     pub frame: u32,
 }
 
 impl AudioHeader {
+    /// The sample rate in Hz.
+    ///
+    /// # Panics
+    /// `sr_index` is 21 or more; [`parse`] never gives such a header.
     pub fn sample_rate(&self) -> u32 {
         SAMPLE_RATES[self.sr_index as usize]
     }
@@ -157,6 +191,7 @@ impl AudioHeader {
     }
 }
 
+/// A parsed VBAN packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Packet<'a> {
     /// An audio packet and its samples (exactly the size the header says).
@@ -165,12 +200,16 @@ pub enum Packet<'a> {
     Other(u8),
 }
 
+/// Why [`parse`] refused a packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
     /// Shorter than a header.
     Length(usize),
+    /// The packet does not start with `VBAN`.
     NotVban,
+    /// The sample-rate index (carried here) is not in [`SAMPLE_RATES`].
     SampleRate(u8),
+    /// The reserved bit of the format byte is set.
     Reserved,
     /// Not PCM (a VB-Audio codec or a user codec).
     Codec(u8),
@@ -178,7 +217,9 @@ pub enum ParseError {
     DataType(u8),
     /// Payload size differs from samples x channels x sample size.
     Size {
+        /// The size the header calls for, in bytes.
         expected: usize,
+        /// The size the packet has after the header, in bytes.
         got: usize,
     },
 }
@@ -200,6 +241,20 @@ impl std::fmt::Display for ParseError {
 }
 
 /// Parse one datagram.
+///
+/// A packet of another sub-protocol (serial, text, service) is not looked at
+/// further and gives [`Packet::Other`]; the checks below apply to audio only.
+///
+/// # Errors
+/// - [`ParseError::Length`]: shorter than the 28-byte header.
+/// - [`ParseError::NotVban`]: does not start with `VBAN`.
+/// - [`ParseError::SampleRate`]: the sample-rate index is 21 or more.
+/// - [`ParseError::Reserved`]: the reserved bit is set.
+/// - [`ParseError::Codec`]: the codec is not PCM.
+/// - [`ParseError::DataType`]: the data type is a packed 10- or 12-bit one,
+///   or unknown.
+/// - [`ParseError::Size`]: the bytes after the header are not exactly
+///   samples x channels x sample size.
 pub fn parse(buf: &[u8]) -> Result<Packet<'_>, ParseError> {
     if buf.len() < HEADER_LEN {
         return Err(ParseError::Length(buf.len()));
@@ -237,6 +292,14 @@ pub fn parse(buf: &[u8]) -> Result<Packet<'_>, ParseError> {
 }
 
 /// Write an audio header into `out[..HEADER_LEN]`.
+///
+/// Only the first [`HEADER_LEN`] bytes are written. The header is not
+/// checked: `h.samples` and `h.channels` must be 1 to 256, and `h.sr_index`
+/// is cut to its low 5 bits (it should be 0 to 20).
+///
+/// # Panics
+/// `out` is shorter than [`HEADER_LEN`], or `h.samples` or `h.channels` is
+/// 0 (in a debug build also if either is above 256).
 pub fn write_header(out: &mut [u8], h: &AudioHeader) {
     debug_assert!((1..=MAX_SAMPLES).contains(&h.samples) && (1..=256).contains(&h.channels));
     out[0..4].copy_from_slice(MAGIC);
@@ -269,6 +332,10 @@ pub fn name_matches(received: &[u8], configured: &str) -> bool {
 }
 
 /// A valid stream name: 1 to 16 printable ASCII characters.
+///
+/// # Errors
+/// The name is empty, longer than 16 bytes, has a character that is not
+/// printable ASCII, or starts or ends with a space.
 pub fn validate_name(name: &str) -> Result<(), String> {
     if name.is_empty() || name.len() > NAME_LEN || !name.bytes().all(|b| (0x20..0x7F).contains(&b)) {
         return Err(format!("VBAN stream names are 1-16 ASCII characters, got {name:?}"));

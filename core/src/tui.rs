@@ -24,6 +24,7 @@ use crate::recorder::source_id;
 use std::fmt::Write as _;
 use std::sync::atomic::Ordering::Relaxed;
 
+/// Rows of the mixer: the strips first, then the buses (V1 .. B2).
 pub const ROWS: usize = NUM_STRIPS + NUM_BUSES;
 /// The screen is laid out for at least this many columns.
 pub const MIN_COLS: usize = 80;
@@ -33,12 +34,19 @@ const MAX_NAME_W: usize = 32;
 const FLOOR_DB: f32 = -60.0;
 const DECAY_DB_PER_FRAME: f32 = 1.5; // ~45 dB/s at 30 fps
 
+/// One key press read from the terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
+    /// The up arrow.
     Up,
+    /// The down arrow.
     Down,
+    /// The left arrow.
     Left,
+    /// The right arrow.
     Right,
+    /// Any other byte as the terminal sent it: an ASCII character or a
+    /// control code such as 3 (Ctrl-C) or 4 (Ctrl-D).
     Char(u8),
 }
 
@@ -85,10 +93,15 @@ pub fn decode(buf: &mut Vec<u8>) -> Vec<Key> {
     keys
 }
 
+/// What the main loop is asked to do after a key press.
 pub enum Action {
+    /// Nothing more to do: the key was handled here or ignored.
     None,
+    /// Leave the program.
     Quit,
+    /// Write the config file (the `w` key).
     Save,
+    /// Connect the channels to their devices again (the `r` key).
     Reconnect,
     /// Start or stop the recorder.
     Record,
@@ -98,8 +111,10 @@ pub enum Action {
     Note(String),
 }
 
+/// The screen that is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
+    /// The mixer with one row per strip and bus.
     Mixer,
     /// The selected channel's EQ bands.
     Eq,
@@ -111,24 +126,35 @@ const EQ_FIELDS: usize = 4;
 /// One line of recorder status, filled in by the main loop.
 #[derive(Debug, Default, Clone)]
 pub struct RecLine {
+    /// A take is being recorded now.
     pub on: bool,
+    /// What the line says: the take's progress while recording, otherwise
+    /// the recorder's settings or its last error.
     pub text: String,
 }
 
+/// The terminal screen's state: what is selected, the meters and which page
+/// is shown.
 pub struct View {
+    /// The selected row, `0..ROWS` (strips 0-5, then the buses V1 .. B2).
     pub sel: usize,
     meters: [[f32; 2]; ROWS],
     /// Input levels (what comes in, also while a row is muted).
     in_meters: [[f32; 2]; ROWS],
+    /// The message on the status line.
     pub status: String,
+    /// The recorder line under the status.
     pub rec: RecLine,
     /// Terminal width (the main loop updates it every frame).
     pub cols: usize,
     /// Latency advice from the startup check (its own line, under the status).
     pub latency: Option<String>,
+    /// The page that is shown.
     pub page: Page,
-    /// EQ page: selected band and column (type, freq, gain, Q).
+    /// EQ page: the selected band, `0..BANDS` (band 1 is 0).
     pub band: usize,
+    /// EQ page: the selected column, 0 = type, 1 = frequency, 2 = gain,
+    /// 3 = Q.
     pub field: usize,
 }
 
@@ -281,17 +307,29 @@ fn visible_len(s: &str) -> usize {
     n
 }
 
+/// The engine's figures for the two lines under the title.
 pub struct Info<'a> {
+    /// The JACK client name.
     pub client: &'a str,
+    /// Sample rate, Hz (0 = not known yet).
     pub sample_rate: u32,
+    /// Period (buffer) size, frames.
     pub buffer_size: u32,
+    /// DSP load, percent.
     pub cpu: f32,
+    /// Xruns since the start.
     pub xruns: u32,
+    /// Audio cycles larger than the engine takes, which were silenced
+    /// ([`crate::engine::Shared::oversize_cycles`]).
     pub oversize: u32,
     /// Audio cycles that panicked and were silenced ([`crate::engine::Shared::panics`]).
     pub panics: u32,
+    /// Measured capture latency, frames (0 together with `lat_out` = not
+    /// measured; the round trip is then guessed from the period).
     pub lat_in: u32,
+    /// Measured playback latency, frames.
     pub lat_out: u32,
+    /// Number of virtual cables that exist.
     pub cables: usize,
     /// VBAN summary for the line under the header ("" = VBAN is off).
     pub vban: &'a str,
@@ -302,6 +340,9 @@ fn step_gain(cur: f32, delta: f32) -> f32 {
 }
 
 impl View {
+    /// Act on one key press on the page that is shown: change the mixer or
+    /// EQ values in `sh` or the selection here. Returns what the main loop
+    /// must do about it, if anything.
     pub fn handle(&mut self, sh: &Shared, key: Key) -> Action {
         match self.page {
             Page::Mixer => self.handle_mixer(sh, key),
@@ -442,6 +483,9 @@ impl View {
         NAME_W + self.cols.saturating_sub(MIN_COLS).min(MAX_NAME_W - NAME_W)
     }
 
+    /// Draw the whole screen for the current page as one string of ANSI
+    /// escape codes, ready to be written to the terminal. `info` gives the
+    /// engine figures and `conn` the connections of each row (only the selected row's is shown).
     pub fn render(&self, sh: &Shared, cfg: &Config, info: &Info, conn: &[String]) -> String {
         let mut o = String::with_capacity(8192);
         o.push_str("\x1b[H");

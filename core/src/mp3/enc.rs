@@ -39,6 +39,8 @@ pub const DECODER_DELAY: u32 = 529;
 /// in the middle of one file, and the LAME tag's delay and padding (12 bits
 /// each) hide the overlap from every decoder that reads it.
 pub const PREROLL: usize = 1152;
+/// The most samples per channel of the next file's start that `encode_tail`
+/// uses (see [`PREROLL`]).
 pub const TAIL: usize = 1728;
 /// Largest value the Huffman tables can carry (15 + 13 linbits).
 const IXMAX: i32 = 8206;
@@ -715,6 +717,11 @@ struct Subbands {
     attack: bool,
 }
 
+/// The MP3 encoder: stereo PCM in, MPEG-1 Layer III frames out.
+///
+/// Create it with [`Encoder::new`], write [`Encoder::info_frame`] first, then
+/// give audio to [`Encoder::encode`] and end with [`Encoder::finish`]. Each
+/// call appends the finished frames to the buffer it is given.
 pub struct Encoder {
     rate: u32,
     ri: usize,
@@ -777,6 +784,10 @@ fn lowpass_hz(kbps: u32) -> f64 {
 impl Encoder {
     /// An encoder for stereo audio at `rate` (32000, 44100 or 48000 Hz)
     /// and `kbps` (an MPEG-1 bitrate, 32-320).
+    ///
+    /// # Errors
+    /// `rate` is not 32000, 44100 or 48000, or `kbps` is not an MPEG-1
+    /// Layer III bitrate.
     pub fn new(rate: u32, kbps: u32) -> Result<Encoder, String> {
         let ri = rate_index(rate).ok_or_else(|| format!("MP3 does not support {rate} Hz (32, 44.1 or 48 kHz)"))?;
         let bitrate_index = bitrate_index(kbps).ok_or_else(|| format!("{kbps} kbit/s is not an MP3 bitrate"))?;
@@ -824,10 +835,12 @@ impl Encoder {
         })
     }
 
+    /// The sample rate in Hz.
     pub fn sample_rate(&self) -> u32 {
         self.rate
     }
 
+    /// The bitrate in kbit/s.
     pub fn kbps(&self) -> u32 {
         self.kbps
     }

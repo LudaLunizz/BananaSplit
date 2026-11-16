@@ -85,6 +85,8 @@ pub struct PlayTap {
 }
 
 impl PlayTap {
+    /// A tap with an empty ring: stopped, routed to bus V1 only, engine
+    /// sample rate not known yet.
     pub fn new() -> Arc<PlayTap> {
         Arc::new(PlayTap {
             ring: Ring::new(RING_SAMPLES),
@@ -100,6 +102,8 @@ impl PlayTap {
         })
     }
 
+    /// How many times the ring ran short while playing (the disk could not
+    /// keep up), counted by the audio thread. Safe to call from any thread.
     pub fn underruns(&self) -> u32 {
         self.underruns.load(Relaxed)
     }
@@ -229,13 +233,20 @@ impl PlayRt {
 // WAV files
 // ===========================================================================
 
+/// How the samples of a WAV file are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SampleKind {
+    /// Unsigned 8-bit PCM.
     U8,
+    /// Signed 16-bit PCM.
     I16,
+    /// Signed 24-bit PCM.
     I24,
+    /// Signed 32-bit PCM.
     I32,
+    /// 32-bit IEEE float.
     F32,
+    /// 64-bit IEEE float.
     F64,
 }
 
@@ -250,6 +261,7 @@ impl SampleKind {
         }
     }
 
+    /// Short text for the sample format, such as `24-bit` or `32-bit float`.
     pub fn label(self) -> &'static str {
         match self {
             SampleKind::U8 => "8-bit",
@@ -278,18 +290,25 @@ impl SampleKind {
 /// What a WAV header says.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WavInfo {
+    /// Number of channels in the file (1 to 64).
     pub channels: u16,
+    /// Sample rate of the file in Hz.
     pub sample_rate: u32,
+    /// How each sample is stored.
     pub kind: SampleKind,
+    /// Byte offset of the first audio sample from the start of the file.
     pub data_offset: u64,
+    /// Length of the audio data in bytes, always a whole number of frames.
     pub data_bytes: u64,
 }
 
 impl WavInfo {
+    /// Size of one frame (one sample of every channel) in bytes.
     pub fn block_align(&self) -> usize {
         self.channels as usize * self.kind.bytes()
     }
 
+    /// Number of frames (samples per channel) in the audio data.
     pub fn frames(&self) -> u64 {
         self.data_bytes / self.block_align() as u64
     }
@@ -304,6 +323,14 @@ fn u32le(b: &[u8], o: usize) -> u32 {
 }
 
 /// Parse the header of a RIFF/WAVE file.
+///
+/// # Errors
+///
+/// Returns a message when the file cannot be opened or read, is not a RIFF
+/// WAVE file, is an RF64/BW64 file, has no format chunk or no audio data,
+/// has a bad format chunk or block alignment, is compressed (not PCM or
+/// float), uses an unsupported bit depth, has 0 or more than 64 channels,
+/// or has sample rate 0.
 pub fn read_wav_info(path: &Path) -> Result<WavInfo, String> {
     let mut f = File::open(path).map_err(|e| e.to_string())?;
     let len = f.metadata().map_err(|e| e.to_string())?.len();
@@ -379,17 +406,25 @@ pub fn read_wav_info(path: &Path) -> Result<WavInfo, String> {
 /// What a WAV or MP3 file's headers say.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FileInfo {
+    /// A WAV file.
     Wav(WavInfo),
+    /// An MP3 file.
     Mp3(mp3::Info),
 }
 
 impl FileInfo {
     /// Read the headers of `path`, by its extension (`.wav` or `.mp3`).
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the file cannot be read or its headers are
+    /// not valid or not supported; see [`read_wav_info`] for WAV files.
     pub fn read(path: &Path) -> Result<FileInfo, String> {
         let mp3 = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("mp3"));
         if mp3 { mp3::probe(path).map(FileInfo::Mp3) } else { read_wav_info(path).map(FileInfo::Wav) }
     }
 
+    /// Sample rate of the file in Hz.
     pub fn sample_rate(&self) -> u32 {
         match self {
             FileInfo::Wav(w) => w.sample_rate,
@@ -534,13 +569,18 @@ impl TrackReader {
 // Takes
 // ===========================================================================
 
+/// One track of a take: a `mix` file, or one channel of a multi-track take,
+/// in one or more part files.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Track {
     /// `mix`, `1-Mic`, `V1-Speakers` (`A1-…` up to 2.8.24), or the file name for other files.
     pub label: String,
+    /// The files of the track in playing order (`_part2`, `_part3` … after
+    /// the first), each with its header.
     pub parts: Vec<(PathBuf, FileInfo)>,
 }
 
+/// One take found by [`scan`]: its tracks and the totals of their files.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TakeInfo {
     /// Unique within the folder: the time stamp (with `-k`) of a
@@ -549,17 +589,23 @@ pub struct TakeInfo {
     pub key: String,
     /// `YYYY-MM-DD HH:MM:SS` of a BananaSplit recording.
     pub when: Option<String>,
+    /// The tracks, the mix first, then strips, buses and other files.
     pub tracks: Vec<Track>,
+    /// Sample rate in Hz of the first file; the player needs every file of
+    /// the take to have the same one.
     pub sample_rate: u32,
     /// `24-bit`, `MP3 320 kbit/s`, … (of the first file).
     pub fmt: String,
+    /// Length of the take in frames at `sample_rate` (its longest track).
     pub frames: u64,
+    /// Total size in bytes of all the files of the take.
     pub bytes: u64,
     /// Modification time (seconds since 1970) of the newest file.
     pub mtime: u64,
 }
 
 impl TakeInfo {
+    /// Length of the take in seconds (0 if the sample rate is 0).
     pub fn secs(&self) -> f64 {
         if self.sample_rate == 0 { 0.0 } else { self.frames as f64 / self.sample_rate as f64 }
     }
@@ -906,6 +952,11 @@ fn order_takes(takes: &mut Vec<TakeInfo>) {
 /// scale (0..=100; anything audible is at least 1). Short takes are read
 /// completely; long ones are sampled (`4096` frames at the middle of every
 /// bucket), which is plenty for a picture.
+///
+/// # Errors
+///
+/// Returns a message (with the file path) when a file of the take cannot be
+/// opened, positioned or read.
 pub fn overview(take: &TakeInfo, buckets: usize) -> Result<Vec<u8>, String> {
     let buckets = buckets.clamp(1, 4096);
     let total = take.frames;
@@ -965,14 +1016,19 @@ pub fn overview(take: &TakeInfo, buckets: usize) -> Result<Vec<u8>, String> {
 // Player thread
 // ===========================================================================
 
+/// What the player is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayState {
+    /// Nothing plays: no take is loaded, or it is loaded and waiting at its start or the point it was seeked to.
     Stopped,
+    /// The loaded take is playing.
     Playing,
+    /// The loaded take is held at its current position.
     Paused,
 }
 
 impl PlayState {
+    /// The state as lowercase text: `stopped`, `playing` or `paused`.
     pub fn as_str(self) -> &'static str {
         match self {
             PlayState::Stopped => "stopped",
@@ -985,12 +1041,17 @@ impl PlayState {
 /// What the UIs show.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayStatus {
+    /// Whether the player is stopped, playing or paused.
     pub state: PlayState,
     /// Key of the loaded take.
     pub take: Option<String>,
+    /// Playback position in seconds from the start of the take.
     pub pos: f64,
+    /// Length of the loaded take in seconds (0 with no take).
     pub dur: f64,
+    /// How many times the disk could not keep up (see [`PlayTap::underruns`]).
     pub underruns: u32,
+    /// The last error (a file that could not be read), cleared when a take is loaded.
     pub error: Option<String>,
 }
 
@@ -1019,7 +1080,10 @@ pub struct Player {
 }
 
 impl Player {
-    /// `rate`: the mixer's sample rate.
+    /// Start the player thread. `rate` is the mixer's sample rate.
+    ///
+    /// If the thread cannot be started, the player is still returned and
+    /// every command on it fails.
     pub fn new(tap: Arc<PlayTap>, rate: u32) -> Player {
         let shared = Arc::new(Mutex::new(Shared {
             status: PlayStatus { state: PlayState::Stopped, take: None, pos: 0.0, dur: 0.0, underruns: 0, error: None },
@@ -1038,6 +1102,7 @@ impl Player {
         }
     }
 
+    /// The tap shared with the engine's audio thread.
     pub fn tap(&self) -> &Arc<PlayTap> {
         &self.tap
     }
@@ -1057,6 +1122,13 @@ impl Player {
 
     /// Load `take` and play it from `from` seconds (or only load it, stopped
     /// there: `resume` then plays it).
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the take's sample rate is more than four times
+    /// the mixer's or below [`MIN_RATE`], when its files have different
+    /// sample rates, or when the player thread is not running. A file that
+    /// cannot be opened is not reported here but in [`PlayStatus::error`].
     pub fn play(&self, take: &TakeInfo, from: f64, start: bool) -> Result<(), String> {
         let (fs, rate) = (take.sample_rate, self.rate());
         if fs as f64 > rate as f64 * MAX_DOWN {
@@ -1073,19 +1145,40 @@ impl Player {
         self.send(Cmd::Load(Box::new(take.clone()), from.max(0.0), start))
     }
 
+    /// Hold the loaded take at its current position.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the player thread is not running.
     pub fn pause(&self) -> Result<(), String> {
         self.send(Cmd::Pause)
     }
 
     /// Play the loaded take from where it is (paused or stopped).
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the player thread is not running.
     pub fn resume(&self) -> Result<(), String> {
         self.send(Cmd::Resume)
     }
 
+    /// Stop playback and go back to the start of the loaded take.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the player thread is not running.
     pub fn stop(&self) -> Result<(), String> {
         self.send(Cmd::Stop)
     }
 
+    /// Move the loaded take to `secs` seconds from its start (negative
+    /// values count as 0, values past the end as the end). It keeps playing
+    /// or stays paused or stopped as it was.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the player thread is not running.
     pub fn seek(&self, secs: f64) -> Result<(), String> {
         self.send(Cmd::Seek(secs.max(0.0)))
     }
@@ -1095,10 +1188,12 @@ impl Player {
         self.tap.routes.store(mask & ((1 << NUM_BUSES) - 1) as u8, Relaxed);
     }
 
+    /// The buses playback goes to (bit b = bus b, V1 = bit 0).
     pub fn routes(&self) -> u8 {
         self.tap.routes.load(Relaxed)
     }
 
+    /// A snapshot of the player: state, take, position in seconds and errors.
     pub fn status(&self) -> PlayStatus {
         let g = lock(&self.shared);
         let mut s = g.status.clone();
@@ -1113,6 +1208,8 @@ impl Player {
         s
     }
 
+    /// Stop the player thread and wait for it to end. Later commands fail.
+    /// Also done when the player is dropped.
     pub fn shutdown(&self) {
         if let Some(tx) = lock(&self.tx).take() {
             let _ = tx.send(Cmd::Exit);

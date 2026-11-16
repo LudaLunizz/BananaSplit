@@ -46,7 +46,9 @@ use std::time::{Duration, Instant};
 use tap::NONE;
 use tx::{TxParams, TxStream};
 
+/// Largest reserve an incoming stream can ask for, in ms.
 pub const MAX_BUFFER_MS: u32 = 200;
+/// Reserve a new incoming stream starts with, in ms.
 pub const DEFAULT_BUFFER_MS: u32 = 10;
 
 // ---------------------------------------------------------------------------
@@ -60,10 +62,19 @@ pub enum FromAddr {
     Unset,
     /// Any sender.
     Any,
+    /// Only the sender with this IPv4 address.
     Ip(Ipv4Addr),
 }
 
 impl FromAddr {
+    /// Read a sender setting from text.
+    ///
+    /// An empty string is [`FromAddr::Unset`], `any` (in any case) is
+    /// [`FromAddr::Any`], anything else must be an IPv4 address.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message for the UI if the text is none of those.
     pub fn parse(v: &str) -> Result<FromAddr, String> {
         let v = v.trim();
         if v.is_empty() {
@@ -77,6 +88,8 @@ impl FromAddr {
         }
     }
 
+    /// The setting as text: empty, `any` or the dotted IPv4 address.
+    /// [`FromAddr::parse`] reads it back.
     pub fn as_string(&self) -> String {
         match self {
             FromAddr::Unset => String::new(),
@@ -85,6 +98,7 @@ impl FromAddr {
         }
     }
 
+    /// Whether packets from `ip` may be played. [`FromAddr::Unset`] accepts none.
     pub fn accepts(&self, ip: Ipv4Addr) -> bool {
         match self {
             FromAddr::Unset => false,
@@ -95,6 +109,11 @@ impl FromAddr {
 }
 
 /// An IPv4 destination for an outgoing stream ("" = not set).
+///
+/// # Errors
+///
+/// Returns a message for the UI if the text is not an IPv4 address, or is
+/// the unspecified (`0.0.0.0`) or a multicast address.
 pub fn parse_to(v: &str) -> Result<Option<Ipv4Addr>, String> {
     let v = v.trim();
     if v.is_empty() {
@@ -108,11 +127,20 @@ pub fn parse_to(v: &str) -> Result<Option<Ipv4Addr>, String> {
     Ok(Some(ip))
 }
 
+/// Read a UDP port from text.
+///
+/// # Errors
+///
+/// Returns a message for the UI if the text is not a number from 1 to 65535.
 pub fn parse_port(v: &str) -> Result<u16, String> {
     v.trim().parse::<u16>().ok().filter(|&p| p > 0).ok_or_else(|| format!("expected a UDP port 1-65535, got {v:?}"))
 }
 
 /// `1`..`6` -> strip index.
+///
+/// # Errors
+///
+/// Returns a message for the UI if the text is not a strip number 1-6.
 pub fn parse_strip(v: &str) -> Result<usize, String> {
     v.trim()
         .parse::<usize>()
@@ -124,10 +152,20 @@ pub fn parse_strip(v: &str) -> Result<usize, String> {
 
 /// `1`..`6`, `V1`..`B2` (or `A1`..`A3`, the names up to 2.8.24) -> source
 /// index (same numbering as the recorder).
+///
+/// # Errors
+///
+/// Returns a message for the UI if the text names no source.
 pub fn parse_source(v: &str) -> Result<usize, String> {
     crate::recorder::source_index(v).ok_or_else(|| format!("expected a source 1-6, V1, V2, V3, B1 or B2, got {v:?}"))
 }
 
+/// Read an incoming stream's reserve, in ms, from text.
+///
+/// # Errors
+///
+/// Returns a message for the UI if the text is not a whole number from 0 to
+/// [`MAX_BUFFER_MS`].
 pub fn parse_buffer_ms(v: &str) -> Result<u32, String> {
     v.trim()
         .parse::<u32>()
@@ -136,6 +174,11 @@ pub fn parse_buffer_ms(v: &str) -> Result<u32, String> {
         .ok_or_else(|| format!("expected a buffer of 0-{MAX_BUFFER_MS} ms, got {v:?}"))
 }
 
+/// Read a channel count from text: `1` or `mono`, `2` or `stereo`.
+///
+/// # Errors
+///
+/// Returns a message for the UI for anything else.
 pub fn parse_channels(v: &str) -> Result<u8, String> {
     match v.trim() {
         "1" | "mono" => Ok(1),
@@ -144,10 +187,14 @@ pub fn parse_channels(v: &str) -> Result<u8, String> {
     }
 }
 
+/// Settings of one incoming stream.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InStream {
+    /// Whether the stream is switched on.
     pub on: bool,
+    /// Stream name to listen for (compared without regard to case).
     pub name: String,
+    /// Who may send it.
     pub from: FromAddr,
     /// Strip index 0..=5.
     pub strip: usize,
@@ -155,19 +202,28 @@ pub struct InStream {
     pub buffer_ms: u32,
 }
 
+/// Settings of one outgoing stream.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OutStream {
+    /// Whether the stream is switched on.
     pub on: bool,
+    /// Stream name written into every packet (at most 16 ASCII characters).
     pub name: String,
+    /// Receiver's IPv4 address; `None` = not set, so the stream cannot run.
     pub to: Option<Ipv4Addr>,
+    /// Receiver's UDP port.
     pub port: u16,
     /// Source index 0..=10 (strips 1-6, buses V1-B2).
     pub source: usize,
+    /// Sample format of the packets.
     pub format: SampleFormat,
+    /// Channels sent: 1 (mono) or 2 (stereo).
     pub channels: u8,
 }
 
 impl InStream {
+    /// The default for incoming stream `k` (0-based): off, named `Stream` and
+    /// `k + 1`, no sender set, on the last strip, with [`DEFAULT_BUFFER_MS`] in reserve.
     pub fn default_for(k: usize) -> InStream {
         InStream {
             on: false,
@@ -188,6 +244,8 @@ impl InStream {
 }
 
 impl OutStream {
+    /// The default for outgoing stream `k` (0-based): off, named `Stream` and
+    /// `k + 1`, no receiver set, on [`DEFAULT_PORT`], sending bus B1 as 16-bit stereo.
     pub fn default_for(k: usize) -> OutStream {
         OutStream {
             on: false,
@@ -200,16 +258,22 @@ impl OutStream {
         }
     }
 
+    /// Why this stream cannot run, if it cannot.
     pub fn problem(&self) -> Option<&'static str> {
         if self.to.is_none() { Some("set the receiver's IP address") } else { None }
     }
 }
 
+/// The whole VBAN configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VbanConfig {
+    /// Master switch: while false nothing listens and nothing is sent.
     pub enabled: bool,
+    /// UDP port of the one socket that receives and sends every stream.
     pub port: u16,
+    /// The incoming streams.
     pub ins: [InStream; NUM_IN],
+    /// The outgoing streams.
     pub outs: [OutStream; NUM_OUT],
 }
 
@@ -255,70 +319,108 @@ impl VbanConfig {
 // Status
 // ---------------------------------------------------------------------------
 
+/// What an incoming stream is doing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum InState {
+    /// Switched off.
     #[default]
     Off,
     /// Switched on but missing something (see `error`).
     Blocked,
     /// Waiting for packets.
     Waiting,
+    /// Audio is arriving and being played.
     Receiving,
 }
 
+/// Live status of one incoming stream. Everything except `state` and `error`
+/// is zero or `None` unless the stream is [`InState::Receiving`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct InStatus {
+    /// What the stream is doing.
     pub state: InState,
+    /// Address and port of the sender being played.
     pub from: Option<SocketAddrV4>,
+    /// The sender's sample rate, in Hz.
     pub sample_rate: u32,
+    /// Channels in the sender's packets.
     pub channels: usize,
+    /// Sample format of the sender's packets.
     pub format: Option<SampleFormat>,
+    /// Average audio held in the ring and the resampler, in ms.
     pub latency_ms: Option<f32>,
+    /// The sender's measured clock drift against the mixer, in parts per
+    /// million (positive = sender faster).
     pub clock_ppm: f32,
+    /// Audio packets taken since the stream was switched on.
     pub packets: u64,
+    /// Packets missing from the sender's frame counter (replaced by silence).
     pub lost: u64,
+    /// Late or duplicate packets (dropped).
     pub late: u64,
     /// Dropouts since the stream was switched on (not the sender's pauses).
     pub underruns: u32,
+    /// Why the stream is blocked or not receiving, or a problem with the
+    /// packets being received.
     pub error: Option<String>,
 }
 
+/// What an outgoing stream is doing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum OutState {
+    /// Switched off.
     #[default]
     Off,
+    /// Switched on but missing something (see `error`).
     Blocked,
+    /// Packets are being sent.
     Sending,
 }
 
+/// Live status of one outgoing stream.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct OutStatus {
+    /// What the stream is doing.
     pub state: OutState,
+    /// Packets sent since the stream was switched on.
     pub packets: u64,
+    /// Packets the socket refused to send.
     pub errors: u64,
+    /// Frames dropped because sending fell behind.
     pub dropped: u64,
+    /// Why the stream is blocked, or the latest send error.
     pub error: Option<String>,
 }
 
 /// A stream that arrives but matches no incoming stream.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Seen {
+    /// The stream's name, from the packet header.
     pub name: String,
+    /// Address and port the packets come from.
     pub from: SocketAddrV4,
+    /// The sender's sample rate, in Hz.
     pub sample_rate: u32,
+    /// Channels in the packets.
     pub channels: usize,
+    /// Sample format of the packets.
     pub format: SampleFormat,
+    /// When the latest packet arrived.
     pub last: Instant,
 }
 
+/// Live status of all of VBAN, refreshed about every 100 ms.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct VbanStatus {
     /// The port incoming streams are received on (None: not listening).
     pub listening: Option<u16>,
     /// Socket problem (e.g. the port is taken).
     pub error: Option<String>,
+    /// Status of each incoming stream.
     pub ins: [InStatus; NUM_IN],
+    /// Status of each outgoing stream.
     pub outs: [OutStatus; NUM_OUT],
+    /// Streams that arrived in the last 5 s but are not played (at most 16).
     pub seen: Vec<Seen>,
     /// Datagrams that were not VBAN audio (other sub-protocols, garbage),
     /// or our own outgoing streams coming back (see `is_local`).
@@ -372,6 +474,7 @@ impl InStatus {
 }
 
 impl OutStatus {
+    /// One line for the UIs. `sample_rate` is the mixer's, in Hz.
     pub fn describe(&self, cfg: &OutStream, sample_rate: u32) -> String {
         match self.state {
             OutState::Off => "off".into(),
@@ -460,6 +563,7 @@ impl Vban {
         self.inner.rate()
     }
 
+    /// A copy of the current configuration.
     pub fn config(&self) -> VbanConfig {
         lock(&self.inner.cfg).1.clone()
     }
@@ -474,6 +578,11 @@ impl Vban {
     }
 
     /// Change the configuration in place.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error `f` returns; the configuration is then left
+    /// unchanged.
     pub fn update<R>(&self, f: impl FnOnce(&mut VbanConfig) -> Result<R, String>) -> Result<R, String> {
         let mut g = lock(&self.inner.cfg);
         let mut c = g.1.clone();
@@ -485,6 +594,7 @@ impl Vban {
         Ok(r)
     }
 
+    /// A copy of the latest status.
     pub fn status(&self) -> VbanStatus {
         lock(&self.inner.status).clone()
     }

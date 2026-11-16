@@ -26,19 +26,26 @@ pub fn packet_frames(period: usize, max: usize) -> usize {
     if d * 2 >= max { d } else { max }
 }
 
+/// Counters of one outgoing stream since it was switched on.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct TxStats {
+    /// Packets sent.
     pub packets: u64,
+    /// Packets the socket refused to send.
     pub errors: u64,
+    /// Text of the latest send error.
     pub last_error: Option<String>,
     /// Frames dropped because sending fell behind.
     pub dropped: u64,
 }
 
+/// Sender state of one outgoing stream: the frame counter and the audio
+/// waiting to be packetized.
 pub struct TxStream {
     frame: u32,
     pending: Vec<f32>,
     packet: Vec<u8>,
+    /// What has been sent so far.
     pub stats: TxStats,
 }
 
@@ -56,11 +63,17 @@ impl Default for TxStream {
 /// What a stream sends.
 #[derive(Debug, Clone, Copy)]
 pub struct TxParams<'a> {
+    /// Stream name as the 16-byte header field (see [`proto::name_field`]).
     pub name: &'a [u8; proto::NAME_LEN],
+    /// Where the packets go.
     pub to: SocketAddrV4,
+    /// VBAN sample-rate index of the mixer's rate (see [`proto::sr_index`]).
     pub sr_index: u8,
+    /// Sample format of the packets.
     pub format: SampleFormat,
+    /// Channels sent: 1 (mono) or 2 (stereo).
     pub channels: usize,
+    /// The engine's period, in frames (0 = not known yet).
     pub period: usize,
     /// Keep at most this many frames waiting (the newest).
     pub max_pending: usize,
@@ -73,6 +86,7 @@ impl TxStream {
         self.pending.clear();
     }
 
+    /// Set the counters back to zero.
     pub fn reset_stats(&mut self) {
         self.stats = TxStats::default();
     }

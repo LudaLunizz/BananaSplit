@@ -13,7 +13,10 @@ use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
+/// The GitHub repository the releases come from, as `owner/name`.
 pub const REPO: &str = "LudaLunizz/BananaSplit";
+/// The web page that lists all releases; used when a release gives no usable
+/// page link of its own.
 pub const RELEASES_PAGE: &str = "https://github.com/LudaLunizz/BananaSplit/releases";
 /// Tests only: `http://127.0.0.1:PORT`, a stand-in for GitHub (see
 /// [`Source::from_env`]).
@@ -21,9 +24,13 @@ pub const SOURCE_ENV: &str = "BANANASPLIT_UPDATE_SOURCE";
 /// Automatic updates leave a release alone this long after it is published:
 /// a broken release can be withdrawn before it reaches everyone.
 pub const SETTLE: Duration = Duration::from_secs(48 * 3600);
+/// The largest `SHA256SUMS.txt` accepted, in bytes (64 KiB).
 pub const MAX_SUMS: u64 = 64 << 10;
+/// The largest `SHA256SUMS.txt.sig` accepted, in bytes (1 KiB).
 pub const MAX_SIG: u64 = 1 << 10;
+/// The largest release file accepted, in bytes (512 MiB).
 pub const MAX_ASSET: u64 = 512 << 20;
+/// The most characters of a release's notes that are kept (see [`cut`]).
 pub const MAX_NOTES: usize = 4000;
 
 // ---------------------------------------------------------------------------
@@ -33,11 +40,14 @@ pub const MAX_NOTES: usize = 4000;
 /// The release list and the prefixes every link in it must have.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Source {
+    /// The URL of the release list (the newest 30 releases).
     pub api: String,
     /// Every download link starts with this.
     pub download: String,
     /// A release's page starts with this.
     pub pages: String,
+    /// Whether links must be `https`: true for GitHub, false for a test
+    /// source on this computer.
     pub https: bool,
     /// The public key `SHA256SUMS.txt` must be signed with.
     pub key: [u8; 32],
@@ -48,6 +58,7 @@ pub struct Source {
 }
 
 impl Source {
+    /// GitHub itself, with the release key and the backup key.
     pub fn github() -> Source {
         Source {
             api: format!("https://api.github.com/repos/{REPO}/releases?per_page=30"),
@@ -72,6 +83,12 @@ impl Source {
         std::iter::once(self.key).chain(self.backup).collect()
     }
 
+    /// A test source at `base`, which must be `http://127.0.0.1:PORT` or
+    /// `http://localhost:PORT` with a port from 1 to 65535 and nothing after
+    /// it; any other text gives `None`.
+    ///
+    /// It uses the key in [`KEY_ENV`] if that holds 64 hexadecimal digits
+    /// (and then has no backup key); otherwise it uses the real keys.
     pub fn local(base: &str) -> Option<Source> {
         let port = base.strip_prefix("http://127.0.0.1:").or_else(|| base.strip_prefix("http://localhost:"))?;
         if port.is_empty()
@@ -92,6 +109,7 @@ impl Source {
         })
     }
 
+    /// Whether this is a test source (plain `http`, not GitHub).
     pub fn is_test(&self) -> bool {
         !self.https
     }
@@ -101,17 +119,32 @@ impl Source {
 // JSON (the release list), no dependencies
 // ---------------------------------------------------------------------------
 
+/// A parsed JSON value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Json {
+    /// `null`.
     Null,
+    /// `true` or `false`.
     Bool(bool),
+    /// Any number, held as an `f64`.
     Num(f64),
+    /// A string, with its escapes already resolved.
     Str(String),
+    /// An array.
     Arr(Vec<Json>),
+    /// An object, as its (key, value) pairs in the order written; a repeated
+    /// key appears more than once.
     Obj(Vec<(String, Json)>),
 }
 
 impl Json {
+    /// Parses `s`, which must hold exactly one JSON value (spaces around it
+    /// are fine).
+    ///
+    /// # Errors
+    /// The text is not valid JSON, arrays or objects are nested more than 64
+    /// deep, or there is text after the value. The message names the byte
+    /// where it went wrong.
     pub fn parse(s: &str) -> Result<Json, String> {
         let mut p = JsonParser { b: s.as_bytes(), i: 0, depth: 0 };
         p.ws();
@@ -123,6 +156,8 @@ impl Json {
         Ok(v)
     }
 
+    /// The value of `key` if this is an object that has it (the first one if
+    /// it is repeated); `None` otherwise.
     pub fn get(&self, key: &str) -> Option<&Json> {
         match self {
             Json::Obj(m) => m.iter().find(|(k, _)| k == key).map(|(_, v)| v),
@@ -130,6 +165,7 @@ impl Json {
         }
     }
 
+    /// The text, if this is a string.
     pub fn str(&self) -> Option<&str> {
         match self {
             Json::Str(s) => Some(s),
@@ -137,6 +173,7 @@ impl Json {
         }
     }
 
+    /// The flag, if this is `true` or `false`.
     pub fn bool(&self) -> Option<bool> {
         match self {
             Json::Bool(b) => Some(*b),
@@ -152,6 +189,7 @@ impl Json {
         }
     }
 
+    /// The items, if this is an array; an empty slice for anything else.
     pub fn arr(&self) -> &[Json] {
         match self {
             Json::Arr(a) => a,
@@ -362,6 +400,10 @@ const K256: [u32; 64] = [
     0xc67178f2,
 ];
 
+/// A SHA-256 computation that is fed its data in pieces.
+///
+/// Start with [`Sha256::default`], call [`Sha256::update`] for each piece,
+/// then [`Sha256::finish`] for the digest.
 pub struct Sha256 {
     h: [u32; 8],
     buf: [u8; 64],
@@ -413,6 +455,7 @@ impl Sha256 {
         }
     }
 
+    /// Adds `data` to the input.
     pub fn update(&mut self, mut data: &[u8]) {
         self.total = self.total.wrapping_add(data.len() as u64);
         if self.used > 0 {
@@ -435,6 +478,7 @@ impl Sha256 {
         self.used = rest.len();
     }
 
+    /// Ends the input and returns the 32-byte digest of everything added.
     pub fn finish(mut self) -> [u8; 32] {
         let bits = self.total.wrapping_mul(8);
         self.update(&[0x80]);
@@ -450,6 +494,7 @@ impl Sha256 {
     }
 }
 
+/// The SHA-256 of `data`, all in memory.
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut s = Sha256::default();
     s.update(data);
@@ -473,6 +518,7 @@ pub fn sha256_file(path: &Path) -> Result<[u8; 32], IoError> {
     }
 }
 
+/// `b` as lowercase hexadecimal, two digits per byte.
 pub fn hex(b: &[u8]) -> String {
     use std::fmt::Write as _;
     b.iter().fold(String::with_capacity(b.len() * 2), |mut s, x| {
@@ -481,7 +527,8 @@ pub fn hex(b: &[u8]) -> String {
     })
 }
 
-/// 64 hexadecimal digits (either case).
+/// The 32 bytes written as 64 hexadecimal digits (either case); `None` if
+/// `s` is not exactly that.
 pub fn parse_hex32(s: &str) -> Option<[u8; 32]> {
     let s = s.as_bytes();
     if s.len() != 64 {
@@ -662,10 +709,12 @@ pub const BACKUP_SIGNING_KEY: &str = "b4c486f3f8e8833248501dd78f9afcfc54e2f50903
 /// Tests only, with [`SOURCE_ENV`]: the public key of the test releases.
 pub const KEY_ENV: &str = "BANANASPLIT_UPDATE_KEY";
 
+/// [`SIGNING_KEY`] as 32 bytes.
 pub fn release_key() -> [u8; 32] {
     parse_hex32(SIGNING_KEY).expect("SIGNING_KEY is 64 hexadecimal digits")
 }
 
+/// [`BACKUP_SIGNING_KEY`] as 32 bytes.
 pub fn backup_key() -> [u8; 32] {
     parse_hex32(BACKUP_SIGNING_KEY).expect("BACKUP_SIGNING_KEY is 64 hexadecimal digits")
 }
@@ -1095,6 +1144,8 @@ impl Package {
         }
     }
 
+    /// The release file name of this kind for `version` (for example
+    /// `bananasplit_2.9.3_amd64.deb`).
     pub fn file_name(self, version: &str) -> String {
         let (a, b) = self.affixes();
         format!("{a}{version}{b}")
@@ -1108,10 +1159,16 @@ impl Package {
     }
 }
 
+/// One file attached to a release.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Asset {
+    /// The file name.
     pub name: String,
+    /// The size in bytes, as GitHub states it ([`asset_of`] never gives 0).
     pub size: u64,
+    /// The download link; [`asset_of`] only gives one that passed
+    /// [`clean_url`] against the source's download prefix and ends with `/`
+    /// and the file name.
     pub url: String,
     /// GitHub's SHA-256 of the upload.
     pub digest: Option<[u8; 32]>,
@@ -1120,12 +1177,15 @@ pub struct Asset {
 /// The newest release that has this computer's file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Offer {
+    /// The version in the release file's name (for example `2.9.3`).
     pub version: String,
+    /// The release's git tag, cut to 64 characters.
     pub tag: String,
     /// The release's page (or the list of releases).
     pub page: String,
     /// Its notes, as written (shown as plain text).
     pub notes: String,
+    /// The release file for this computer.
     pub asset: Asset,
     /// Its `SHA256SUMS.txt`, if it has one.
     pub sums: Option<Asset>,
@@ -1135,6 +1195,12 @@ pub struct Offer {
     pub sig: Option<Asset>,
 }
 
+/// Whether `u` is a plain link that stays inside `prefix`.
+///
+/// It must start with `prefix`, be under 2048 bytes, hold no whitespace,
+/// control character, `"` or `\`, and (after the prefix) have no `.` or `..`
+/// segment, also not written as `%2e` in either case. Nothing else about the
+/// link is checked.
 pub fn clean_url(u: &str, prefix: &str) -> bool {
     let Some(rest) = u.strip_prefix(prefix) else { return false };
     u.len() < 2048
@@ -1144,6 +1210,14 @@ pub fn clean_url(u: &str, prefix: &str) -> bool {
         && !rest.to_ascii_lowercase().contains("%2e")
 }
 
+/// The [`Asset`] described by one entry of a release's `assets` list, or
+/// `None` if the entry is not usable.
+///
+/// It is rejected when its `state` is present and not `uploaded`, when
+/// `name`, `browser_download_url` or `size` is missing, when the link fails
+/// [`clean_url`] against `src.download` or does not end in `/` and the name,
+/// or when the size is 0 or above `max`. A `digest` that is not
+/// `sha256:` and 64 hexadecimal digits is ignored, not an error.
 pub fn asset_of(a: &Json, src: &Source, max: u64) -> Option<Asset> {
     if a.get("state").and_then(Json::str).is_some_and(|s| s != "uploaded") {
         return None;
@@ -1167,6 +1241,15 @@ pub fn cut(s: &str, max: usize) -> String {
 }
 
 /// The newest published, non-pre-release release with a `pkg` file.
+///
+/// `list` is the parsed answer of GitHub's release list. Drafts and
+/// pre-releases are skipped, and so is a release whose file for `pkg` fails
+/// [`asset_of`]. The newest is chosen by version ([`newer`]), not by order or
+/// date. `Ok(None)` means no release has the file.
+///
+/// # Errors
+/// `list` is not an array: the text is GitHub's own `message` if it sent
+/// one, otherwise a general message.
 pub fn pick(list: &Json, pkg: Package, src: &Source) -> Result<Option<Offer>, String> {
     let Json::Arr(releases) = list else {
         return Err(match list.get("message").and_then(Json::str) {
@@ -1234,6 +1317,8 @@ pub fn parse_utc(s: &str) -> Option<u64> {
     Some(days * 86_400 + h * 3600 + mi * 60 + se)
 }
 
+/// The current time in seconds since 1970; `None` if the clock is set before
+/// 1970.
 pub fn now_utc() -> Option<u64> {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
 }

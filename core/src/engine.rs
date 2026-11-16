@@ -75,7 +75,9 @@ use std::array;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering::Relaxed};
 
+/// Number of input strips (shown as 1..6; index 0..5).
 pub const NUM_STRIPS: usize = 6;
+/// Number of output buses (index 0..4 for V1, V2, V3, B1, B2; see [`BUS_IDS`]).
 pub const NUM_BUSES: usize = 5;
 /// The buses as people see them: V1..V3 are mixes in the middle of the
 /// line (inputs go into them, they feed B1/B2 and may also play to a device
@@ -106,10 +108,13 @@ pub const ALL_BUSES: u8 = (1 << NUM_BUSES) - 1;
 /// 8192 by default; we allow twice that. Larger periods produce silence and
 /// increment [`Shared::oversize_cycles`] instead of allocating.
 pub const MAX_FRAMES: usize = 16384;
+/// Lowest fader setting, dB (the lower end of [`clamp_db`]) on strips and buses.
 pub const MIN_GAIN_DB: f32 = -60.0;
+/// Highest fader setting, dB (the upper end of [`clamp_db`]) on strips and buses.
 pub const MAX_GAIN_DB: f32 = 12.0;
 /// Range of the input gain (the GAIN knob), applied with the fader.
 pub const MIN_TRIM_DB: f32 = -24.0;
+/// Highest input gain (GAIN knob), dB; see [`MIN_TRIM_DB`].
 pub const MAX_TRIM_DB: f32 = 24.0;
 
 /// f32 stored in an `AtomicU32`.
@@ -117,13 +122,16 @@ pub const MAX_TRIM_DB: f32 = 24.0;
 pub struct AtomicF32(AtomicU32);
 
 impl AtomicF32 {
+    /// A value holding `v`.
     pub fn new(v: f32) -> Self {
         Self(AtomicU32::new(v.to_bits()))
     }
+    /// The current value. Lock-free, relaxed ordering; safe on the audio thread.
     #[inline]
     pub fn load(&self) -> f32 {
         f32::from_bits(self.0.load(Relaxed))
     }
+    /// Replace the value with `v`. Lock-free, relaxed ordering; safe on the audio thread.
     #[inline]
     pub fn store(&self, v: f32) {
         self.0.store(v.to_bits(), Relaxed)
@@ -157,6 +165,9 @@ impl PeakMeter {
     }
 }
 
+/// Settings and meters of one input strip, shared between the control threads and the audio thread.
+///
+/// The audio thread reads the settings once per cycle and writes the meters.
 #[derive(Debug, Default)]
 pub struct StripParams {
     /// Fader, dB.
@@ -165,8 +176,11 @@ pub struct StripParams {
     pub trim_db: AtomicF32,
     /// Pan / balance, -1 (left) .. 0 (centre) .. +1 (right).
     pub pan: AtomicF32,
+    /// Silence the strip's output to the buses; its input meter keeps running.
     pub mute: AtomicBool,
+    /// Solo: while any strip is soloed, every strip that is not soloed is silenced as if muted.
     pub solo: AtomicBool,
+    /// Sum left and right to mono at the strip's input (both sides get the average).
     pub mono: AtomicBool,
     /// Bit `b` set => strip feeds bus `b` (V1 = bit 0 ... B2 = bit 4).
     pub routes: AtomicU8,
@@ -175,11 +189,15 @@ pub struct StripParams {
     /// Level at the input (after mono and the input gain, before EQ, pan
     /// and fader), also while the strip is muted or soloed out.
     pub input_peak: [PeakMeter; 2],
+    /// The strip's 6-band EQ.
     pub eq: EqParams,
     /// Gate and compressor (before the EQ).
     pub dynamics: DynParams,
 }
 
+/// Settings and meters of one bus, shared between the control threads and the audio thread.
+///
+/// The audio thread reads the settings once per cycle and writes the meters.
 #[derive(Debug, Default)]
 pub struct BusParams {
     /// Fader, dB.
@@ -188,7 +206,9 @@ pub struct BusParams {
     pub trim_db: AtomicF32,
     /// Balance, -1 (left) .. 0 (centre) .. +1 (right).
     pub pan: AtomicF32,
+    /// Silence the bus's output; its input meter keeps running.
     pub mute: AtomicBool,
+    /// Sum left and right to mono at the bus's input (both sides get the average).
     pub mono: AtomicBool,
     /// Bit `d` set => this bus feeds bus `d` after its fader (its own bit
     /// is ignored, and so is a send that would close a loop).
@@ -198,6 +218,7 @@ pub struct BusParams {
     /// Level of the bus sum (after mono and the input gain, before EQ,
     /// balance and fader), also while the bus is muted.
     pub input_peak: [PeakMeter; 2],
+    /// The bus's 6-band EQ.
     pub eq: EqParams,
     /// Brickwall limiter, the bus's last stage (after the fader).
     pub limit: LimitParams,
@@ -206,7 +227,9 @@ pub struct BusParams {
 /// State shared between the audio thread and the control/UI thread.
 #[derive(Debug, Default)]
 pub struct Shared {
+    /// The input strips, index 0..5 (strips 1..6).
     pub strips: [StripParams; NUM_STRIPS],
+    /// The output buses, index 0..4 in the order of [`BUS_IDS`] (V1, V2, V3, B1, B2).
     pub buses: [BusParams; NUM_BUSES],
     /// Incremented by the backend's xrun callback.
     pub xruns: AtomicU32,
@@ -226,6 +249,7 @@ pub struct Shared {
 }
 
 impl Shared {
+    /// A new set of parameters at their defaults, ready to share between the threads.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
@@ -235,6 +259,11 @@ impl Shared {
         if ch < NUM_STRIPS { &self.strips[ch].eq } else { &self.buses[ch - NUM_STRIPS].eq }
     }
 
+    /// Switch the route from strip `strip` to bus `bus` on if it is off, off if it is on.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `strip` is `NUM_STRIPS` or more. A `bus` of 8 or more panics in builds with overflow checks (a `bus` from `NUM_BUSES` up is never valid).
     pub fn toggle_route(&self, strip: usize, bus: usize) {
         self.strips[strip].routes.fetch_xor(1 << bus, Relaxed);
     }
@@ -295,26 +324,31 @@ pub fn guard_cycle(panics: &AtomicU32, cycle: impl FnOnce()) -> bool {
     }
 }
 
+/// Linear gain for `db` decibels (0 dB is 1.0).
 #[inline]
 pub fn db_to_gain(db: f32) -> f32 {
     10f32.powf(db / 20.0)
 }
 
+/// Decibels for the linear gain `g`; a gain of 1e-6 or less (and so silence) gives -120 dB.
 #[inline]
 pub fn gain_to_db(g: f32) -> f32 {
     if g <= 1e-6 { -120.0 } else { 20.0 * g.log10() }
 }
 
+/// A fader setting in dB limited to [`MIN_GAIN_DB`]..[`MAX_GAIN_DB`]; NaN becomes 0 dB.
 #[inline]
 pub fn clamp_db(db: f32) -> f32 {
     if db.is_nan() { 0.0 } else { db.clamp(MIN_GAIN_DB, MAX_GAIN_DB) }
 }
 
+/// An input gain in dB limited to [`MIN_TRIM_DB`]..[`MAX_TRIM_DB`]; NaN becomes 0 dB.
 #[inline]
 pub fn clamp_trim(db: f32) -> f32 {
     if db.is_nan() { 0.0 } else { db.clamp(MIN_TRIM_DB, MAX_TRIM_DB) }
 }
 
+/// A pan or balance value limited to -1 (left)..+1 (right); NaN becomes 0 (centre).
 #[inline]
 pub fn clamp_pan(p: f32) -> f32 {
     if p.is_nan() { 0.0 } else { p.clamp(-1.0, 1.0) }
@@ -473,6 +507,9 @@ fn two_buses<'a, 'b>(
     }
 }
 
+/// The mixer itself: the audio thread's state, which turns the strip inputs into the bus outputs once per cycle.
+///
+/// It is owned by the audio thread. Everything the other threads change goes through the [`Shared`] it was built with.
 pub struct Engine {
     shared: Arc<Shared>,
     /// Private copy of every input channel: `[strip][L/R][MAX_FRAMES]`.
@@ -580,6 +617,7 @@ impl Engine {
         self.play = Some(tap);
     }
 
+    /// The parameters this engine reads, as given to [`Engine::new`].
     pub fn shared(&self) -> &Arc<Shared> {
         &self.shared
     }
@@ -607,12 +645,25 @@ impl Engine {
 
     /// Copy one input channel for this cycle. Extra frames beyond
     /// MAX_FRAMES are ignored (that cycle will be silenced by `process`).
+    ///
+    /// `strip` is 0..5 and `ch` is 0 for left, 1 for right.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `strip * 2 + ch` is 12 or more.
     #[inline]
     pub fn load_input(&mut self, strip: usize, ch: usize, src: &[f32]) {
         let n = src.len().min(MAX_FRAMES);
         self.chan_mut(strip, ch)[..n].copy_from_slice(&src[..n]);
     }
 
+    /// Fill the first `n` frames (at most `MAX_FRAMES`) of one input channel for this cycle with silence, as the counterpart of [`Engine::load_input`] for a channel with no signal.
+    ///
+    /// `strip` is 0..5 and `ch` is 0 for left, 1 for right.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `strip * 2 + ch` is 12 or more.
     #[inline]
     pub fn clear_input(&mut self, strip: usize, ch: usize, n: usize) {
         let n = n.min(MAX_FRAMES);

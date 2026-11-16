@@ -52,6 +52,7 @@ pub fn rate_for(rate: u32) -> u32 {
 
 /// The MPEG-1 bitrates BananaSplit records at (kbit/s, stereo).
 pub const BITRATES: [u32; 6] = [128, 160, 192, 224, 256, 320];
+/// The bitrate used when none is chosen, in kbit/s (one of [`BITRATES`]).
 pub const DEFAULT_KBPS: u32 = 320;
 
 // ---------------------------------------------------------------------------
@@ -61,7 +62,9 @@ pub const DEFAULT_KBPS: u32 = 320;
 /// What an MP3 file's headers say.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Info {
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// Channels: 1 or 2.
     pub channels: u16,
     /// Bitrate of the first audio frame.
     pub kbps: u32,
@@ -73,6 +76,7 @@ pub struct Info {
     /// File offset of the first audio frame (after any ID3v2 tag and
     /// Info/Xing frame), and of the end of the audio (before ID3v1/APE tags).
     pub audio_start: u64,
+    /// File offset where the audio ends (see `audio_start`).
     pub audio_end: u64,
     /// Audio frames (counted by the Info/Xing/VBRI header, else estimated).
     pub frames: u64,
@@ -91,6 +95,7 @@ pub struct Info {
 }
 
 impl Info {
+    /// The length in seconds: `samples` divided by the sample rate.
     pub fn secs(&self) -> f64 {
         self.samples as f64 / f64::from(self.sample_rate.max(1))
     }
@@ -119,6 +124,11 @@ fn frame_at(b: &[u8], last_ok: bool) -> Option<Header> {
 }
 
 /// Read the headers of `path` (fast: the first frames and the tags only).
+///
+/// # Errors
+/// The file cannot be opened, measured, read or sought in (the message is
+/// the operating system's), or no MPEG Layer III frame is found in the first
+/// 128 KiB after any ID3v2 tags ("not an MP3 file").
 pub fn probe(path: &Path) -> Result<Info, String> {
     let mut f = File::open(path).map_err(|e| e.to_string())?;
     let len = f.metadata().map_err(|e| e.to_string())?.len();
@@ -304,6 +314,14 @@ pub struct Reader {
 const READ_CHUNK: usize = 64 * 1024;
 
 impl Reader {
+    /// Opens `path` for decoding and positions it at the first sample.
+    ///
+    /// `info` must be what [`probe`] gave for the same file; it is not
+    /// checked against the file.
+    ///
+    /// # Errors
+    /// The file cannot be opened (the message starts with the path), or
+    /// reading from it fails while decoding the first frames.
     pub fn open(path: &Path, info: &Info) -> Result<Reader, String> {
         let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut r = Reader {
@@ -326,6 +344,7 @@ impl Reader {
         Ok(r)
     }
 
+    /// The [`Info`] this reader was opened with.
     pub fn info(&self) -> &Info {
         &self.info
     }
@@ -378,6 +397,12 @@ impl Reader {
     }
 
     /// Continue at sample `sample` (0 = the first real one).
+    ///
+    /// A sample past the end goes to the end. Frames before the sample are
+    /// decoded and dropped so that the output from it on is exact.
+    ///
+    /// # Errors
+    /// Reading from the file fails.
     pub fn seek(&mut self, sample: u64) -> Result<(), String> {
         let spf = u64::from(self.info.spf);
         let target = sample.min(self.info.samples) + self.info.skip;
@@ -480,6 +505,9 @@ impl Reader {
 
     /// Append up to `max` stereo frames (L R …) to `out`; returns how many
     /// (fewer only at the end).
+    ///
+    /// # Errors
+    /// Reading from the file fails; frames already added to `out` stay there.
     pub fn read(&mut self, max: usize, out: &mut Vec<f32>) -> Result<usize, String> {
         let mut done = 0;
         while done < max {

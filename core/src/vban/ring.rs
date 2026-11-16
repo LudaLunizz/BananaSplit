@@ -9,6 +9,7 @@
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use std::sync::atomic::{AtomicU32, AtomicUsize};
 
+/// A fixed-size ring of `f32` samples for one producer and one consumer.
 pub struct Ring {
     buf: Box<[AtomicU32]>,
     mask: usize,
@@ -28,6 +29,7 @@ impl Ring {
         }
     }
 
+    /// Total number of slots (a power of two), in samples.
     pub fn capacity(&self) -> usize {
         self.buf.len()
     }
@@ -38,6 +40,7 @@ impl Ring {
         self.head.load(Acquire).wrapping_sub(t)
     }
 
+    /// Whether no sample is waiting to be read.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

@@ -47,7 +47,10 @@ pub fn is_off(db: f32) -> bool {
 }
 
 /// A limit as read from a config, scene or command: dB, clamped to its
-/// range, rounded to 0.1 dB.
+/// range, rounded to 0.1 dB. `off` (any case) is [`LIMIT_OFF_DB`].
+///
+/// # Errors
+/// A message when `v` is neither `off` nor a finite number.
 pub fn parse_limit(v: &str) -> Result<f32, String> {
     let v = v.trim();
     if v.eq_ignore_ascii_case("off") {
@@ -80,6 +83,8 @@ impl LimitParams {
     pub fn load(&self) -> f32 {
         clamp_limit(self.db.load())
     }
+    /// Set the limit, dBFS; clamped to [`LIMIT_MIN_DB`] ..= [`LIMIT_OFF_DB`]
+    /// (NaN = off). Safe to call from any thread.
     pub fn store(&self, db: f32) {
         self.db.store(clamp_limit(db));
     }
@@ -106,12 +111,16 @@ pub struct LimitRt {
 }
 
 impl LimitRt {
+    /// A limiter for the given sample rate (Hz) with no peak held and nothing
+    /// shown as gain reduction.
     pub fn new(sample_rate: u32) -> Self {
         let mut l = Self { sr: 48_000.0, env: 0.0, hold_left: 0, ceil: None, show: 0.0 };
         l.set_sample_rate(sample_rate);
         l
     }
 
+    /// Change the sample rate (Hz) the hold and release times are worked out
+    /// for. Rates under 8000 Hz are treated as 8000.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         self.sr = sample_rate.max(8000) as f32;
     }
