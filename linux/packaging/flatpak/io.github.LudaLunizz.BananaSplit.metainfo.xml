@@ -29,6 +29,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.9.4" date="2026-11-16">
+      <description>
+        <p>Beta wording in the README; errors from settings, scenes and release checks now say what kind of failure it was (same messages); docs on every public item of the shared core; CHANGELOG, ARCHITECTURE and CONTRIBUTING files. No change in how the mixer sounds or behaves.</p>
+      </description>
+    </release>
     <release version="2.9.3" date="2026-11-15">
       <description>
         <p>Recording stops cleanly below 1 GB free disk space; a bug in one audio cycle plays silence instead of stopping the mixer; API v1 and MIDI reach EQ bands, gate and compressor settings, VBAN and the player; quitting, updates, autostart, folders, recording and VBAN out need a token from a file only you can read; new documentation.</p>
