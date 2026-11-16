@@ -4,6 +4,7 @@
 
 - [ ] Linux
 - [ ] Windows
+- [ ] macOS
 
 ## Testing
 
