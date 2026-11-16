@@ -529,6 +529,14 @@ New in 2.6:
 
 The changes in each version, newest first.
 
+### What's new in 2.9.4
+
+* **Beta, not pre-alpha** (#174): the README and the website now say beta and explain what that means.
+* **Errors that say what went wrong** (#175): loading or saving the settings, saving, loading or deleting a scene, and checking a downloaded release now report the kind of failure (a file problem, a bad line, a bad scene name, a wrong signature or version) instead of only a sentence. The messages you see are the same as before.
+* **One copy of two helpers** (#176): the ramp and the lock helper that were copied into several modules each exist once. The mixer sounds and behaves exactly as before.
+* **Docs in the code** (#177): every public item of the shared core has a doc comment, and a lint keeps it that way.
+* **Project files**: `CHANGELOG.md`, `ARCHITECTURE.md` (a map of the code) and `CONTRIBUTING.md` (setup and the exact test and lint commands).
+
 ### What's new in 2.9.3
 
 * **Recording stops before the disk is full** (#164): with less than 1 GB free on the recordings drive, a running take is finished cleanly (every file plays) and recording stops; below 1 GB a new take does not start. The recorder panel says why (`disk.low`, `rec.error`).

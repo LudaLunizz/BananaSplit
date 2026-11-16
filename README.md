@@ -295,7 +295,7 @@ The in-app updater offers a release once it is published and **not** marked pre-
 
 ## Contributing
 
-Issues and pull requests are welcome. Please run the tests for the platform you touched before opening a pull request.
+Issues and pull requests are welcome. Please run the tests for the platform you touched before opening a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) has the setup and the exact commands, [ARCHITECTURE.md](ARCHITECTURE.md) is a map of the code, and [CHANGELOG.md](CHANGELOG.md) lists every release.
 
 Developed with help from Claude Code; every change is reviewed, tested in CI and released by the maintainer.
 
