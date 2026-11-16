@@ -16,6 +16,10 @@ publish = false
 name = "bananasplit_core"
 path = "src/lib.rs"
 
+[lints.rust]
+# Every public item says what it is (the rulebook's "document every pub item").
+missing_docs = "warn"
+
 [lints.clippy]
 # Every unsafe block says why it is sound (`// SAFETY: ...`).
 undocumented_unsafe_blocks = "warn"

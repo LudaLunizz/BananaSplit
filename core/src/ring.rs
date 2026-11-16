@@ -24,6 +24,7 @@ use std::cell::UnsafeCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering::Acquire, Ordering::Release};
 
+/// One stereo frame: `[left, right]`, as `f32` samples.
 pub type Frame = [f32; 2];
 
 struct Ring {
@@ -58,6 +59,9 @@ pub fn ring(capacity: usize) -> (Producer, Consumer) {
     (Producer { r: r.clone() }, Consumer { r })
 }
 
+/// The writing end of a ring made by [`ring`].
+///
+/// Only one thread may own it. Pushing never allocates, locks or blocks.
 pub struct Producer {
     r: Arc<Ring>,
 }
@@ -104,20 +108,26 @@ impl Producer {
         (0..n).filter(|_| !self.push([0.0; 2])).count()
     }
 
+    /// Number of frames currently in the ring, waiting to be read.
     pub fn len(&self) -> usize {
         self.r.len()
     }
 
+    /// True when the ring holds no frames.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 }
 
+/// The reading end of a ring made by [`ring`].
+///
+/// Only one thread may own it. Reading never allocates, locks or blocks.
 pub struct Consumer {
     r: Arc<Ring>,
 }
 
 impl Consumer {
+    /// Take the oldest frame out of the ring, or `None` if it is empty.
     #[inline]
     pub fn pop(&mut self) -> Option<Frame> {
         let tail = self.r.tail.load(Acquire);
@@ -139,14 +149,17 @@ impl Consumer {
         self.r.tail.store(tail.wrapping_add(n), Release);
     }
 
+    /// Number of frames currently in the ring, waiting to be read.
     pub fn len(&self) -> usize {
         self.r.len()
     }
 
+    /// True when the ring holds no frames.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Most frames the ring can hold, as given to [`ring`] (at least 2).
     pub fn capacity(&self) -> usize {
         self.r.cap()
     }
@@ -197,6 +210,7 @@ impl DriftReader {
         }
     }
 
+    /// The fill level the reader tries to keep, in frames.
     pub fn target(&self) -> usize {
         self.target as usize
     }
@@ -206,6 +220,7 @@ impl DriftReader {
         self.ratio
     }
 
+    /// Number of frames now in the ring.
     pub fn fill(&self) -> usize {
         self.cons.len()
     }
@@ -444,6 +459,9 @@ impl RateReader {
         self.frac = 0.0;
     }
 
+    /// The fill level the reader tries to keep, in input frames. Only used
+    /// by a reader made with [`new`](Self::new); a [`fixed`](Self::fixed)
+    /// reader reports 1.
     pub fn target(&self) -> usize {
         self.target as usize
     }
@@ -453,6 +471,7 @@ impl RateReader {
         self.nominal * self.correction
     }
 
+    /// Number of input frames now in the ring.
     pub fn fill(&self) -> usize {
         self.cons.len()
     }
@@ -576,7 +595,9 @@ impl RateReader {
 /// A [`DriftReader`] where both ends run at the same rate, a [`RateReader`]
 /// where they don't.
 pub enum Reader {
+    /// Both ends run at the same rate: only the clock drift is corrected.
     Drift(DriftReader),
+    /// The ring and the reader run at different rates: resample between them.
     Rate(RateReader),
 }
 
@@ -590,6 +611,9 @@ impl Reader {
         }
     }
 
+    /// Produce `out_l.len()` frames from the inner reader. With `add`, the
+    /// result is added to the existing contents; otherwise it overwrites
+    /// them. Returns false if the ring ran dry.
     #[inline]
     pub fn read(&mut self, out_l: &mut [f32], out_r: &mut [f32], add: bool) -> bool {
         match self {
@@ -598,6 +622,7 @@ impl Reader {
         }
     }
 
+    /// Number of times the ring ran dry or had to be trimmed, so far.
     pub fn glitches(&self) -> u32 {
         match self {
             Reader::Drift(r) => r.glitches,

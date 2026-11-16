@@ -23,13 +23,17 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, fence};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
+/// Number of incoming streams.
 pub const NUM_IN: usize = 8;
+/// Number of outgoing streams.
 pub const NUM_OUT: usize = 8;
 /// "No strip" / "no source".
 pub const NONE: u8 = u8::MAX;
 /// Ring size in samples (stereo frames x 2): 1.36 s at 48 kHz.
 pub const RING_SAMPLES: usize = 1 << 17;
 
+/// The engine's side of one incoming stream: its ring and the flags it
+/// shares with the receiver thread.
 pub struct InSlot {
     ring: OnceLock<Ring>,
     /// Strip the stream is added to; NONE = stream off (fades out).
@@ -67,6 +71,8 @@ impl InSlot {
     }
 }
 
+/// The engine's side of one outgoing stream: its ring and the flags it
+/// shares with the sender thread.
 pub struct OutSlot {
     ring: OnceLock<Ring>,
     /// Source 0..=10 (strips 1-6, then buses V1-B2); NONE = off.
@@ -121,6 +127,8 @@ impl Default for VbanTap {
 }
 
 impl VbanTap {
+    /// A tap with every stream off, to share between the engine and the VBAN
+    /// threads.
     pub fn new() -> Arc<VbanTap> {
         Arc::new(VbanTap::default())
     }

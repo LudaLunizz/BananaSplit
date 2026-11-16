@@ -107,7 +107,10 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering::Relaxed;
 
+/// The `connect` keyword for a physical capture / playback device.
 pub const PHYSICAL: &str = "@physical";
+/// The `connect` keyword for the system's default device, followed when it
+/// changes.
 pub const DEFAULT_DEVICE: &str = "@default";
 
 /// What a `connect` value that is not a keyword means on this system.
@@ -135,16 +138,22 @@ fn check_connect(v: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The `[recorder]` section: how and what to record, and where the player
+/// plays to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecorderConfig {
+    /// Output folder (`folder`); `~/` is expanded when a take starts.
     pub folder: String,
+    /// File format (`format`).
     pub format: Format,
     /// Bitrate of MP3 takes, kbit/s.
     pub kbps: u32,
+    /// One stereo mix file or one file per channel (`mode`).
     pub mode: Mode,
     /// Minutes per file (0 = no time limit).
     pub split_minutes: u32,
-    /// Linked channels, same bit layout as [`Shared::rec_links`].
+    /// Linked channels, same bit layout as [`Shared::rec_links`]: bits 0-5
+    /// are the strips, then V1 .. B2 (`links`).
     pub links: u16,
     /// Buses the player plays into (bit b = bus b).
     pub play_to: u8,
@@ -166,6 +175,8 @@ impl Default for RecorderConfig {
 }
 
 impl RecorderConfig {
+    /// The part of this section the recorder takes: everything except
+    /// `links` and `play_to`.
     pub fn settings(&self) -> Settings {
         Settings {
             folder: self.folder.clone(),
@@ -176,6 +187,8 @@ impl RecorderConfig {
         }
     }
 
+    /// Copy the recorder's settings into this section; `links` and `play_to`
+    /// stay as they are.
     pub fn set_settings(&mut self, s: &Settings) {
         self.folder = s.folder.clone();
         self.format = s.format;
@@ -185,38 +198,61 @@ impl RecorderConfig {
     }
 }
 
+/// One `[stripN]` section: an input channel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StripConfig {
+    /// Display name (`name`).
     pub name: String,
+    /// Fader, dB (`gain_db`), -60 .. +12.
     pub gain_db: f32,
+    /// Input gain (the GAIN knob), dB (`trim_db`), -24 .. +24.
     pub trim_db: f32,
+    /// Pan, -1 (left) .. +1 (right) (`pan`).
     pub pan: f32,
+    /// Muted (`mute`).
     pub mute: bool,
+    /// Soloed (`solo`).
     pub solo: bool,
+    /// Left and right are mixed to mono (`mono`).
     pub mono: bool,
+    /// Buses the strip feeds, one bit per bus (V1 = bit 0 .. B2 = bit 4)
+    /// (`routes`).
     pub routes: u8,
+    /// Devices or ports the strip takes its input from (`connect`, may be
+    /// repeated); empty = none.
     pub connect: Vec<String>,
     /// Its virtual cable (an output device apps can play into).
     pub cable: bool,
+    /// The EQ's on/off switch and its six bands (`eq`, `eq1` .. `eq6`).
     pub eq: EqSettings,
     /// Gate and compressor.
     pub dynamics: DynSettings,
 }
 
+/// One `[bus.ID]` section (V1-V3, B1, B2): an output bus.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BusConfig {
+    /// Display name (`name`).
     pub name: String,
+    /// Fader, dB (`gain_db`), -60 .. +12.
     pub gain_db: f32,
+    /// Input gain, dB (`trim_db`), -24 .. +24.
     pub trim_db: f32,
+    /// Balance, -1 (left) .. +1 (right) (`pan`).
     pub pan: f32,
+    /// Muted (`mute`).
     pub mute: bool,
+    /// Left and right are mixed to mono (`mono`).
     pub mono: bool,
     /// Buses this one feeds after its fader (bit d = bus d; never itself,
     /// never in a loop).
     pub routes: u8,
+    /// Devices or ports the bus plays to (`connect`, may be repeated);
+    /// empty = none.
     pub connect: Vec<String>,
     /// Its virtual cable (a microphone apps can record its mix from).
     pub cable: bool,
+    /// The EQ's on/off switch and its six bands (`eq`, `eq1` .. `eq6`).
     pub eq: EqSettings,
     /// Brickwall limiter, dBFS ([`LIMIT_OFF_DB`] = off).
     pub limit_db: f32,
@@ -230,8 +266,12 @@ impl BusConfig {
     }
 }
 
+/// The whole configuration: the `[global]`, `[stripN]`, `[bus.ID]`,
+/// `[recorder]`, `[vban]` and `[gui]` sections.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
+    /// The JACK / audio client name (`client_name`): 1-32 characters of
+    /// `A-Z a-z 0-9 - _`. The virtual cables are named after it.
     pub client_name: String,
     /// Requested period in frames (0 = don't request anything). On macOS:
     /// the IO buffer size BananaSplit asks every device it opens for, within
@@ -248,22 +288,31 @@ pub struct Config {
     /// reads the same everywhere; on Windows the cables are VB-Audio devices,
     /// on macOS devices of a driver of their own (BlackHole).
     pub create_cables: bool,
+    /// The six strips, `strip1` .. `strip6`.
     pub strips: [StripConfig; NUM_STRIPS],
+    /// The five buses in the order V1, V2, V3, B1, B2.
     pub buses: [BusConfig; NUM_BUSES],
+    /// The `[recorder]` section.
     pub recorder: RecorderConfig,
+    /// The `[vban]` section and its streams.
     pub vban: VbanConfig,
+    /// The `[gui]` section.
     pub gui: GuiConfig,
 }
 
+/// Light or dark colours for the window (`theme`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Theme {
+    /// Dark colours.
     Dark,
+    /// Light colours.
     Light,
     /// Follow the desktop's light / dark setting.
     Auto,
 }
 
 impl Theme {
+    /// The word used in the config file: `dark`, `light` or `auto`.
     pub fn as_str(self) -> &'static str {
         match self {
             Theme::Dark => "dark",
@@ -272,6 +321,10 @@ impl Theme {
         }
     }
 
+    /// Read `dark`, `light` or `auto` (any case, spaces around are ignored).
+    ///
+    /// # Errors
+    /// A message when `v` is none of those.
     pub fn parse(v: &str) -> Result<Theme, String> {
         match v.trim().to_ascii_lowercase().as_str() {
             "dark" => Ok(Theme::Dark),
@@ -294,8 +347,10 @@ pub enum Look {
 }
 
 impl Look {
+    /// Every look, in the order they are offered.
     pub const ALL: [Look; 2] = [Look::Classic, Look::Console];
 
+    /// The word used in the config file: `classic` or `console`.
     pub fn as_str(self) -> &'static str {
         match self {
             Look::Classic => "classic",
@@ -303,6 +358,10 @@ impl Look {
         }
     }
 
+    /// Read `classic` or `console` (any case, spaces around are ignored).
+    ///
+    /// # Errors
+    /// A message when `v` is neither.
     pub fn parse(v: &str) -> Result<Look, String> {
         let v = v.trim().to_ascii_lowercase();
         Look::ALL
@@ -312,12 +371,15 @@ impl Look {
     }
 }
 
+/// Smallest GUI zoom factor.
 pub const MIN_ZOOM: f32 = 0.5;
+/// Largest GUI zoom factor.
 pub const MAX_ZOOM: f32 = 2.0;
 
 /// Settings of the graphical window (`[gui]`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GuiConfig {
+    /// Light, dark or follow the desktop (`theme`).
     pub theme: Theme,
     /// The theme set. Written only when not Classic, so an older
     /// BananaSplit can still read the file.
@@ -325,6 +387,7 @@ pub struct GuiConfig {
     /// Closing the window keeps BananaSplit running (in the tray, or
     /// minimized if there is no tray); off = closing it quits.
     pub close_to_tray: bool,
+    /// Interface scale (`zoom`), [`MIN_ZOOM`] .. [`MAX_ZOOM`]; 1.0 = normal.
     pub zoom: f32,
     /// Size of the app window, as the user left it.
     pub window: Option<(u32, u32)>,
@@ -357,6 +420,10 @@ impl Default for GuiConfig {
 }
 
 /// `1780x1000` (or empty: none).
+///
+/// # Errors
+/// A message when `v` is not `WIDTHxHEIGHT` in pixels, or the width is
+/// outside 320 ..= 16384 or the height outside 240 ..= 16384.
 pub fn parse_window_size(v: &str) -> Result<Option<(u32, u32)>, String> {
     let v = v.trim();
     if v.is_empty() {
@@ -373,6 +440,9 @@ pub fn parse_window_size(v: &str) -> Result<Option<(u32, u32)>, String> {
 
 /// The device the user listens on: a client name (or "" = none), one line,
 /// at most 320 bytes.
+///
+/// # Errors
+/// A message when `v` is longer than 320 bytes or has a control character.
 pub fn parse_listen(v: &str) -> Result<String, String> {
     let v = v.trim();
     if v.len() > 320 || v.chars().any(char::is_control) {
@@ -381,6 +451,10 @@ pub fn parse_listen(v: &str) -> Result<String, String> {
     Ok(v.into())
 }
 
+/// A GUI zoom factor, [`MIN_ZOOM`] .. [`MAX_ZOOM`], rounded to 0.01.
+///
+/// # Errors
+/// A message when `v` is not a number or is outside that range.
 pub fn parse_zoom(v: &str) -> Result<f32, String> {
     let z: f32 = v.trim().parse().map_err(|_| format!("expected a number, got {v:?}"))?;
     if !z.is_finite() || !(MIN_ZOOM..=MAX_ZOOM).contains(&z) {
@@ -458,9 +532,12 @@ impl Default for Config {
     }
 }
 
+/// A config or scene text that could not be parsed.
 #[derive(Debug)]
 pub struct ParseError {
+    /// The line, counted from 1, where it went wrong.
     pub line: usize,
+    /// What is wrong with it.
     pub msg: String,
 }
 
@@ -613,15 +690,26 @@ fn parse_gain(v: &str) -> Result<f32, String> {
 }
 
 /// Input gain, dB (clamped to its range, rounded to 0.1 dB).
+///
+/// # Errors
+/// A message when `v` is not a finite number.
 pub fn parse_trim(v: &str) -> Result<f32, String> {
     parse_num(v).map(|g| (clamp_trim(g) * 10.0).round() / 10.0)
 }
 
 /// Pan / balance, -1 .. 1 (clamped, rounded to 0.01).
+///
+/// # Errors
+/// A message when `v` is not a finite number.
 pub fn parse_pan(v: &str) -> Result<f32, String> {
     parse_num(v).map(|p| (clamp_pan(p) * 100.0).round() / 100.0)
 }
 
+/// A comma-separated list of bus IDs (`V1`, `B1`, ...; the old `A1`-`A3` too)
+/// or `none`, as a mask with one bit per bus (V1 = bit 0 .. B2 = bit 4).
+///
+/// # Errors
+/// A message naming the first entry that is not a bus.
 pub fn parse_routes(v: &str) -> Result<u8, String> {
     let mut mask = 0u8;
     for tok in v.split(',').map(str::trim).filter(|t| !t.is_empty()) {
@@ -636,6 +724,8 @@ pub fn parse_routes(v: &str) -> Result<u8, String> {
     Ok(mask)
 }
 
+/// A bus mask as written in the config file: the IDs separated by commas, or
+/// `none`. The reverse of [`parse_routes`].
 pub fn format_routes(mask: u8) -> String {
     let v: Vec<&str> = (0..NUM_BUSES).filter(|b| mask & (1 << b) != 0).map(|b| BUS_IDS[b]).collect();
     if v.is_empty() { "none".into() } else { v.join(",") }
@@ -657,6 +747,13 @@ fn valid_client_name(v: &str) -> bool {
 }
 
 impl Config {
+    /// Read a config (or scene) from its INI text. A missing section or key
+    /// keeps its default. Bus sends are checked for loops.
+    ///
+    /// # Errors
+    /// A [`ParseError`] with the line number of the first unknown section or
+    /// key, bad value, key outside a section, or bus send that feeds the bus
+    /// itself or makes a loop.
     pub fn parse(text: &str) -> Result<Config, ParseError> {
         // a file saved by an editor that starts it with a byte order mark
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -888,6 +985,8 @@ impl Config {
         Ok(cfg)
     }
 
+    /// The config as INI text, ready to be saved. Comments in an earlier
+    /// file are not kept. [`Config::parse`] reads it back.
     pub fn to_ini(&self) -> String {
         let mut o = String::new();
         let _ = writeln!(o, "# BananaSplit configuration — written by BananaSplit; comments are not preserved.");
@@ -1079,6 +1178,8 @@ impl Config {
         self.recorder.links = sh.rec_links.load(Relaxed) & ALL_LINKS;
     }
 
+    /// Where the config is kept: `bananasplit/bananasplit.ini` in the
+    /// user's config folder.
     pub fn default_path() -> PathBuf {
         config_home().join("bananasplit").join("bananasplit.ini")
     }

@@ -1479,7 +1479,7 @@ pub const COUNT1: [[(u32, u8); 16]; 2] = [
     ],
 ];
 
-/// The synthesis window D[i] = INTWIN[i] / 65536 (i <= 256; D[512 - i] mirrors it
+/// The synthesis window `D[i] = INTWIN[i] / 65536` (`i <= 256`; `D[512 - i]` mirrors it
 /// with the sign pattern of ISO/IEC 11172-3 Table B.3, see `window`).
 pub const INTWIN: [i32; 257] = [
     0, -1, -1, -1, -1, -1, -1, -2, -2, -2, -2, -3, -3, -4, -4, -5, -5, -6, -7, -7, -8, -9, -10, -11, -13, -14, -16,

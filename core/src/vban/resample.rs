@@ -36,6 +36,8 @@ fn bessel_i0(x: f64) -> f64 {
     sum
 }
 
+/// A stereo resampler from one fixed pair of rates, with a ratio that can be
+/// nudged per call (see [`Resampler::process`]).
 pub struct Resampler {
     table: Vec<f32>,
     /// Input samples -> zero crossings.
@@ -55,6 +57,7 @@ pub struct Resampler {
 }
 
 impl Resampler {
+    /// A resampler from `fs_in` to `fs_out`, both in Hz. It starts from silence.
     pub fn new(fs_in: u32, fs_out: u32) -> Resampler {
         let ratio = fs_out as f64 / fs_in.max(1) as f64;
         let fc = BW * ratio.min(1.0); // cycles per input sample
@@ -86,6 +89,7 @@ impl Resampler {
         }
     }
 
+    /// The `(fs_in, fs_out)` rates it was built for, in Hz.
     pub fn rates(&self) -> (u32, u32) {
         (self.fs_in, self.fs_out)
     }
@@ -122,6 +126,11 @@ impl Resampler {
     /// Append stereo `input` frames and append every output frame that can
     /// now be computed to `out`, advancing `step` input frames per output
     /// frame (`nominal_step()`, give or take the drift correction).
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, if `input` has an odd length or `step` is not
+    /// positive.
     pub fn process(&mut self, input: &[f32], step: f64, out: &mut Vec<f32>) {
         debug_assert!(input.len().is_multiple_of(2) && step > 0.0);
         self.hist.extend_from_slice(input);

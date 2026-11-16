@@ -253,8 +253,10 @@ impl Control {
     }
 }
 
+/// Counters of one incoming stream since it was switched on.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct RxStats {
+    /// Audio packets taken.
     pub packets: u64,
     /// Packets missing from the frame counter (filled with silence).
     pub lost: u64,
@@ -273,9 +275,13 @@ pub struct RxStats {
 
 /// Receiver state for one incoming stream.
 pub struct RxStream {
+    /// The sender's sample rate, in Hz (0 before the first packet).
     pub sample_rate: u32,
+    /// Channels in the sender's packets (0 before the first packet).
     pub channels: usize,
+    /// Sample format of the sender's packets.
     pub format: Option<SampleFormat>,
+    /// Address and port of the sender being played.
     pub from: Option<SocketAddrV4>,
     expect: Option<u32>,
     /// The last packet's frame counter, and late packets in a row.
@@ -290,14 +296,18 @@ pub struct RxStream {
     burst: Window,
     out_total: f64,
     t0: Option<Instant>,
+    /// Reserve added on top of the configured one after dropouts, in ms (at
+    /// most 200).
     pub extra_ms: f64,
     seen_underruns: u32,
     calm_since: Option<Instant>,
+    /// When the latest packet was taken.
     pub last_packet: Option<Instant>,
     flush_pending: bool,
     playing: bool,
     in_buf: Vec<f32>,
     out_buf: Vec<f32>,
+    /// Counters since the stream was switched on.
     pub stats: RxStats,
 }
 
@@ -381,6 +391,11 @@ impl RxStream {
 
     /// Handle one audio packet of incoming stream `k`. `Err` if the stream
     /// cannot be played (status text).
+    ///
+    /// # Errors
+    ///
+    /// Returns a status text if the stream's sample rate is more than 4
+    /// times `fs_out` (see [`MAX_DOWN`]).
     #[expect(
         clippy::too_many_arguments,
         reason = "one packet in its context: stream slot, header, payload, sender, clock and rates"

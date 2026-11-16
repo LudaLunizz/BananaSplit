@@ -32,11 +32,17 @@ use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 /// One setting: config key, name for people, unit, range, default.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Spec {
+    /// Key of the setting in the config file (for example `gate_threshold`).
     pub key: &'static str,
+    /// Name for people.
     pub label: &'static str,
+    /// Unit shown next to the value: `dB`, `ms` or `:1`.
     pub unit: &'static str,
+    /// Lowest value, in `unit`.
     pub min: f32,
+    /// Highest value, in `unit`.
     pub max: f32,
+    /// Default value, in `unit`.
     pub def: f32,
 }
 
@@ -44,11 +50,17 @@ const fn spec(key: &'static str, label: &'static str, unit: &'static str, min: f
     Spec { key, label, unit, min, max, def }
 }
 
+/// Number of gate settings, the length of [`GATE`].
 pub const GATE_N: usize = 5;
+/// Index of the gate threshold (dB) in [`GATE`] and [`DynSettings::gate`].
 pub const G_THRESHOLD: usize = 0;
+/// Index of the gate range (dB), how far a closed gate turns the signal down.
 pub const G_RANGE: usize = 1;
+/// Index of the gate attack time (ms).
 pub const G_ATTACK: usize = 2;
+/// Index of the gate hold time (ms).
 pub const G_HOLD: usize = 3;
+/// Index of the gate release time (ms).
 pub const G_RELEASE: usize = 4;
 
 /// The gate's settings, in this order everywhere (config, GUI protocol).
@@ -60,12 +72,19 @@ pub const GATE: [Spec; GATE_N] = [
     spec("gate_release", "Release", "ms", 5.0, 4000.0, 200.0),
 ];
 
+/// Number of compressor settings, the length of [`COMP`].
 pub const COMP_N: usize = 6;
+/// Index of the compressor threshold (dB) in [`COMP`] and [`DynSettings::comp`].
 pub const C_THRESHOLD: usize = 0;
+/// Index of the compressor ratio (`:1`).
 pub const C_RATIO: usize = 1;
+/// Index of the compressor knee width (dB).
 pub const C_KNEE: usize = 2;
+/// Index of the compressor attack time (ms).
 pub const C_ATTACK: usize = 3;
+/// Index of the compressor release time (ms).
 pub const C_RELEASE: usize = 4;
+/// Index of the compressor make-up gain (dB).
 pub const C_MAKEUP: usize = 5;
 
 /// The compressor's settings, in this order everywhere.
@@ -94,6 +113,11 @@ impl Spec {
 
     /// A config value: a number in range (a typo must not silently become
     /// something else).
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the setting when `v` (trimmed) is not a
+    /// number, or is not finite or lies outside `min..=max`.
     pub fn parse(&self, v: &str) -> Result<f32, String> {
         let s = v.trim();
         let x: f32 = s.parse().map_err(|_| format!("{} must be a number, got {s:?}", self.key))?;
@@ -107,9 +131,13 @@ impl Spec {
 /// One strip's gate and compressor as stored in the config file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DynSettings {
+    /// Whether the gate is on.
     pub gate_on: bool,
+    /// The gate's settings in the order of [`GATE`], in each setting's own unit.
     pub gate: [f32; GATE_N],
+    /// Whether the compressor is on.
     pub comp_on: bool,
+    /// The compressor's settings in the order of [`COMP`], in each setting's own unit.
     pub comp: [f32; COMP_N],
 }
 
@@ -122,9 +150,13 @@ impl Default for DynSettings {
 /// One strip's gate and compressor, shared with the audio thread.
 #[derive(Debug)]
 pub struct DynParams {
+    /// Whether the gate is on.
     pub gate_on: AtomicBool,
+    /// The gate's settings in the order of [`GATE`], in each setting's own unit.
     pub gate: [AtomicF32; GATE_N],
+    /// Whether the compressor is on.
     pub comp_on: AtomicBool,
+    /// The compressor's settings in the order of [`COMP`], in each setting's own unit.
     pub comp: [AtomicF32; COMP_N],
     /// The gate's gain in the last cycle at its lowest, dB (0 = open).
     pub gate_gr: AtomicF32,
@@ -147,6 +179,7 @@ impl Default for DynParams {
 }
 
 impl DynParams {
+    /// The current settings as a plain value. Lock-free; the fields are read one by one.
     pub fn settings(&self) -> DynSettings {
         DynSettings {
             gate_on: self.gate_on.load(Relaxed),
@@ -156,6 +189,9 @@ impl DynParams {
         }
     }
 
+    /// Set every setting and both switches from `s`.
+    ///
+    /// Each value is first passed through [`Spec::clamp`], so it ends up in range and rounded to 0.1; a non-finite value becomes the setting's default.
     pub fn apply(&self, s: &DynSettings) {
         for (i, a) in self.gate.iter().enumerate() {
             a.store(GATE[i].clamp(s.gate[i]));
@@ -253,6 +289,7 @@ pub struct DynRt {
 }
 
 impl DynRt {
+    /// State for a strip at sample rate `sample_rate` (Hz), with the gate open and nothing reduced.
     pub fn new(sample_rate: u32) -> DynRt {
         let mut d = DynRt {
             sr: 48_000.0,
@@ -267,6 +304,9 @@ impl DynRt {
         d
     }
 
+    /// Set the sample rate in Hz, which the time settings are converted with.
+    ///
+    /// Rates below 8000 Hz are treated as 8000 Hz.
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
         self.sr = sample_rate.max(8000) as f32;
     }

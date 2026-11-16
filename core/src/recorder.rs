@@ -71,6 +71,7 @@ pub const DEFAULT_RING_WORDS: usize = 1 << 22;
 /// Largest `data` chunk per file. RIFF sizes are 32-bit; stay clear of 4 GiB.
 /// MP3 files stop there too (their Info frame counts bytes in 32 bits).
 pub const MAX_WAV_DATA_BYTES: u64 = 0xFFF0_0000;
+/// Folder recordings go to unless configured otherwise (`~` is the home folder).
 pub const DEFAULT_FOLDER: &str = "~/Music/BananaSplit";
 /// A take continues in a new file after this many minutes.
 pub const DEFAULT_SPLIT_MINUTES: u32 = 60;
@@ -124,6 +125,10 @@ pub fn source_index(id: &str) -> Option<usize> {
 }
 
 /// Parse `"1, 3, V1, B2"` (or `"none"` / empty; `A1`..`A3` too) into a link mask.
+///
+/// # Errors
+///
+/// Returns a message naming the first entry that is not a source id.
 pub fn parse_links(v: &str) -> Result<u16, String> {
     let mut mask = 0u16;
     for tok in v.split(',').map(str::trim).filter(|t| !t.is_empty()) {
@@ -138,23 +143,31 @@ pub fn parse_links(v: &str) -> Result<u16, String> {
     Ok(mask)
 }
 
+/// Write a link mask as source ids separated by commas (`1,3,V1`), or
+/// `none` when no source is linked. The inverse of [`parse_links`].
 pub fn format_links(mask: u16) -> String {
     let v: Vec<&str> = (0..NUM_SOURCES).filter(|i| mask & (1 << i) != 0).map(source_id).collect();
     if v.is_empty() { "none".into() } else { v.join(",") }
 }
 
+/// The file format of a recording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     /// MP3 at the bitrate in `Settings::kbps`.
     Mp3,
+    /// WAV with 16-bit integer samples.
     Wav16,
+    /// WAV with 24-bit integer samples.
     Wav24,
+    /// WAV with 32-bit float samples.
     Wav32f,
 }
 
 impl Format {
+    /// Every format, in the order they are offered.
     pub const ALL: [Format; 4] = [Format::Mp3, Format::Wav16, Format::Wav24, Format::Wav32f];
 
+    /// The name used in configs and the API: `mp3`, `wav16`, `wav24` or `wav32f`.
     pub fn as_str(self) -> &'static str {
         match self {
             Format::Mp3 => "mp3",
@@ -164,6 +177,11 @@ impl Format {
         }
     }
 
+    /// Read a format name, ignoring case and surrounding spaces.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when `v` is not one of the names given by [`Format::as_str`].
     pub fn parse(v: &str) -> Result<Format, String> {
         Format::ALL
             .into_iter()
@@ -180,6 +198,7 @@ impl Format {
         }
     }
 
+    /// File extension without the dot: `mp3` or `wav`.
     pub fn ext(self) -> &'static str {
         if self == Format::Mp3 { "mp3" } else { "wav" }
     }
@@ -192,6 +211,11 @@ impl Format {
 }
 
 /// Parse `bitrate` (kbit/s of MP3 takes).
+///
+/// # Errors
+///
+/// Returns a message when `v` is not a number or not one of 128, 160, 192,
+/// 224, 256 or 320.
 pub fn parse_kbps(v: &str) -> Result<u32, String> {
     match v.trim().parse::<u32>() {
         Ok(k) if mp3::BITRATES.contains(&k) => Ok(k),
@@ -199,6 +223,7 @@ pub fn parse_kbps(v: &str) -> Result<u32, String> {
     }
 }
 
+/// How linked channels are written to files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     /// All linked channels summed into one stereo file.
@@ -208,6 +233,7 @@ pub enum Mode {
 }
 
 impl Mode {
+    /// The name used in configs and the API: `mix` or `multi`.
     pub fn as_str(self) -> &'static str {
         match self {
             Mode::Mix => "mix",
@@ -215,6 +241,12 @@ impl Mode {
         }
     }
 
+    /// Read a mode name (`mix`, `multi` or `multitrack`), ignoring case and
+    /// surrounding spaces.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when `v` is not one of those names.
     pub fn parse(v: &str) -> Result<Mode, String> {
         match v.trim().to_ascii_lowercase().as_str() {
             "mix" => Ok(Mode::Mix),
@@ -229,9 +261,11 @@ impl Mode {
 pub struct Settings {
     /// Output folder as configured (`~/` is expanded when a take starts).
     pub folder: String,
+    /// File format of new takes.
     pub format: Format,
     /// Bitrate of MP3 takes, kbit/s.
     pub kbps: u32,
+    /// Whether linked channels are summed into one file or kept in separate files.
     pub mode: Mode,
     /// Minutes per file; a longer take continues in `_part2`, ...
     /// (0 = only before 4 GiB).
@@ -251,6 +285,11 @@ impl Default for Settings {
 }
 
 /// Parse `split` (minutes per file, `0` or `off` = no time limit).
+///
+/// # Errors
+///
+/// Returns a message when `v` is not `off` or a whole number of minutes
+/// from 0 to [`MAX_SPLIT_MINUTES`].
 pub fn parse_split(v: &str) -> Result<u32, String> {
     let v = v.trim();
     if v.eq_ignore_ascii_case("off") {
@@ -262,6 +301,12 @@ pub fn parse_split(v: &str) -> Result<u32, String> {
     }
 }
 
+/// Check a recorder folder setting: it must not be blank, longer than 4096
+/// bytes or contain control characters. It does not look at the disk.
+///
+/// # Errors
+///
+/// Returns a message when `v` breaks one of those rules.
 pub fn validate_folder(v: &str) -> Result<(), String> {
     if v.trim().is_empty() {
         return Err("recorder folder must not be empty".into());
@@ -341,6 +386,9 @@ pub struct Ring {
 }
 
 impl Ring {
+    /// A ring of `words` 32-bit words, rounded up to a power of two and at
+    /// least big enough for one block of every source (a header and
+    /// `MAX_FRAMES` frames of 22 channels). Allocates, so not for the audio thread.
     pub fn new(words: usize) -> Ring {
         let words = words.max(HDR + 2 * NUM_SOURCES * MAX_FRAMES).next_power_of_two();
         Ring {
@@ -351,6 +399,7 @@ impl Ring {
         }
     }
 
+    /// Size of the ring in 32-bit words (a power of two).
     pub fn capacity(&self) -> usize {
         self.buf.len()
     }
@@ -433,10 +482,14 @@ pub struct RecTap {
 }
 
 impl RecTap {
+    /// A tap whose ring has [`DEFAULT_RING_WORDS`] words, allocated on the
+    /// first take. Not recording, engine sample rate not known yet.
     pub fn new() -> Arc<RecTap> {
         Self::with_ring_words(DEFAULT_RING_WORDS)
     }
 
+    /// Like [`RecTap::new`], with a ring of `words` 32-bit words (the ring
+    /// rounds it up to what it needs; see [`Ring::new`]).
     pub fn with_ring_words(words: usize) -> Arc<RecTap> {
         Arc::new(RecTap {
             ring: OnceLock::new(),
@@ -454,6 +507,9 @@ impl RecTap {
         self.ring.get_or_init(|| Ring::new(self.ring_words))
     }
 
+    /// The state word that starts `session`: the recording bit set, the
+    /// multi-mode bit, and `mask` (cut to [`ALL_LINKS`]) as the latched link
+    /// mask. See the layout above.
     pub fn state_word(session: u16, multi: bool, mask: u16) -> u32 {
         ACTIVE | ((mask & ALL_LINKS) as u32) << MASK_SHIFT | if multi { MULTI } else { 0 } | session as u32
     }
@@ -482,14 +538,18 @@ impl RecTap {
         self.state.compare_exchange(word, word & !ACTIVE, SeqCst, SeqCst).is_ok()
     }
 
+    /// True while a session is active (the audio thread records blocks for it).
     pub fn is_active(&self) -> bool {
         self.state.load(SeqCst) & ACTIVE != 0
     }
 
+    /// Audio cycles the audio thread has finished so far (wraps around).
     pub fn cycles(&self) -> u32 {
         self.cycles.load(SeqCst)
     }
 
+    /// Frames dropped in the current take because the ring was full, which
+    /// the take fills with silence. Reset when a take starts.
     pub fn dropped_frames(&self) -> u32 {
         self.dropped.load(Relaxed)
     }
@@ -1121,6 +1181,7 @@ const TRACK_QUEUE: usize = 64;
 /// What a take's files are and how they are split.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Spec {
+    /// File format.
     pub format: Format,
     /// MP3 bitrate, kbit/s.
     pub kbps: u32,
@@ -1156,11 +1217,11 @@ impl Spec {
     }
 }
 
-/// One recording: 1 (mix) or N (multi) stereo tracks, split into parts.
 /// The quietest sample that counts as sound (-80 dBFS); below it, a take
 /// records silence.
 pub const AUDIBLE: f32 = 1e-4;
 
+/// One recording: 1 (mix) or N (multi) stereo tracks, split into parts.
 pub struct Take {
     session: u16,
     word: u32,
@@ -1208,6 +1269,13 @@ impl Take {
     /// (or `.wav`), `<day>` being today by `clock` (or the stamp's day; no
     /// day folder if neither has a date). `-k` is added if any of the names
     /// already exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when `labels` is empty, when an MP3 take has a
+    /// bitrate MP3 does not have, when the folder cannot be created, when no
+    /// free file name is found, when a file cannot be created, or when the
+    /// track threads cannot be started. Files already made are removed.
     pub fn create(root: &Path, stamp: &str, labels: &[String], spec: Spec, clock: Clock) -> Result<Take, String> {
         if labels.is_empty() {
             return Err("nothing to record".into());
@@ -1335,20 +1403,24 @@ impl Take {
         }
     }
 
+    /// Every file of the take so far, in the order they were made: one per
+    /// track, and again for each later part.
     pub fn files(&self) -> &[PathBuf] {
         &self.files
     }
 
+    /// Frames recorded so far in this take, including the silence filled in
+    /// for dropped blocks.
     pub fn frames(&self) -> u64 {
         self.frames
     }
 
-    /// Length so far, in seconds (each part at its own sample rate).
     /// Seconds since the last audible sample (since the start if none).
     pub fn quiet_secs(&self) -> f64 {
         (self.frames - self.heard) as f64 / f64::from(self.sample_rate().max(1))
     }
 
+    /// Length so far, in seconds (each part at its own sample rate).
     pub fn secs(&self) -> f64 {
         self.prior_secs + self.rate_frames as f64 / self.spec.rate.max(1) as f64
     }
@@ -1358,6 +1430,7 @@ impl Take {
         self.spec.file_rate()
     }
 
+    /// Number of samples so far that were beyond full scale and had to be clipped.
     pub fn clipped(&self) -> u64 {
         self.clipped
     }
@@ -1572,6 +1645,7 @@ fn with_ext(base: &Path, part: u32, format: Format) -> PathBuf {
 /// What the UIs show.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Status {
+    /// True while a take is recording.
     pub on: bool,
     /// Mode of the current (or last) take.
     pub mode: Mode,
@@ -1601,10 +1675,13 @@ pub struct Status {
     /// How long the current take has recorded nothing audible (seconds):
     /// the armed channels get no sound.
     pub quiet_secs: f64,
+    /// Why the take could not start or stopped early (a file error, or too
+    /// little free disk space), if it did.
     pub error: Option<String>,
 }
 
 impl Status {
+    /// Length of the current (or last) take in seconds; the same as `secs`.
     pub fn seconds(&self) -> f64 {
         self.secs
     }
@@ -1653,6 +1730,8 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Recorder {
+    /// A recorder that records what `tap` carries and starts its writer
+    /// thread. `sample_rate` (Hz) is used until the engine reports its own.
     pub fn new(tap: Arc<RecTap>, sample_rate: u32, settings: Settings) -> Recorder {
         Self::with_max_data_bytes(tap, sample_rate, settings, MAX_WAV_DATA_BYTES)
     }
@@ -1706,6 +1785,7 @@ impl Recorder {
         self
     }
 
+    /// The tap shared with the engine's audio thread.
     pub fn tap(&self) -> &Arc<RecTap> {
         &self.tap
     }
@@ -1719,11 +1799,18 @@ impl Recorder {
         }
     }
 
+    /// A copy of the current settings.
     pub fn settings(&self) -> Settings {
         lock(&self.inner).settings.clone()
     }
 
     /// Change settings; they apply to the next take.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message, and keeps the old settings, when the folder fails
+    /// [`validate_folder`], `split_minutes` is above [`MAX_SPLIT_MINUTES`],
+    /// or `kbps` is not an MP3 bitrate.
     pub fn set_settings(&self, s: Settings) -> Result<(), String> {
         validate_folder(&s.folder)?;
         if s.split_minutes > MAX_SPLIT_MINUTES {
@@ -1734,6 +1821,7 @@ impl Recorder {
         Ok(())
     }
 
+    /// A snapshot of the recorder, with the live count of dropped frames.
     pub fn status(&self) -> Status {
         let mut s = lock(&self.status).clone();
         if s.on {
@@ -1742,12 +1830,23 @@ impl Recorder {
         s
     }
 
+    /// True while a take is recording.
     pub fn is_recording(&self) -> bool {
         lock(&self.status).on
     }
 
     /// Start a take. `links` = sources to record, `names` = the 11 channel
     /// names (for multi-mode file names), `stamp` = file-name prefix.
+    /// Returns the files made, one per track.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when the recorder thread is not running (or stops
+    /// or does not answer within 5 s), when a take is already recording,
+    /// when `links` holds no source, when the folder setting is not valid,
+    /// when the disk has less than [`MIN_FREE_BYTES`] free (also put in
+    /// [`Status::error`]), or when the files cannot be created (see
+    /// [`Take::create`]).
     pub fn start(&self, links: u16, names: &[String], stamp: &str) -> Result<Vec<PathBuf>, String> {
         let mut inner = lock(&self.inner);
         let tx = inner.tx.clone().ok_or("the recorder is not running")?;

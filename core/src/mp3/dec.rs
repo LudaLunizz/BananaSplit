@@ -24,9 +24,14 @@ pub struct Header {
     pub mpeg1: bool,
     /// Index into `tables::RATES`.
     pub rate_index: usize,
+    /// Sample rate in Hz.
     pub sample_rate: u32,
+    /// Bitrate in kbit/s.
     pub kbps: u32,
+    /// The padding bit: this frame is one byte longer than its bitrate gives.
     pub padding: bool,
+    /// The frame is CRC-protected (it has a 2-byte CRC after the header; the
+    /// CRC value is not checked).
     pub crc: bool,
     /// 0 stereo, 1 joint stereo, 2 dual channel, 3 mono.
     pub mode: u8,
@@ -73,6 +78,7 @@ impl Header {
         })
     }
 
+    /// Channels in the frame: 1 for mono, else 2.
     pub fn channels(&self) -> usize {
         if self.mode == 3 { 1 } else { 2 }
     }
@@ -241,7 +247,7 @@ fn consts() -> &'static Consts {
     })
 }
 
-/// The synthesis window D[i] of ISO/IEC 11172-3 Table B.3 (the analysis
+/// The synthesis window `D[i]` of ISO/IEC 11172-3 Table B.3 (the analysis
 /// window C is D / 32): the prototype filter with every other block of 64
 /// taps negated.
 pub fn window(i: usize) -> f64 {
@@ -424,12 +430,16 @@ impl Layout {
 /// What one frame decoded to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Frame {
+    /// The frame's header.
     pub header: Header,
     /// False if the frame decoded as silence: its bit reservoir was missing
     /// (right after a seek) or its side information was damaged.
     pub complete: bool,
 }
 
+/// A Layer III decoder. It keeps what one frame needs from the ones before
+/// it (bit reservoir, overlap, filter state), so frames must be given in
+/// order; use [`Decoder::reset`] after a jump.
 pub struct Decoder {
     /// Main data of the previous frames (the bit reservoir).
     reservoir: Vec<u8>,
@@ -454,6 +464,7 @@ impl Default for Decoder {
 }
 
 impl Decoder {
+    /// A decoder with no history.
     pub fn new() -> Decoder {
         consts();
         Decoder {

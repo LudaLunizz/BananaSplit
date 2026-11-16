@@ -198,6 +198,8 @@ pub struct SceneStore {
 }
 
 impl SceneStore {
+    /// A store that keeps its scene files in `dir`. The folder is created on
+    /// the first save, not here.
     pub fn new(dir: PathBuf) -> SceneStore {
         SceneStore { dir }
     }
@@ -207,6 +209,7 @@ impl SceneStore {
         SceneStore::new(config.parent().map_or_else(|| PathBuf::from("scenes"), |p| p.join("scenes")))
     }
 
+    /// The folder the scene files are kept in.
     pub fn dir(&self) -> &Path {
         &self.dir
     }
@@ -231,6 +234,8 @@ impl SceneStore {
         v
     }
 
+    /// Is there a scene called `name`? False for a name that is not allowed
+    /// and for a file of that name that is not a BananaSplit scene.
     pub fn exists(&self, name: &str) -> bool {
         self.path(name).is_ok_and(|p| p.is_file() && is_scene(&p))
     }
