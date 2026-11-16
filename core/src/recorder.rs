@@ -50,6 +50,7 @@
 
 use crate::engine::{MAX_FRAMES, NUM_BUSES, NUM_STRIPS};
 use crate::mp3;
+use crate::util::{lock, ramp};
 use crate::vban::resample::Resampler;
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
@@ -57,7 +58,7 @@ use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
 use std::sync::atomic::{AtomicU32, AtomicUsize};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -493,12 +494,6 @@ impl RecTap {
     pub fn dropped_frames(&self) -> u32 {
         self.dropped.load(Relaxed)
     }
-}
-
-/// Linear ramp from `v0` to `v1` across `n` samples; sample `n-1` is exactly `v1`.
-#[inline(always)]
-fn ramp(v0: f32, v1: f32, i: usize, n: usize) -> f32 {
-    if i + 1 >= n { v1 } else { v0 + (v1 - v0) * ((i + 1) as f32 / n as f32) }
 }
 
 /// Recorder state private to the audio thread (lives inside the engine).
@@ -1646,10 +1641,6 @@ pub struct Recorder {
     inner: Mutex<Inner>,
     status: Arc<Mutex<Status>>,
     thread: Mutex<Option<JoinHandle<()>>>,
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 impl Recorder {

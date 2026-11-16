@@ -34,6 +34,7 @@
 use crate::engine::{MAX_FRAMES, NUM_BUSES};
 use crate::mp3;
 use crate::recorder::{NUM_SOURCES, stamp_day};
+use crate::util::{lock, ramp};
 use crate::vban::resample::{MAX_DOWN, Resampler};
 use crate::vban::ring::Ring;
 use std::collections::{HashMap, HashSet};
@@ -42,7 +43,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64};
-use std::sync::{Arc, Mutex, MutexGuard, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -125,11 +126,6 @@ impl PlayTap {
     pub fn test_played(&self) -> u64 {
         self.played.load(Relaxed)
     }
-}
-
-#[inline(always)]
-fn ramp(v0: f32, v1: f32, i: usize, n: usize) -> f32 {
-    if i + 1 >= n { v1 } else { v0 + (v1 - v0) * ((i + 1) as f32 / n as f32) }
 }
 
 /// The engine's private player state.
@@ -1020,10 +1016,6 @@ pub struct Player {
     shared: Arc<Mutex<Shared>>,
     tx: Mutex<Option<mpsc::Sender<Cmd>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 impl Player {

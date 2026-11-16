@@ -35,11 +35,12 @@ pub use proto::{DEFAULT_PORT, SampleFormat};
 pub use tap::{NUM_IN, NUM_OUT, VbanRt, VbanTap};
 
 use crate::engine::NUM_STRIPS;
+use crate::util::lock;
 use rx::RxStream;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tap::NONE;
@@ -395,10 +396,6 @@ impl OutStatus {
 // ---------------------------------------------------------------------------
 // Control
 // ---------------------------------------------------------------------------
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
-}
 
 struct Inner {
     tap: Arc<VbanTap>,

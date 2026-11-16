@@ -18,6 +18,7 @@
 use super::ring::Ring;
 use crate::engine::{MAX_FRAMES, NUM_BUSES, NUM_STRIPS};
 use crate::recorder::NUM_SOURCES;
+use crate::util::ramp;
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, fence};
 use std::sync::{Arc, OnceLock};
@@ -194,11 +195,6 @@ impl VbanTap {
         }
         (ring.len() / 2) as f64
     }
-}
-
-#[inline(always)]
-fn ramp(v0: f32, v1: f32, i: usize, n: usize) -> f32 {
-    if i + 1 >= n { v1 } else { v0 + (v1 - v0) * ((i + 1) as f32 / n as f32) }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
