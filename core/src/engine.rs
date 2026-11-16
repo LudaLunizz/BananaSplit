@@ -69,6 +69,7 @@ use crate::eq::{EqParams, EqRt};
 use crate::limiter::{LimitParams, LimitRt};
 use crate::player::{PlayRt, PlayTap};
 use crate::recorder::{RecRt, RecTap};
+use crate::util::ramp;
 use crate::vban::{VbanRt, VbanTap};
 use std::array;
 use std::sync::Arc;
@@ -351,12 +352,6 @@ fn side_gains(silenced: bool, fader_db: f32, trim_db: f32, pan: f32) -> [f32; 2]
 #[inline(always)]
 fn sanitize(x: f32) -> f32 {
     if x.is_finite() { x } else { 0.0 }
-}
-
-/// Linear ramp from `v0` to `v1` across `n` samples; sample `n-1` is exactly `v1`.
-#[inline(always)]
-fn ramp(v0: f32, v1: f32, i: usize, n: usize) -> f32 {
-    if i + 1 >= n { v1 } else { v0 + (v1 - v0) * ((i + 1) as f32 / n as f32) }
 }
 
 /// What reaches one bus, as channel bits: strips 1..6 are bits 0..5, bus

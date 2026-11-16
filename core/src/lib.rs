@@ -33,6 +33,7 @@ pub mod release;
 pub mod ring;
 pub mod scenes;
 pub mod tui;
+mod util;
 pub mod vban;
 
 /// The touch deck at `/deck`: the everyday controls (faders, mute, solo,

@@ -20,6 +20,7 @@
 //!   non-finite.
 
 use crate::engine::AtomicF32;
+use crate::util::ramp;
 use std::f64::consts::PI;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
 
@@ -471,11 +472,6 @@ pub struct EqRt {
     sr: f64,
     glide: f32,
     fade: f32,
-}
-
-#[inline(always)]
-fn ramp(v0: f32, v1: f32, i: usize, n: usize) -> f32 {
-    if i + 1 >= n { v1 } else { v0 + (v1 - v0) * ((i + 1) as f32 / n as f32) }
 }
 
 fn move_toward(v: f32, target: f32, step: f32) -> f32 {
