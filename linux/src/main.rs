@@ -1068,9 +1068,9 @@ fn run_tui(ctx: &Ctx, cfg: &mut Config, rec: &Recorder, notes: Vec<String>) -> R
 
 /// The end of a session after the settings were saved: a failed save is
 /// reported as well, and an error says that the settings are safe.
-fn saved_too(result: Result<(), String>, saved: Result<(), String>) -> Result<(), String> {
+fn saved_too(result: Result<(), String>, saved: Result<(), impl std::fmt::Display>) -> Result<(), String> {
     match (result, saved) {
-        (Ok(()), s) => s,
+        (Ok(()), s) => s.map_err(|e| e.to_string()),
         (Err(e), Ok(())) => Err(format!("{e}; your settings are saved")),
         (Err(e), Err(s)) => Err(format!("{e}; saving the settings failed too: {s}")),
     }

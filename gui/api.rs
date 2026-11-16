@@ -39,6 +39,12 @@ impl From<String> for ApiError {
     }
 }
 
+impl From<bananasplit::scenes::SceneError> for ApiError {
+    fn from(e: bananasplit::scenes::SceneError) -> ApiError {
+        ApiError::new(400, e.to_string())
+    }
+}
+
 impl From<&str> for ApiError {
     fn from(msg: &str) -> ApiError {
         ApiError::new(400, msg)

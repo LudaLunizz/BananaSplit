@@ -685,7 +685,7 @@ mod tests {
         // the client's name before its channel
         assert_eq!(refused("op=dev&ch=99&client=&v=1"), "bad client name");
         // the scene's name before its action
-        assert_eq!(refused("op=scene&name=&act=x"), scenes::validate_name("").unwrap_err());
+        assert_eq!(refused("op=scene&name=&act=x"), scenes::validate_name("").unwrap_err().to_string());
         assert_eq!(refused("op=scene&name=Live&act=x"), "unknown scene action \"x\"");
         // the setting's name before its value; a strip before both
         assert_eq!(refused("op=dynset&ch=0&key=nope&v=x"), "unknown setting \"nope\"");

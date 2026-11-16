@@ -569,7 +569,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts, 
         cfg.recorder.play_to = ctx.player.routes();
     }
     ctx.rec.shutdown();
-    let saved = result.and_then(|()| cfg.save(&ctx.path));
+    let saved = result.and_then(|()| Ok(cfg.save(&ctx.path)?));
     takes.shutdown();
     ctx.player.shutdown();
     ctx.vban.shutdown();
@@ -694,7 +694,7 @@ fn main() -> ExitCode {
     let first_start = !args.path.exists();
     let cfg = match Config::load_or_create(&args.path) {
         Ok(c) => c,
-        Err(e) => return fail(&e, args.headless),
+        Err(e) => return fail(&e.to_string(), args.headless),
     };
 
     // A second start (from the Terminal, or the login item while BananaSplit

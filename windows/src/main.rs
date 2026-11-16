@@ -639,7 +639,7 @@ fn run_gui(ctx: &mut Ctx, cfg: &mut Config, notes: Vec<String>, opts: &GuiOpts) 
     let saved = result.and_then(|()| {
         capture_all(cfg, &ctx.shared, &rec, &ctx.vban);
         cfg.recorder.play_to = ctx.player.routes();
-        cfg.save(&ctx.path)
+        Ok(cfg.save(&ctx.path)?)
     });
     // Then the window (it goes by itself once the mixer has exited, too):
     // closing the console leaves BananaSplit only a few seconds in all.
@@ -733,7 +733,7 @@ fn main() -> ExitCode {
     let first_start = !args.path.exists();
     let mut cfg = match Config::load_or_create(&args.path) {
         Ok(c) => c,
-        Err(e) => return fail(&e, args.headless),
+        Err(e) => return fail(&e.to_string(), args.headless),
     };
 
     // A second launch (the Start Menu shortcut while autostart already runs
