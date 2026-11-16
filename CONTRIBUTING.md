@@ -106,7 +106,9 @@ you can see that a change meant for one system did not move the others.
 Open an issue first for anything beyond a typo, saying what you want and why.
 Work on a branch named `<issue number>-short-name`, and start the pull request
 description with `Closes #<number>`. Wait for CI to be green; the maintainer
-merges with a rebase, so the history stays linear.
+merges with a rebase, so the history stays linear. Security problems go to
+**Security → Report a vulnerability**, not to a public issue (see
+[SECURITY.md](SECURITY.md)).
 
 Developed with help from Claude Code; every change is reviewed, tested in CI and
 released by the maintainer.
