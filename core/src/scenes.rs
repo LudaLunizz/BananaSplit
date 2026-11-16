@@ -12,23 +12,80 @@
 //! (`~/.config/bananasplit/scenes/Live Room.ini`), in the config file's own
 //! format, so they can be read and edited by hand.
 
-use crate::config::{Config, format_routes, write_dynamics, write_eq};
+use crate::config::{Config, ParseError, format_routes, write_dynamics, write_eq};
 use crate::engine::{BUS_IDS, Shared};
+use crate::error::{IoError, into_string};
 use crate::recorder;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+/// The longest scene name, in characters.
 pub const MAX_NAME: usize = 40;
+
+/// Why a scene could not be saved, loaded or deleted.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum SceneError {
+    /// The name is not allowed ([`validate_name`] says which are).
+    Name,
+    /// A file of that name exists and is not a BananaSplit scene; it is left
+    /// alone.
+    NotAScene(PathBuf),
+    /// The scene file or its folder could not be read, written or removed.
+    Io(IoError),
+    /// The scene file is not valid; nothing was changed.
+    Parse {
+        /// The scene file.
+        path: PathBuf,
+        /// The first line that is wrong.
+        source: ParseError,
+    },
+}
+
+impl std::fmt::Display for SceneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SceneError::Name => write!(
+                f,
+                "scene names are 1-{MAX_NAME} letters, digits, spaces and - _ . , ( ) & + ' ! (not starting with a dot)"
+            ),
+            SceneError::NotAScene(path) => {
+                write!(f, "{} is not a BananaSplit scene; it is left alone", path.display())
+            }
+            SceneError::Io(e) => e.fmt(f),
+            SceneError::Parse { path, source } => write!(f, "{}: {source}", path.display()),
+        }
+    }
+}
+
+impl std::error::Error for SceneError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            SceneError::Io(e) => Some(e),
+            SceneError::Parse { source, .. } => Some(source),
+            SceneError::Name | SceneError::NotAScene(_) => None,
+        }
+    }
+}
+
+impl From<IoError> for SceneError {
+    fn from(e: IoError) -> SceneError {
+        SceneError::Io(e)
+    }
+}
+
+into_string!(SceneError);
 
 /// A scene name: 1-40 letters, digits, spaces and `-_.,()&+'!`, not starting
 /// with a dot or a space. Returns it trimmed.
-pub fn validate_name(name: &str) -> Result<&str, String> {
+///
+/// # Errors
+/// [`SceneError::Name`] when the name is not allowed.
+pub fn validate_name(name: &str) -> Result<&str, SceneError> {
     let n = name.trim();
     let ok_char = |c: char| c.is_alphanumeric() || " -_.,()&+'!".contains(c);
     if n.is_empty() || n.chars().count() > MAX_NAME || n.starts_with('.') || !n.chars().all(ok_char) {
-        return Err(format!(
-            "scene names are 1-{MAX_NAME} letters, digits, spaces and - _ . , ( ) & + ' ! (not starting with a dot)"
-        ));
+        return Err(SceneError::Name);
     }
     Ok(n)
 }
@@ -96,8 +153,12 @@ fn is_dynamics_key(key: &str) -> bool {
 }
 
 /// Check that `text` only holds keys a scene may hold, then parse it with
-/// the config parser. Errors carry a line number.
-pub fn parse(text: &str) -> Result<Config, String> {
+/// the config parser.
+///
+/// # Errors
+/// A [`ParseError`] with the line of the first key, section or value that a
+/// scene may not hold.
+pub fn parse(text: &str) -> Result<Config, ParseError> {
     let text = text.strip_prefix(BOM).unwrap_or(text);
     let mut section = String::new();
     for (i, raw) in text.lines().enumerate() {
@@ -111,7 +172,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
                 || section.strip_prefix("strip").is_some_and(|n| n.parse::<u8>().is_ok())
                 || section.starts_with("bus.");
             if !ok {
-                return Err(format!("line {}: [{section}] does not belong in a scene", i + 1));
+                return Err(ParseError { line: i + 1, msg: format!("[{section}] does not belong in a scene") });
             }
             continue;
         }
@@ -124,10 +185,10 @@ pub fn parse(text: &str) -> Result<Config, String> {
             _ => mixer || key == "routes",
         };
         if !ok {
-            return Err(format!("line {}: {key:?} does not belong in a scene", i + 1));
+            return Err(ParseError { line: i + 1, msg: format!("{key:?} does not belong in a scene") });
         }
     }
-    Config::parse(text).map_err(|e| e.to_string())
+    Config::parse(text)
 }
 
 /// Scene files in one folder.
@@ -150,7 +211,7 @@ impl SceneStore {
         &self.dir
     }
 
-    fn path(&self, name: &str) -> Result<PathBuf, String> {
+    fn path(&self, name: &str) -> Result<PathBuf, SceneError> {
         Ok(self.dir.join(format!("{}.ini", validate_name(name)?)))
     }
 
@@ -175,19 +236,23 @@ impl SceneStore {
     }
 
     /// A file of that name that is not a scene is never touched.
-    fn check_ours(path: &Path) -> Result<(), String> {
+    fn check_ours(path: &Path) -> Result<(), SceneError> {
         if path.exists() && !is_scene(path) {
-            return Err(format!("{} is not a BananaSplit scene; it is left alone", path.display()));
+            return Err(SceneError::NotAScene(path.to_path_buf()));
         }
         Ok(())
     }
 
     /// Save the mixer as `name` (replacing a scene of that name).
-    pub fn save(&self, name: &str, sh: &Shared) -> Result<(), String> {
+    ///
+    /// # Errors
+    /// [`SceneError::Name`], [`SceneError::NotAScene`] when a file of that
+    /// name is not a scene, or [`SceneError::Io`].
+    pub fn save(&self, name: &str, sh: &Shared) -> Result<(), SceneError> {
         let path = self.path(name)?;
         Self::check_ours(&path)?;
-        std::fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
-        crate::config::write_replacing(&path, &to_ini(sh))
+        std::fs::create_dir_all(&self.dir).map_err(|e| IoError::new(&self.dir, e))?;
+        Ok(crate::config::write_replacing(&path, &to_ini(sh))?)
     }
 
     /// Load scene `name` into the mixer. All or nothing at the file level:
@@ -195,10 +260,15 @@ impl SceneStore {
     /// so a bad file changes nothing. A good one is then applied value by
     /// value (`Config::apply`), each through its usual ramp; the audio thread
     /// may run a cycle between two of them.
-    pub fn load(&self, name: &str, sh: &Shared) -> Result<(), String> {
+    ///
+    /// # Errors
+    /// [`SceneError::Name`], [`SceneError::Io`] when the file cannot be read,
+    /// or [`SceneError::Parse`] when it is not a valid scene. In every case
+    /// the mixer is left as it was.
+    pub fn load(&self, name: &str, sh: &Shared) -> Result<(), SceneError> {
         let path = self.path(name)?;
-        let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut cfg = parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| IoError::new(&path, e))?;
+        let mut cfg = parse(&text).map_err(|source| SceneError::Parse { path: path.clone(), source })?;
         // the limiters stay where they are
         for (b, p) in cfg.buses.iter_mut().zip(&sh.buses) {
             b.limit_db = p.limit.load();
@@ -207,10 +277,15 @@ impl SceneStore {
         Ok(())
     }
 
-    pub fn delete(&self, name: &str) -> Result<(), String> {
+    /// Remove scene `name`; a file that is not a scene is never touched.
+    ///
+    /// # Errors
+    /// [`SceneError::Name`], [`SceneError::NotAScene`] or
+    /// [`SceneError::Io`].
+    pub fn delete(&self, name: &str) -> Result<(), SceneError> {
         let path = self.path(name)?;
         Self::check_ours(&path)?;
-        std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))
+        Ok(std::fs::remove_file(&path).map_err(|e| IoError::new(&path, e))?)
     }
 }
 
@@ -302,7 +377,7 @@ mod tests {
         std::fs::write(dir.join("mine.ini"), "[global]\nclient_name = x\n").unwrap();
         assert_eq!(store.list(), ["acoustic"]);
         assert!(!store.exists("mine"));
-        assert!(store.save("mine", &sh2).unwrap_err().contains("not a BananaSplit scene"));
+        assert!(matches!(store.save("mine", &sh2), Err(SceneError::NotAScene(p)) if p.ends_with("mine.ini")));
         assert!(store.delete("mine").is_err());
         assert_eq!(std::fs::read_to_string(dir.join("mine.ini")).unwrap(), "[global]\nclient_name = x\n");
         let _ = std::fs::remove_dir_all(&dir);
@@ -332,9 +407,22 @@ mod tests {
     }
 
     #[test]
+    fn a_bad_name_is_its_own_error() {
+        let dir = std::env::temp_dir().join(format!("bs-scene-name-{}", std::process::id()));
+        let store = SceneStore::new(dir.clone());
+        assert!(matches!(validate_name(".hidden"), Err(SceneError::Name)));
+        let text = SceneError::Name.to_string();
+        assert!(text.contains("1-40 letters"), "{text}");
+        let sh = Shared::new();
+        assert!(matches!(store.save("../x", &sh), Err(SceneError::Name)));
+        assert!(matches!(store.load("nope", &sh), Err(SceneError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound));
+        assert!(!dir.exists(), "a refused name creates nothing");
+    }
+
+    #[test]
     fn strict_parsing() {
         assert!(parse("[strip1]\ngain_db = -3\n[bus.B2]\nmono = true\n[recorder]\nlinks = 1\n").is_ok());
-        assert!(parse("[strip1]\nname = x\n").unwrap_err().contains("line 2"));
+        assert_eq!(parse("[strip1]\nname = x\n").unwrap_err().line, 2);
         assert!(parse("[strip1]\nconnect = @default\n").is_err());
         assert!(parse("[global]\nclient_name = x\n").is_err());
         assert!(parse("[vban]\nenabled = true\n").is_err());

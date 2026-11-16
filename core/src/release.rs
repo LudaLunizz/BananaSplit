@@ -8,6 +8,7 @@
 //! `curl` or `wget` and install in their own way; everything they decide
 //! with is here, the same on every platform.
 
+use crate::error::{IoError, into_string};
 use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
@@ -455,12 +456,16 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     s.finish()
 }
 
-pub fn sha256_file(path: &Path) -> Result<[u8; 32], String> {
-    let mut f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+/// The SHA-256 of the file at `path`, read in 64 KiB pieces.
+///
+/// # Errors
+/// The file cannot be opened or read.
+pub fn sha256_file(path: &Path) -> Result<[u8; 32], IoError> {
+    let mut f = std::fs::File::open(path).map_err(|e| IoError::new(path, e))?;
     let mut s = Sha256::default();
     let mut buf = vec![0u8; 1 << 16];
     loop {
-        let n = f.read(&mut buf).map_err(|e| format!("{}: {e}", path.display()))?;
+        let n = f.read(&mut buf).map_err(|e| IoError::new(path, e))?;
         if n == 0 {
             return Ok(s.finish());
         }
@@ -943,14 +948,57 @@ pub fn parse_sig(text: &str) -> Option<[u8; 64]> {
     Some(out)
 }
 
-/// Is `sums` (a release's SHA256SUMS.txt) signed by one of `keys`?
-pub fn check_signature(sums: &str, sig: &str, keys: &[[u8; 32]]) -> Result<(), String> {
-    let s = parse_sig(sig).ok_or("the release's SHA256SUMS.txt.sig is not a signature")?;
-    if keys.iter().any(|k| ed25519_verify(k, sums.as_bytes(), &s)) {
-        Ok(())
-    } else {
-        Err("the release's SHA256SUMS.txt is not signed with BananaSplit's release key (not an official release); nothing was changed".into())
+/// Why a downloaded release is not accepted. Nothing has been changed when
+/// any of these is returned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ReleaseError {
+    /// `SHA256SUMS.txt.sig` is not 128 hexadecimal digits.
+    BadSignatureFile,
+    /// The signature is valid for none of the release keys: not an official
+    /// release.
+    NotOfficial,
+    /// The signed text is for another release than the one offered.
+    WrongVersion {
+        /// The version the signed text names.
+        signed: String,
+        /// The version that was offered.
+        wanted: String,
+    },
+    /// The signed text has no `# BananaSplit <version>` line.
+    NoVersion,
+}
+
+impl std::fmt::Display for ReleaseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReleaseError::BadSignatureFile => f.write_str("the release's SHA256SUMS.txt.sig is not a signature"),
+            ReleaseError::NotOfficial => f.write_str(
+                "the release's SHA256SUMS.txt is not signed with BananaSplit's release key (not an official release); nothing was changed",
+            ),
+            ReleaseError::WrongVersion { signed, wanted } => write!(
+                f,
+                "the release's signed SHA256SUMS.txt is for BananaSplit {signed}, not {wanted}; nothing was changed"
+            ),
+            ReleaseError::NoVersion => f.write_str(
+                "the release's signed SHA256SUMS.txt does not say which version it is for; nothing was changed",
+            ),
+        }
     }
+}
+
+impl std::error::Error for ReleaseError {}
+
+into_string!(ReleaseError);
+
+/// Is `sums` (a release's SHA256SUMS.txt) signed by one of `keys`?
+///
+/// # Errors
+/// [`ReleaseError::BadSignatureFile`] when `sig` is not a signature,
+/// [`ReleaseError::NotOfficial`] when no key in `keys` made it.
+pub fn check_signature(sums: &str, sig: &str, keys: &[[u8; 32]]) -> Result<(), ReleaseError> {
+    let s = parse_sig(sig).ok_or(ReleaseError::BadSignatureFile)?;
+    if keys.iter().any(|k| ed25519_verify(k, sums.as_bytes(), &s)) { Ok(()) } else { Err(ReleaseError::NotOfficial) }
 }
 
 /// The version a signed `SHA256SUMS.txt` is for: its `# BananaSplit 2.8.25`
@@ -973,16 +1021,16 @@ pub fn signed_date(sums: &str) -> Option<&str> {
 /// the checksum list of one release could be served for another; every
 /// release this updater can be offered is newer than 2.8.24, so every one
 /// has the line.
-pub fn check_release(sums: &str, sig: &str, keys: &[[u8; 32]], version: &str) -> Result<(), String> {
+///
+/// # Errors
+/// Everything [`check_signature`] returns, plus [`ReleaseError::WrongVersion`]
+/// and [`ReleaseError::NoVersion`].
+pub fn check_release(sums: &str, sig: &str, keys: &[[u8; 32]], version: &str) -> Result<(), ReleaseError> {
     check_signature(sums, sig, keys)?;
     match signed_version(sums) {
         Some(v) if parse_version(v).is_some() && !newer(v, version) && !newer(version, v) => Ok(()),
-        Some(v) => Err(format!(
-            "the release's signed SHA256SUMS.txt is for BananaSplit {v}, not {version}; nothing was changed"
-        )),
-        None => {
-            Err("the release's signed SHA256SUMS.txt does not say which version it is for; nothing was changed".into())
-        }
+        Some(v) => Err(ReleaseError::WrongVersion { signed: v.to_string(), wanted: version.to_string() }),
+        None => Err(ReleaseError::NoVersion),
     }
 }
 
@@ -1383,8 +1431,8 @@ mod tests {
         let sums = "BananaSplit release\n";
         let sig = "8d607a29ea4326a46154a5518336a1380271109f319a0bdf694af1f7b206fd21ebd634d1fd822e9451dc87b9a0042095eda14685df28c54782c264db81b77f08\n";
         assert!(check_signature(sums, sig, &[key]).is_ok());
-        assert!(check_signature("BananaSplit release!\n", sig, &[key]).unwrap_err().contains("not signed"));
-        assert!(check_signature(sums, &sig[..100], &[key]).unwrap_err().contains("not a signature"));
+        assert_eq!(check_signature("BananaSplit release!\n", sig, &[key]), Err(ReleaseError::NotOfficial));
+        assert_eq!(check_signature(sums, &sig[..100], &[key]), Err(ReleaseError::BadSignatureFile));
         assert!(check_signature(sums, sig, &[release_key()]).is_err(), "another key");
         // any one of the keys will do, in either place
         assert!(check_signature(sums, sig, &[release_key(), key]).is_ok(), "the second key");
@@ -1428,12 +1476,14 @@ mod tests {
         assert!(check_release(sums, sig, &[key], "2.8.25").is_ok());
         assert!(check_release(sums, sig, &[key], "2.8.25.0").is_ok(), "the same version written longer");
         let e = check_release(sums, sig, &[key], "2.8.26").unwrap_err();
-        assert!(e.contains("is for BananaSplit 2.8.25, not 2.8.26"), "{e}");
-        assert!(check_release(sums, sig, &[backup_key()], "2.8.25").unwrap_err().contains("not signed"));
+        assert_eq!(e, ReleaseError::WrongVersion { signed: "2.8.25".into(), wanted: "2.8.26".into() });
+        assert!(e.to_string().contains("is for BananaSplit 2.8.25, not 2.8.26"), "{e}");
+        assert_eq!(check_release(sums, sig, &[backup_key()], "2.8.25"), Err(ReleaseError::NotOfficial));
         // signed, but no version line (as up to 2.8.24): refused
         assert!(check_signature(old, old_sig, &[key]).is_ok());
         let e = check_release(old, old_sig, &[key], "2.8.24").unwrap_err();
-        assert!(e.contains("does not say which version"), "{e}");
+        assert_eq!(e, ReleaseError::NoVersion);
+        assert!(e.to_string().contains("does not say which version"), "{e}");
         // a version line that is not a version
         assert!(check_signature(odd, odd_sig, &[key]).is_ok());
         assert!(check_release(odd, odd_sig, &[key], "2.8.25").is_err());

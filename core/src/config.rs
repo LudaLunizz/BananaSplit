@@ -99,6 +99,7 @@
 use crate::dynamics::{COMP, DynSettings, GATE};
 use crate::engine::{BUS_IDS, NUM_BUSES, NUM_STRIPS, Shared, bus_index, clamp_db, clamp_pan, clamp_trim};
 use crate::eq::{BANDS, Band, DEFAULT_BANDS, EqSettings};
+use crate::error::{IoError, into_string};
 use crate::limiter::{self, LIMIT_OFF_DB, parse_limit};
 use crate::recorder::{self, ALL_LINKS, Format, Mode, Settings};
 use crate::vban::{self, FromAddr, NUM_IN, NUM_OUT, SampleFormat, VbanConfig};
@@ -470,6 +471,47 @@ impl std::fmt::Display for ParseError {
 }
 impl std::error::Error for ParseError {}
 
+/// Why a config file could not be loaded, saved or migrated.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ConfigError {
+    /// The file or its folder could not be read, created, written or renamed.
+    Io(IoError),
+    /// The file was read, but what is in it is not a valid config.
+    Parse {
+        /// The file that was read.
+        path: PathBuf,
+        /// The first line that is wrong.
+        source: ParseError,
+    },
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigError::Io(e) => e.fmt(f),
+            ConfigError::Parse { path, source } => write!(f, "{}: {source}", path.display()),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ConfigError::Io(e) => Some(e),
+            ConfigError::Parse { source, .. } => Some(source),
+        }
+    }
+}
+
+impl From<IoError> for ConfigError {
+    fn from(e: IoError) -> ConfigError {
+        ConfigError::Io(e)
+    }
+}
+
+into_string!(ConfigError);
+
 enum Section {
     None,
     Global,
@@ -696,7 +738,7 @@ impl Config {
                     "window" => cfg.gui.window = parse_window_size(v).map_err(err)?,
                     "scene" => {
                         if !v.is_empty() {
-                            crate::scenes::validate_name(v).map_err(err)?;
+                            crate::scenes::validate_name(v).map_err(|e| err(e.to_string()))?;
                         }
                         cfg.gui.scene = v.into();
                     }
@@ -1052,16 +1094,22 @@ impl Config {
     /// JACK name "vmix" becomes "BananaSplit" (which renames the virtual
     /// cables too); a name the user picked is kept. Returns a note for the
     /// user when something was copied.
-    pub fn migrate_legacy(path: &Path, legacy: &Path) -> Result<Option<String>, String> {
+    ///
+    /// # Errors
+    /// [`ConfigError::Io`] when the old file cannot be read or the new one
+    /// cannot be written; [`ConfigError::Parse`] when the old file is not a
+    /// valid config.
+    pub fn migrate_legacy(path: &Path, legacy: &Path) -> Result<Option<String>, ConfigError> {
         if path.exists() {
             return Ok(None);
         }
         let text = match std::fs::read_to_string(legacy) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(format!("{}: {e}", legacy.display())),
+            Err(e) => return Err(IoError::new(legacy, e).into()),
         };
-        let mut cfg = Config::parse(&text).map_err(|e| format!("{}: {e}", legacy.display()))?;
+        let mut cfg =
+            Config::parse(&text).map_err(|source| ConfigError::Parse { path: legacy.to_path_buf(), source })?;
         let renamed = cfg.client_name == LEGACY_CLIENT_NAME;
         if renamed {
             cfg.client_name = Config::default().client_name;
@@ -1078,35 +1126,53 @@ impl Config {
     }
 
     /// Load from `path`; if it does not exist, write the defaults there.
-    pub fn load_or_create(path: &Path) -> Result<Config, String> {
+    ///
+    /// # Errors
+    /// [`ConfigError::Io`] when the file cannot be read (or the defaults
+    /// cannot be written); [`ConfigError::Parse`] when it is not a valid
+    /// config.
+    pub fn load_or_create(path: &Path) -> Result<Config, ConfigError> {
         match std::fs::read_to_string(path) {
-            Ok(text) => Config::parse(&text).map_err(|e| format!("{}: {e}", path.display())),
+            Ok(text) => Config::parse_file(path, &text),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let cfg = Config::default();
                 cfg.save(path)?;
                 Ok(cfg)
             }
-            Err(e) => Err(format!("{}: {e}", path.display())),
+            Err(e) => Err(IoError::new(path, e).into()),
         }
     }
 
     /// Load from `path`, or the defaults if it does not exist. Never writes.
-    pub fn load_or_default(path: &Path) -> Result<Config, String> {
+    ///
+    /// # Errors
+    /// [`ConfigError::Io`] when the file exists but cannot be read;
+    /// [`ConfigError::Parse`] when it is not a valid config.
+    pub fn load_or_default(path: &Path) -> Result<Config, ConfigError> {
         match std::fs::read_to_string(path) {
-            Ok(text) => Config::parse(&text).map_err(|e| format!("{}: {e}", path.display())),
+            Ok(text) => Config::parse_file(path, &text),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-            Err(e) => Err(format!("{}: {e}", path.display())),
+            Err(e) => Err(IoError::new(path, e).into()),
         }
     }
 
+    /// [`Config::parse`] for the text of `path`, naming the file in the error.
+    fn parse_file(path: &Path, text: &str) -> Result<Config, ConfigError> {
+        Config::parse(text).map_err(|source| ConfigError::Parse { path: path.to_path_buf(), source })
+    }
+
     /// Atomic save (write temp file, then rename).
-    pub fn save(&self, path: &Path) -> Result<(), String> {
+    ///
+    /// # Errors
+    /// [`ConfigError::Io`] when the folder cannot be created or the file
+    /// cannot be written.
+    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(dir) = path.parent()
             && !dir.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            std::fs::create_dir_all(dir).map_err(|e| IoError::new(dir, e))?;
         }
-        write_replacing(path, &self.to_ini())
+        Ok(write_replacing(path, &self.to_ini())?)
     }
 }
 
@@ -1114,18 +1180,21 @@ impl Config {
 /// renamed over it. A symlink (a config kept with the dotfiles) stays a
 /// link, and the file it points at is written; the file keeps its
 /// permissions (`chmod 600`).
-pub fn write_replacing(path: &Path, text: &str) -> Result<(), String> {
+///
+/// # Errors
+/// The temporary file cannot be written, or cannot be renamed over `path`.
+pub fn write_replacing(path: &Path, text: &str) -> Result<(), IoError> {
     let target = real_file(path);
     let mut tmp = target.clone().into_os_string();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::write(&tmp, text).map_err(|e| IoError::new(&tmp, e))?;
     if let Ok(m) = std::fs::metadata(&target) {
         let _ = std::fs::set_permissions(&tmp, m.permissions());
     }
     std::fs::rename(&tmp, &target).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        format!("{}: {e}", target.display())
+        IoError::new(&target, e)
     })
 }
 
@@ -1703,6 +1772,41 @@ mod tests {
         let note = Config::migrate_legacy(&path, &legacy).unwrap().unwrap();
         assert!(!note.contains("pick them again"), "{note}");
         assert_eq!(Config::load_or_default(&path).unwrap().client_name, "studio");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_errors_say_which_kind_and_which_file() {
+        let dir = std::env::temp_dir().join(format!("bananasplit-test-errors-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // a bad file: Parse, with the line and the file name in the text
+        let bad = dir.join("bad.ini");
+        std::fs::write(&bad, "[global]\nnot a setting\n").unwrap();
+        for e in [Config::load_or_default(&bad).unwrap_err(), Config::load_or_create(&bad).unwrap_err()] {
+            let ConfigError::Parse { path, source } = &e else { panic!("{e:?}") };
+            assert_eq!(path, &bad);
+            assert_eq!(source.line, 2);
+            assert_eq!(e.to_string(), format!("{}: {source}", bad.display()));
+            assert!(std::error::Error::source(&e).is_some());
+        }
+
+        // a folder where the file should be: Io, not NotFound
+        let folder = dir.join("is-a-folder.ini");
+        std::fs::create_dir(&folder).unwrap();
+        let e = Config::load_or_default(&folder).unwrap_err();
+        assert!(matches!(&e, ConfigError::Io(io) if io.path() == folder), "{e:?}");
+
+        // a file where a folder should be: save fails with Io on that folder
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, "x").unwrap();
+        let e = Config::default().save(&blocker.join("sub").join("x.ini")).unwrap_err();
+        assert!(matches!(e, ConfigError::Io(_)), "{e:?}");
+
+        // the message still converts to the String the apps show
+        let shown: String = Config::load_or_default(&bad).unwrap_err().into();
+        assert!(shown.starts_with(&bad.display().to_string()), "{shown}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
