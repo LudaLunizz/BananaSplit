@@ -17,7 +17,7 @@
 </div>
 
 > [!WARNING]
-> BananaSplit is pre-alpha software. Expect rough edges and frequent releases; see [what pre-alpha means here](#what-pre-alpha-means).
+> BananaSplit is beta software. The main features are in place and work on all three systems, but expect rough edges and frequent releases; see [what beta means here](#what-beta-means).
 
 ## Features
 
@@ -75,9 +75,9 @@ Some design choices, and the reasons written down for them:
 | Window and tray | GTK 3 + WebKitGTK, StatusNotifierItem tray | WebView2, notification area | WKWebView, menu bar |
 | Packages | .deb, portable .tar.gz, Flatpak | Standalone .exe in a zip | App in a zip, signed ad hoc (not with a Developer ID) |
 
-## What pre-alpha means
+## What beta means
 
-BananaSplit is young and changes quickly. In practice:
+BananaSplit is past its first rough builds: the mixer, routing, recording and API are in place and used daily. It is still young and changes quickly. In practice:
 
 - **Releases are frequent**, often several in one week. Each one lists its changes in its release notes and in the [Linux manual's version history](linux/README.md#version-history).
 - **Your settings keep loading.** A config file, scene or recording made by an older version still loads in a newer one; old names (such as the buses A1 to A3, now V1 to V3) are still read. Going back to an older version can fail, because a newer one may write settings the older one doesn't know; the release notes say when.
