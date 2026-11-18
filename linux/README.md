@@ -529,6 +529,11 @@ New in 2.6:
 
 The changes in each version, newest first.
 
+### What's new in 2.9.5
+
+* **Flashbang for the Light switch** (#187): MENU ▸ Mode ▸ Light (and Auto when the system is light) now plays a flashbang: a pixel grenade rolls in, the page turns light when it goes off, then the white flash fades. Going dark has no animation, and with reduced motion on the page switches at once. The animation is [Silvertree2010](https://github.com/Silvertree2010)'s, from [ApolloOffice](https://github.com/Silvertree2010/ApolloOffice), used under its AGPL-3.0 licence: see `NOTICE`, the README and `LICENSE-AGPL-3.0`.
+* **Project files**: `SECURITY.md` (how to report a vulnerability, privately), and a manual-only workflow, "Windows exe", that builds a test copy of the Windows program from any branch (#185).
+
 ### What's new in 2.9.4
 
 * **Beta, not pre-alpha** (#174): the README and the website now say beta and explain what that means.
