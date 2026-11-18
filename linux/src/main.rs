@@ -1,6 +1,7 @@
 //! BananaSplit — 6-strip / 5-bus virtual audio mixer for Linux (JACK / PipeWire).
 
 mod apphome;
+mod apprec;
 mod backend;
 mod cables;
 mod chanmenu;
@@ -718,13 +719,19 @@ struct PulseSeen {
     kicked: Option<Instant>,
     /// Puts apps back on their strips (see [`apphome`]).
     homes: Option<apphome::AppHomes>,
+    /// Puts recording apps back on their buses (see [`apprec`]).
+    buses: Option<apprec::AppBuses>,
     /// Lines for the user since the last [`PulseSeen::take_notes`].
     notes: Vec<String>,
 }
 
 impl PulseSeen {
     fn new(config: &Path) -> PulseSeen {
-        PulseSeen { homes: Some(apphome::AppHomes::load(config)), ..PulseSeen::default() }
+        PulseSeen {
+            homes: Some(apphome::AppHomes::load(config)),
+            buses: Some(apprec::AppBuses::load(config)),
+            ..PulseSeen::default()
+        }
     }
 
     /// What happened to apps put back on their strips.
@@ -762,6 +769,11 @@ impl PulseSeen {
         if let Some(h) = self.homes.as_mut() {
             let n = h.poll(&info, &set, &cables.borrow(), &channel_names(cfg));
             moved = !n.is_empty();
+            self.notes.extend(n);
+        }
+        if let Some(h) = self.buses.as_mut() {
+            let n = h.poll(&info, &set, &cables.borrow(), &channel_names(cfg));
+            moved |= !n.is_empty();
             self.notes.extend(n);
         }
         (changed || moved || !events.is_empty(), events)
@@ -1396,7 +1408,25 @@ fn run_gui(
                             .map(|s| (apphome::key(s).to_string(), ch.filter(|c| *c < NUM_STRIPS))),
                         _ => None,
                     };
+                    // the same for an app that records: the bus it is put on
+                    let rec_bus = match &op {
+                        gui::DevOp::Stream { rec: true, id, ch } => {
+                            info.recording.iter().find(|s| s.id == *id).map(|s| {
+                                (
+                                    apphome::key(s).to_string(),
+                                    s.pinned.clone(),
+                                    ch.filter(|c| *c >= NUM_STRIPS).map(|c| c - NUM_STRIPS),
+                                )
+                            })
+                        }
+                        _ => None,
+                    };
                     let mut r = chanmenu::handle(op, backend, cfg, &mut ctx.cables.borrow_mut(), &info);
+                    if let (Ok(m), Some((app, asks, bus)), Some(h)) = (&mut r, rec_bus, seen.buses.as_mut())
+                        && let Err(e) = h.set(&app, &asks, bus)
+                    {
+                        m.push_str(&format!(" ({e})"));
+                    }
                     if let (Ok(m), Some((app, strip)), Some(h)) = (&mut r, home, seen.homes.as_mut())
                         && let Err(e) = h.set(&app, strip)
                     {
