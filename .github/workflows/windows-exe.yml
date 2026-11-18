@@ -1,0 +1,68 @@
+name: Windows exe
+
+# A test build of the Windows program, on demand: Actions > Windows exe >
+# Run workflow, pick a branch or tag. Only the exe is built, none of CI's
+# other jobs run. Same build as the release (MSVC, static CRT). File names
+# carry the commit, so a test build is not mistaken for a release. Nothing is
+# published; the files are an artifact for 14 days. Issue #185.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to build
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows executable
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, toolchain stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: windows
+
+      - name: Build
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc
+
+      - name: Package
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $sha = (git rev-parse --short=7 HEAD).Trim()
+          $name = "bananasplit-$version-$sha-windows-x64"
+          $stage = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Force -Path $stage, dist | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/bananasplit.exe $stage
+          Copy-Item README.md, LICENSE $stage
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/$name.zip" -Force
+          Copy-Item target/x86_64-pc-windows-msvc/release/bananasplit.exe "dist/$name.exe"
+          Set-Location dist
+          Get-ChildItem | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content -Encoding ascii SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bananasplit-windows-x64-test
+          path: windows/dist/*
+          if-no-files-found: error
+          retention-days: 14
