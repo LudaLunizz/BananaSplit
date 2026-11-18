@@ -104,7 +104,7 @@ page). Everything else works without it.
 
 | API | What |
 |---|---|
-| `POST /api/cmd` | `quit`, `update` (every `a`), `install`, `autoupdate`, `autostart`, `openfolder`, `deck`, `rec`, `recset` with a `folder`, `vban`, `vbanout`; on Windows and macOS `cables` with `a` = `page`, `splitter`, `sound` or `midi` |
+| `POST /api/cmd` | `quit`, `update` (every `a`), `install`, `autoupdate`, `autostart`, `openfolder`, `deck`, `source`, `rec`, `recset` with a `folder`, `vban`, `vbanout`; on Windows and macOS `cables` with `a` = `page`, `splitter`, `sound` or `midi` |
 | API v1 paths | `/recorder/recording`, `/vban/on`, `/vban/out/<n>/...` (every setting of an outgoing stream) |
 | API v1 shortcuts | `POST /api/v1/recorder/start`, `POST /api/v1/recorder/stop` |
 
@@ -220,6 +220,7 @@ number.
 | `name` | `ch`, `v` | Rename a channel: 1 to 32 characters, no control characters. | `ok` |
 | `openfolder` | | Open the recorder's folder in the file manager. | `opened <folder>` |
 | `deck` | | Open the touch deck in the browser, with the token (from 2.9.2). | `opening the touch deck in your browser` |
+| `source` | | Open the page about the source and credits (the repository's `NOTICE`) in the browser (from 2.9.6). | `opening the source and credits page in your browser` |
 
 **EQ, gate and compressor**
 

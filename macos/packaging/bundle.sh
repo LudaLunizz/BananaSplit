@@ -31,6 +31,9 @@ lipo -create -output "$app/Contents/MacOS/bananasplit" \
     target/aarch64-apple-darwin/release/bananasplit \
     target/x86_64-apple-darwin/release/bananasplit
 cp assets/icons/bananasplit.icns "$app/Contents/Resources/bananasplit.icns"
+# The licences travel with the app (NOTICE names the AGPL-3.0 flashbang; its
+# text is LICENSE-AGPL-3.0). Inside Resources, so the signature seals them. Issue #191.
+cp LICENSE ../NOTICE ../LICENSE-AGPL-3.0 "$app/Contents/Resources/"
 sed "s/@VERSION@/$version/g" packaging/Info.plist > "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist"
 # Apple silicon runs only signed code; the signature also seals Info.plist,

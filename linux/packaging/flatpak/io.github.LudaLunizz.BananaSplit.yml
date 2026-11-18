@@ -42,6 +42,7 @@ modules:
     build-commands:
       - cargo build --release --locked --offline
       - install -Dm755 target/release/bananasplit /app/bin/bananasplit
+      - install -Dm644 LICENSE ../NOTICE ../LICENSE-AGPL-3.0 -t /app/share/licenses/io.github.LudaLunizz.BananaSplit
       - sed 's/^Icon=bananasplit$/Icon=io.github.LudaLunizz.BananaSplit/; /^#/d' contrib/bananasplit.desktop > io.github.LudaLunizz.BananaSplit.desktop
       - install -Dm644 io.github.LudaLunizz.BananaSplit.desktop -t /app/share/applications
       - install -Dm644 packaging/flatpak/io.github.LudaLunizz.BananaSplit.metainfo.xml -t /app/share/metainfo

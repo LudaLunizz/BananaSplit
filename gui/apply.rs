@@ -410,6 +410,10 @@ pub fn apply(hub: &Hub, cmd: Cmd) -> Result<String, ApiError> {
             crate::gui_platform::open_page(&url)?;
             Ok("opening the touch deck in your browser".into())
         }
+        Cmd::Source => {
+            crate::gui_platform::open_page(super::SOURCE_PAGE)?;
+            Ok("opening the source and credits page in your browser".into())
+        }
         Cmd::Show { token } => {
             hub.request(Request::Show(token));
             ok()
