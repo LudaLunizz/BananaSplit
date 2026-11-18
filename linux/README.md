@@ -530,6 +530,10 @@ New in 2.6:
 
 The changes in each version, newest first.
 
+### What's new in 2.9.7
+
+* **Recording apps keep their bus** (#195, Linux): the counterpart of `app-strips` for apps that record. A new file `app-buses` next to the config holds one rule per line: `<bus> <app>`, or `<bus> <app> @ <what the stream asks for>` when a program has two streams, for example `B2 vesktop @ vencord-screen-share` (Vesktop's screen share goes to B2 and its microphone stays on B1). BananaSplit moves a matching stream to that bus's virtual microphone when it first appears, at the start and when the app opens a new one. Ticking a recording app in a bus's menu writes the rule, unticking removes it, and you can edit the file while BananaSplit runs. A stream you move yourself afterwards is left alone. Nothing else changes in how the mixer sounds or behaves.
+
 ### What's new in 2.9.6
 
 * **Full credit for the flashbang** (#191): the licence files (`NOTICE` and `LICENSE-AGPL-3.0`) now come in every package: the `.deb` (with a copyright entry), the Linux `.tar.gz`, the Windows `.zip`, the macOS app and the Flatpak. The macOS app also carries the GPL `LICENSE`. The port is dated (18 November 2026).

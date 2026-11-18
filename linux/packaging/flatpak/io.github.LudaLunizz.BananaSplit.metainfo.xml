@@ -29,6 +29,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.9.7" date="2026-11-18">
+      <description>
+        <p>Linux: recording apps keep their bus. A new file, app-buses, remembers which bus an app that records (Vesktop's screen share, OBS) is on and puts it back after a restart. Nothing else changes in how the mixer sounds or behaves.</p>
+      </description>
+    </release>
     <release version="2.9.6" date="2026-11-18">
       <description>
         <p>The licence files and credit for the flashbang animation (Silvertree2010, AGPL-3.0) come in every package, and MENU shows Source and credits. Nothing changes in how the mixer sounds or behaves.</p>
