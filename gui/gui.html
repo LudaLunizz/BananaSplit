@@ -1201,6 +1201,14 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
 .tc { order: -1; flex: none; margin-top: 0; padding-right: 84px; }
 .session.card { background: none; border: 0; border-left: 1px solid var(--panel-edge); border-radius: 0; }
 </style>
+<!-- The flashbang of the Light switch (see the credit above `flashbang` in the
+     script below). Its three rules are Silvertree2010's, from ApolloOffice,
+     AGPL-3.0; the filter on `.fbg` and the stacking are unchanged. -->
+<style id="flashbang-css">
+.fb { position: fixed; inset: 0; z-index: 100; pointer-events: none; overflow: hidden; }
+.fbg { position: absolute; left: 0; top: 0; width: 56px; height: 104px; margin: -52px 0 0 -28px; image-rendering: pixelated; filter: drop-shadow(0 6px 6px rgba(0,0,0,.45)); }
+.fbw { position: absolute; inset: 0; background: #fff; opacity: 0; }
+</style>
 <script>
 function useLook(l) {
   if (!document.querySelector('style[data-look="' + l + '"]')) l = "classic";
@@ -2608,6 +2616,52 @@ $("sceneform").addEventListener("submit", () => {
 $("scenecancel").addEventListener("click", () => $("scenedlg").close());
 $("scenein").addEventListener("keydown", (e) => e.stopPropagation());
 
+// ---- the flashbang ------------------------------------------------------------
+// Credit: the flashbang that plays when the page turns light is the work of
+// Silvertree2010, from ApolloOffice (github.com/Silvertree2010/ApolloOffice,
+// ui/th.js, release 0.10.4, AGPL-3.0). Ported with his animation, timings and
+// pixel grenade unchanged; the changes: it is a function of this page (`go`
+// switches the theme, as his `flash(go)`), and a second call while one runs
+// just switches. This part stays under the AGPL-3.0: see NOTICE.
+const FLASHBANG_GRENADE = `<svg viewBox="0 0 14 26" width="56" height="104" shape-rendering="crispEdges" aria-hidden="true">
+<rect x="5" y="0" width="4" height="1" fill="#d6d8dc"/><rect x="4" y="1" width="1" height="3" fill="#d6d8dc"/><rect x="9" y="1" width="1" height="3" fill="#d6d8dc"/><rect x="5" y="4" width="4" height="1" fill="#d6d8dc"/>
+<rect x="4" y="5" width="6" height="3" fill="#3a3d42"/><rect x="5" y="5" width="4" height="1" fill="#55595f"/>
+<rect x="10" y="5" width="2" height="1" fill="#8d9199"/><rect x="11" y="6" width="2" height="9" fill="#8d9199"/><rect x="12" y="6" width="1" height="9" fill="#6b6f76"/>
+<rect x="2" y="8" width="10" height="17" fill="#c9ccd1"/><rect x="2" y="8" width="2" height="17" fill="#e8eaed"/><rect x="10" y="8" width="2" height="17" fill="#9fa3a9"/>
+<rect x="2" y="11" width="10" height="1" fill="#4fb3e0"/><rect x="2" y="21" width="10" height="1" fill="#4fb3e0"/>
+<rect x="5" y="14" width="4" height="4" fill="#3a3d42"/><rect x="6" y="15" width="2" height="2" fill="#e8eaed"/>
+<rect x="3" y="25" width="8" height="1" fill="#6b6f76"/></svg>`;
+const flashbang = (go) => {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches || document.querySelector(".fb")) { go(); return; }
+  const o = document.createElement("div");
+  o.className = "fb";
+  o.innerHTML = `<div class="fbg">${FLASHBANG_GRENADE}</div><div class="fbw"></div>`;
+  document.body.appendChild(o);
+  const g = o.firstChild, w = o.lastChild;
+  const W = innerWidth, H = innerHeight;
+  g.animate([
+    { transform: `translate(${W + 80}px, ${H * 0.62}px) rotate(0deg)` },
+    { transform: `translate(${W * 0.72}px, ${H * 0.5}px) rotate(-280deg)`, offset: 0.3 },
+    { transform: `translate(${W * 0.6}px, ${H * 0.62}px) rotate(-430deg)`, offset: 0.5 },
+    { transform: `translate(${W * 0.53}px, ${H * 0.56}px) rotate(-560deg)`, offset: 0.68 },
+    { transform: `translate(${W * 0.48}px, ${H * 0.62}px) rotate(-650deg)`, offset: 0.84 },
+    { transform: `translate(${W * 0.46}px, ${H * 0.62}px) rotate(-680deg)` },
+  ], { duration: 1150, easing: "cubic-bezier(.3,.6,.4,1)", fill: "forwards" }).finished.then(() => {
+    g.animate([{ transform: `translate(${W * 0.46}px, ${H * 0.62}px) rotate(-680deg)` }, { transform: `translate(${W * 0.46 + 2}px, ${H * 0.62 - 1}px) rotate(-676deg)` }, { transform: `translate(${W * 0.46 - 2}px, ${H * 0.62}px) rotate(-684deg)` }], { duration: 120, iterations: 3 }).finished.then(() => {
+      g.remove();
+      w.style.opacity = "1";
+      go();
+      document.body.style.filter = "blur(4px) brightness(1.6)";
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        document.body.style.transition = "filter 2.6s cubic-bezier(.2,.7,.3,1)";
+        document.body.style.filter = "";
+        w.animate([{ opacity: 1 }, { opacity: 1, offset: 0.25 }, { opacity: 0 }], { duration: 3200, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" }).finished.then(() => { o.remove(); document.body.style.transition = ""; });
+      }));
+    });
+  });
+};
+const effectiveTheme = (t) => (t === "auto" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : t);
+
 function applyTheme(t) {
   if (t === "auto") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = t;
@@ -2615,9 +2669,15 @@ function applyTheme(t) {
   drawWave();
 }
 document.querySelectorAll("[data-theme-v]").forEach((b) => b.addEventListener("click", () => {
-  hold("theme", 1500);
-  applyTheme(b.dataset.themeV);
-  send({ op: "theme", v: b.dataset.themeV }, true);
+  const t = b.dataset.themeV;
+  const toLight = effectiveTheme(t) === "light" && effectiveTheme(document.documentElement.dataset.theme || "auto") !== "light";
+  hold("theme", toLight ? 2500 : 1500);
+  send({ op: "theme", v: t }, true);
+  if (toLight) {
+    // The page turns light when the grenade goes off; the buttons say so now.
+    document.querySelectorAll("[data-theme-v]").forEach((x) => setPressed(x, x.dataset.themeV === t));
+    flashbang(() => applyTheme(t));
+  } else applyTheme(t);
 }));
 // The look (theme set): its own stylesheet, so sizes change: lay out again.
 function applyLook(l) {

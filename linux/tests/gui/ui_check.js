@@ -348,11 +348,25 @@ async function until(pred, what, ms = 4000) {
 
   // ---- menu ----
   await page.locator("#menubtn").click();
+  const pageTheme = () => page.evaluate(() => document.documentElement.dataset.theme);
   await page.locator("[data-theme-v=light]").click();
   await until((s) => s.app.theme === "light", "theme Light");
-  await untilPage(async () => (await page.evaluate(() => document.documentElement.dataset.theme)) === "light", "page is light");
+  // The flashbang (#187): the grenade is on the page, the page turns light
+  // when it goes off (about 1.5 s), and the overlay is gone after about 5 s.
+  check((await page.locator(".fb").count()) === 1, "the flashbang plays on the way to Light");
+  await untilPage(async () => (await pageTheme()) === "light", "page is light", 4000);
+  await untilPage(async () => (await page.locator(".fb").count()) === 0, "the flashbang is gone", 7000);
   await page.locator("[data-theme-v=dark]").click();
   await until((s) => s.app.theme === "dark", "theme Dark");
+  check((await page.locator(".fb").count()) === 0 && (await pageTheme()) === "dark", "going dark has no flashbang");
+  // Reduced motion: Light switches at once, no grenade.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.locator("[data-theme-v=light]").click();
+  await untilPage(async () => (await pageTheme()) === "light", "reduced motion: page is light at once", 800);
+  check((await page.locator(".fb").count()) === 0, "reduced motion: no flashbang");
+  await page.locator("[data-theme-v=dark]").click();
+  await until((s) => s.app.theme === "dark", "theme Dark again");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.locator("#zoomin").click();
   await until((s) => s.app.zoom === 1.1, "zoom +");
   await page.locator("#zoomval").click();
