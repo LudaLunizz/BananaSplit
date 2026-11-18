@@ -110,7 +110,11 @@ jobs:
           $stage = Join-Path $env:RUNNER_TEMP $name
           New-Item -ItemType Directory -Force -Path $stage, dist | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/bananasplit.exe $stage
-          Copy-Item README.md, LICENSE $stage
+          Copy-Item README.md, LICENSE, ../NOTICE, ../LICENSE-AGPL-3.0 $stage
+          # The licences travel with the program (issue #191); Copy-Item alone would only warn.
+          foreach ($f in 'bananasplit.exe', 'README.md', 'LICENSE', 'NOTICE', 'LICENSE-AGPL-3.0') {
+            if (-not (Test-Path (Join-Path $stage $f))) { throw "the Windows package lacks $f" }
+          }
           Compress-Archive -Path "$stage/*" -DestinationPath "dist/$name.zip" -Force
           Copy-Item target/x86_64-pc-windows-msvc/release/bananasplit.exe "dist/bananasplit-$version-windows-x64.exe"
 

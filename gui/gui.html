@@ -1242,6 +1242,7 @@ useLook(document.documentElement.dataset.look || "classic");
         <button class="mi" role="menuitem" data-op="reconnect"><span class="chk"></span>Reconnect devices</button>
         <button class="mi" role="menuitem" data-op="openfolder"><span class="chk"></span>Open the recordings folder</button>
         <button class="mi" role="menuitem" data-op="deck"><span class="chk"></span>Open the touch deck</button>
+        <button class="mi" role="menuitem" data-op="source"><span class="chk"></span>Source and credits…</button>
         <div class="msep"></div>
         <div class="mrow caps">Theme <span class="segs" id="lookseg"><button data-look-v="classic">Classic</button><button data-look-v="console">Console</button></span></div>
         <div class="mrow caps">Mode <span class="segs" id="themeseg"><button data-theme-v="dark">Dark</button><button data-theme-v="light">Light</button><button data-theme-v="auto">Auto</button></span></div>
@@ -2619,10 +2620,11 @@ $("scenein").addEventListener("keydown", (e) => e.stopPropagation());
 // ---- the flashbang ------------------------------------------------------------
 // Credit: the flashbang that plays when the page turns light is the work of
 // Silvertree2010, from ApolloOffice (github.com/Silvertree2010/ApolloOffice,
-// ui/th.js, release 0.10.4, AGPL-3.0). Ported with his animation, timings and
-// pixel grenade unchanged; the changes: it is a function of this page (`go`
-// switches the theme, as his `flash(go)`), and a second call while one runs
-// just switches. This part stays under the AGPL-3.0: see NOTICE.
+// ui/th.js, release 0.10.4, AGPL-3.0). Ported on 18 November 2026 with his
+// animation, timings and pixel grenade unchanged; the changes: it is a
+// function of this page (`go` switches the theme, as his `flash(go)`), and a
+// second call while one runs just switches. This part stays under the
+// AGPL-3.0: see NOTICE (MENU > Source and credits).
 const FLASHBANG_GRENADE = `<svg viewBox="0 0 14 26" width="56" height="104" shape-rendering="crispEdges" aria-hidden="true">
 <rect x="5" y="0" width="4" height="1" fill="#d6d8dc"/><rect x="4" y="1" width="1" height="3" fill="#d6d8dc"/><rect x="9" y="1" width="1" height="3" fill="#d6d8dc"/><rect x="5" y="4" width="4" height="1" fill="#d6d8dc"/>
 <rect x="4" y="5" width="6" height="3" fill="#3a3d42"/><rect x="5" y="5" width="4" height="1" fill="#55595f"/>

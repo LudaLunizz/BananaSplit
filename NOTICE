@@ -1,27 +1,36 @@
 BananaSplit includes work of other people under their own licences.
 
+The source of BananaSplit
+-------------------------
+    https://github.com/LudaLunizz/BananaSplit
+BananaSplit is free software (GPL-3.0-or-later, see LICENSE). Every release
+is built from that repository; MENU > Source and credits opens this file
+there.
+
 The flashbang animation of the Light switch
 -------------------------------------------
 The animation that plays when the mixer page turns light (the grenade that
-rolls in, the white flash and the fade) is the work of Silvertree2010, taken
-from ApolloOffice:
+rolls in, the white flash and the fade) is the work of Silvertree2010,
+taken from ApolloOffice:
 
     https://github.com/Silvertree2010/ApolloOffice  (ui/th.js and three rules
     of ui/index.html, release 0.10.4)
 
     Written by Silvertree2010
     Licensed under the GNU Affero General Public License, version 3
+    (the text is in LICENSE-AGPL-3.0, shipped with every BananaSplit package)
 
-It sits in gui/gui.html, between the lines "---- the flashbang" and
-"function applyTheme", and in the style block with the id "flashbang-css".
-The timings, the movement and the pixel grenade are his, unchanged. What we
+It was ported into BananaSplit on 18 November 2026 (version 2.9.5). It sits
+in gui/gui.html, between the lines "---- the flashbang" and "function
+applyTheme", and in the style block with the id "flashbang-css". The
+timings, the movement and the pixel grenade are his, unchanged. What we
 changed: the code is a function of this page (it switches the page's theme
 instead of his data-th), the grenade has a longer constant name, and a
 second call while one is playing switches at once instead of starting a
 second flash.
 
-That part stays under the AGPL-3.0 (LICENSE-AGPL-3.0), which the GPL-3.0
-allows to be combined with (section 13 of both licences); the rest of
-BananaSplit stays GPL-3.0-or-later. BananaSplit is free software and offers
-its source to everyone who uses it, which is what the AGPL asks of a program
-that people use over a network (here: the mixer page on your own computer).
+That part stays under the AGPL-3.0, which the GPL-3.0 allows to be combined
+with (section 13 of both licences); the rest of BananaSplit stays
+GPL-3.0-or-later. BananaSplit offers its source to everyone who uses it (the
+address above), which is what the AGPL asks of a program that people use
+over a network (here: the mixer page on your own computer).

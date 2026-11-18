@@ -1228,6 +1228,11 @@ fn fail(s: &mut TcpStream, req: Option<&Req>, e: &ApiError, extra: &str) {
     }
 }
 
+/// The page "Source and credits…" opens: the repository's NOTICE, which names the
+/// source, the licences and whose work is in BananaSplit (the AGPL's offer of the
+/// source, section 13, for the flashbang of the Light switch).
+pub(crate) const SOURCE_PAGE: &str = "https://github.com/LudaLunizz/BananaSplit/blob/main/NOTICE";
+
 const PAGE_HEADERS: &str = "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; \
 style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; \
 frame-ancestors 'none'\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\n";
@@ -2370,6 +2375,7 @@ mod tests {
             "take",
             "playto",
             "openfolder",
+            "source",
             "scene",
             "theme",
             "look",
@@ -2392,6 +2398,18 @@ mod tests {
             ];
             assert!(sent.iter().any(|p| PAGE.contains(p.as_str())), "page never sends {op}");
         }
+    }
+
+    /// "Source and credits…" opens the repository's NOTICE, which has to name
+    /// the flashbang's author and the licence that came with his code.
+    #[test]
+    fn source_page_is_the_notice_that_credits_the_flashbang() {
+        assert_eq!(SOURCE_PAGE, "https://github.com/LudaLunizz/BananaSplit/blob/main/NOTICE");
+        let notice = include_str!("../NOTICE");
+        for must in ["Silvertree2010", "ApolloOffice", "AGPL", "LICENSE-AGPL-3.0"] {
+            assert!(notice.contains(must), "NOTICE lacks {must}");
+        }
+        assert!(PAGE.contains("Source and credits"), "the menu item is gone");
     }
 
     #[test]

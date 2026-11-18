@@ -54,6 +54,9 @@ done
 DOC=$D/usr/share/doc/bananasplit
 install -D -m 0644 README.md "$DOC/README.md"
 gzip -9n "$DOC/README.md"
+# NOTICE names the work of others inside BananaSplit; LICENSE-AGPL-3.0 is the
+# licence text that comes with it (Silvertree2010's flashbang). Issue #191.
+install -m 0644 ../NOTICE ../LICENSE-AGPL-3.0 "$DOC/"
 sed 's|%h/.local/bin/bananasplit|/usr/bin/bananasplit|g; /^# Installed from the .deb/d; /^# (both lines)/d' \
   contrib/systemd/bananasplit.service > "$WORK/bananasplit.service"
 grep -q '%h/.local' "$WORK/bananasplit.service" && fail "service example still points to ~/.local"
@@ -66,6 +69,16 @@ install -D -m 0644 "$WORK/bananasplit.service" "$DOC/examples/bananasplit.servic
   echo "Files: *"
   echo "Copyright: 2026 the BananaSplit authors"
   echo "License: GPL-3+"
+  echo
+  echo "Files: gui/gui.html"
+  echo "Copyright: 2026 the BananaSplit authors"
+  echo "           the flashbang animation in it: Silvertree2010 (ApolloOffice, ui/th.js)"
+  echo "License: GPL-3+ and AGPL-3"
+  echo "Comment: Only the flashbang of the Light switch is AGPL-3; see NOTICE."
+  echo
+  echo "License: AGPL-3"
+  echo " The GNU Affero General Public License, version 3; the full text is in"
+  echo " /usr/share/doc/bananasplit/LICENSE-AGPL-3.0."
   echo
   echo "License: GPL-3+"
   echo " This program is free software: you can redistribute it and/or modify"
@@ -133,7 +146,7 @@ TGZ=$DIST/$NAME.tar.gz
 install -d -m 0755 "$P" "$P/contrib/systemd"
 install -m 0755 "$BIN" "$P/bananasplit"
 install -m 0755 packaging/install.sh "$P/install.sh"
-install -m 0644 README.md LICENSE "$P/"
+install -m 0644 README.md LICENSE ../NOTICE ../LICENSE-AGPL-3.0 "$P/"
 install -m 0644 contrib/systemd/bananasplit.service "$P/contrib/systemd/"
 touch_all "$P"
 tar --sort=name --owner=0 --group=0 --numeric-owner --format=gnu -C "$WORK" -cf - "$NAME" | gzip -9n > "$TGZ"
@@ -147,7 +160,8 @@ done
 LIST=$(dpkg-deb -c "$DEB")
 for f in ./usr/bin/bananasplit ./usr/share/applications/bananasplit.desktop \
          ./usr/share/icons/hicolor/scalable/apps/bananasplit.svg ./usr/share/icons/hicolor/256x256/apps/bananasplit.png \
-         ./usr/share/doc/bananasplit/copyright ./usr/share/doc/bananasplit/changelog.gz; do
+         ./usr/share/doc/bananasplit/copyright ./usr/share/doc/bananasplit/changelog.gz \
+         ./usr/share/doc/bananasplit/NOTICE ./usr/share/doc/bananasplit/LICENSE-AGPL-3.0; do
   echo "$LIST" | grep -q " $f\$" || fail ".deb lacks $f"
 done
 echo "$LIST" | grep -v ' root/root ' && fail ".deb has files not owned by root"
@@ -177,7 +191,7 @@ echo "checking $TGZ"
 T=$WORK/x-tgz
 mkdir -p "$T/home"
 tar -xzf "$TGZ" -C "$T"
-for f in bananasplit install.sh README.md LICENSE contrib/systemd/bananasplit.service; do
+for f in bananasplit install.sh README.md LICENSE NOTICE LICENSE-AGPL-3.0 contrib/systemd/bananasplit.service; do
   [ -f "$T/$NAME/$f" ] || fail "portable package lacks $f"
 done
 [ -x "$T/$NAME/bananasplit" ] && [ -x "$T/$NAME/install.sh" ] || fail "portable package lost its exec bits"

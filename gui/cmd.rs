@@ -351,6 +351,9 @@ pub enum Cmd {
     MidiUnbind(super::midi::Src),
     /// Open the touch deck in the browser, with the token.
     Deck,
+    /// Open the page about BananaSplit's source and credits in the browser
+    /// (a fixed address, [`super::SOURCE_PAGE`]; the menu item "Source and credits…").
+    Source,
     /// An op only one system has (`gui_platform::command` knows it, or nobody does).
     Platform {
         op: String,
@@ -557,6 +560,7 @@ impl Cmd {
             }
             "midiunbind" => Cmd::MidiUnbind(super::midi::Src::parse(f.req("src")?)?),
             "deck" => Cmd::Deck,
+            "source" => Cmd::Source,
             op => Cmd::Platform { op: op.to_string(), form: f },
         })
     }
@@ -576,6 +580,7 @@ impl Cmd {
             | Cmd::Autostart(_)
             | Cmd::OpenFolder
             | Cmd::Deck
+            | Cmd::Source
             | Cmd::Rec { .. }
             | Cmd::Vban { .. }
             | Cmd::VbanOut { .. } => true,
@@ -760,6 +765,7 @@ mod tests {
             "op=autostart&v=0",
             "op=openfolder",
             "op=deck",
+            "op=source",
             "op=rec&v=1",
             "op=rec&v=0",
             "op=recset&folder=%2Ftmp%2Fx",
