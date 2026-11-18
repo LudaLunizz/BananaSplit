@@ -29,6 +29,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.9.5" date="2026-11-18">
+      <description>
+        <p>The Light switch plays a flashbang animation (by Silvertree2010, from ApolloOffice, AGPL-3.0; credited in NOTICE and the README); SECURITY.md and a manual workflow that builds a Windows test exe. Nothing else changes in how the mixer sounds or behaves.</p>
+      </description>
+    </release>
     <release version="2.9.4" date="2026-11-16">
       <description>
         <p>Beta wording in the README; errors from settings, scenes and release checks now say what kind of failure it was (same messages); docs on every public item of the shared core; CHANGELOG, ARCHITECTURE and CONTRIBUTING files. No change in how the mixer sounds or behaves.</p>

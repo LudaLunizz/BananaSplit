@@ -9,6 +9,11 @@ The text of each release is the "What's new" note of that release, kept in
 tag could not be found. Each release's files, checksums and signature are on
 the [releases page](https://github.com/LudaLunizz/BananaSplit/releases).
 
+## [2.9.5] - 2026-11-18
+
+* **Flashbang for the Light switch** (#187): MENU ▸ Mode ▸ Light (and Auto when the system is light) now plays a flashbang: a pixel grenade rolls in, the page turns light when it goes off, then the white flash fades. Going dark has no animation, and with reduced motion on the page switches at once. The animation is [Silvertree2010](https://github.com/Silvertree2010)'s, from [ApolloOffice](https://github.com/Silvertree2010/ApolloOffice), used under its AGPL-3.0 licence: see `NOTICE`, the README and `LICENSE-AGPL-3.0`.
+* **Project files**: `SECURITY.md` (how to report a vulnerability, privately), and a manual-only workflow, "Windows exe", that builds a test copy of the Windows program from any branch (#185).
+
 ## [2.9.4] - 2026-11-16
 
 * **Beta, not pre-alpha** (#174): the README and the website now say beta and explain what that means.
