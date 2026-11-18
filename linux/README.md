@@ -529,6 +529,11 @@ New in 2.6:
 
 The changes in each version, newest first.
 
+### What's new in 2.9.6
+
+* **Full credit for the flashbang** (#191): the licence files (`NOTICE` and `LICENSE-AGPL-3.0`) now come in every package: the `.deb` (with a copyright entry), the Linux `.tar.gz`, the Windows `.zip`, the macOS app and the Flatpak. The macOS app also carries the GPL `LICENSE`. The port is dated (18 November 2026).
+* **Source and credits** (#191): MENU ▸ **Source and credits…** opens the repository's `NOTICE` in your browser: where the source is, and whose work is in BananaSplit (Silvertree2010's flashbang, AGPL-3.0). New API op `source` (needs the token, like `deck`). The mixer sounds and behaves exactly as before.
+
 ### What's new in 2.9.5
 
 * **Flashbang for the Light switch** (#187): MENU ▸ Mode ▸ Light (and Auto when the system is light) now plays a flashbang: a pixel grenade rolls in, the page turns light when it goes off, then the white flash fades. Going dark has no animation, and with reduced motion on the page switches at once. The animation is [Silvertree2010](https://github.com/Silvertree2010)'s, from [ApolloOffice](https://github.com/Silvertree2010/ApolloOffice), used under its AGPL-3.0 licence: see `NOTICE`, the README and `LICENSE-AGPL-3.0`.

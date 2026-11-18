@@ -29,6 +29,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.9.6" date="2026-11-18">
+      <description>
+        <p>The licence files and credit for the flashbang animation (Silvertree2010, AGPL-3.0) come in every package, and MENU shows Source and credits. Nothing changes in how the mixer sounds or behaves.</p>
+      </description>
+    </release>
     <release version="2.9.5" date="2026-11-18">
       <description>
         <p>The Light switch plays a flashbang animation (by Silvertree2010, from ApolloOffice, AGPL-3.0; credited in NOTICE and the README); SECURITY.md and a manual workflow that builds a Windows test exe. Nothing else changes in how the mixer sounds or behaves.</p>
