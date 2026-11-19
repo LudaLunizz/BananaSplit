@@ -1210,16 +1210,18 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
 .fbw { position: absolute; inset: 0; background: #fff; opacity: 0; }
 </style>
 <!-- The black hole of the Dark switch (#199): our own, see `blackhole` in the
-     script below. The ring is a turning conic gradient cut to a band. -->
+     script below. Only transform and opacity move (#203): the GPU does those
+     without painting the page again; no filter or mask is animated. -->
 <style id="blackhole-css">
 .bh { position: fixed; inset: 0; z-index: 100; pointer-events: none; overflow: hidden; }
-.bhr, .bhc { position: absolute; left: 50%; top: 50%; border-radius: 50%; }
-.bhr { width: 240px; height: 240px; margin: -120px 0 0 -120px; filter: blur(1.5px);
-  background: conic-gradient(from 0deg, #fff6e0, #ffb347 18%, #ff6a1a 34%, transparent 46%, #ffd18a 60%, #ff8a2a 76%, transparent 90%, #fff6e0);
-  -webkit-mask: radial-gradient(closest-side, transparent 40%, #000 44%, #000 58%, transparent 76%);
-  mask: radial-gradient(closest-side, transparent 40%, #000 44%, #000 58%, transparent 76%); }
+.bhs { position: fixed; inset: 0; z-index: -1; pointer-events: none; background: #000; opacity: 0; will-change: opacity; }
+.bhr, .bhv, .bhc { position: absolute; left: 50%; top: 50%; border-radius: 50%; will-change: transform, opacity; }
+.bhr, .bhv { width: 240px; height: 240px; margin: -120px 0 0 -120px; }
+.bhr { background: conic-gradient(from 0deg, #fff6e0, #ffb347 18%, #ff6a1a 34%, #2a0d00 46%, #ffd18a 60%, #ff8a2a 76%, #2a0d00 90%, #fff6e0); }
+.bhv { background: radial-gradient(closest-side, transparent 50%, rgba(0,0,0,.55) 72%, #000 96%); }
 .bhc { width: 100px; height: 100px; margin: -50px 0 0 -50px; background: #000;
   box-shadow: 0 0 0 2px rgba(255,214,150,.9), 0 0 28px 8px rgba(255,150,60,.55); }
+html.bh-on body { will-change: transform, opacity; }
 </style>
 <script>
 function useLook(l) {
@@ -2690,43 +2692,64 @@ function applyTheme(t) {
 // shrinks away to show the dark page coming back out. About 2.9 s; `go` runs at
 // about 1.75 s. The page (body) turns around the middle of the window; the hole
 // hangs on <html>, so the body's transform does not move it.
+// Smooth in WebKitGTK (#203): only transform and opacity are animated (no blur,
+// no mask, no background colour), the body gets its own layer while it moves
+// (`bh-on`), and the live frames are held back until the hole is gone
+// (`fxFreeze`), so the spinning page is not painted again 30 times a second.
+let fxFreeze = false;
 const blackhole = (go) => {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) { go(); return; }
+  const root = document.documentElement, body = document.body;
   const o = document.createElement("div");
   o.className = "bh";
-  o.innerHTML = `<div class="bhr"></div><div class="bhc"></div>`;
-  document.documentElement.appendChild(o);
-  const ring = o.firstChild, core = o.lastChild, root = document.documentElement, body = document.body;
+  o.innerHTML = `<div class="bhr"></div><div class="bhv"></div><div class="bhc"></div>`;
+  const space = document.createElement("div");
+  space.className = "bhs";
+  root.appendChild(space);
+  root.appendChild(o);
+  root.classList.add("bh-on");
+  fxFreeze = true;
+  const [ring, veil, core] = o.children;
   const W = innerWidth, H = innerHeight, cover = Math.hypot(W, H) / 100 + 1;
-  const spin = ring.animate([{ rotate: "0deg" }, { rotate: "360deg" }], { duration: 900, iterations: Infinity });
-  // Grow, pull the page in, darken the room behind it.
-  ring.animate([{ scale: 0, opacity: 0 }, { scale: 1, opacity: 1 }], { duration: 900, easing: "cubic-bezier(.2,.8,.3,1)", fill: "forwards" });
-  core.animate([{ scale: 0 }, { scale: 1 }], { duration: 900, easing: "cubic-bezier(.2,.8,.3,1)", fill: "forwards" });
-  root.animate([{ backgroundColor: getComputedStyle(root).backgroundColor }, { backgroundColor: "#000" }], { duration: 700, fill: "forwards" });
+  const open = { duration: 900, easing: "cubic-bezier(.2,.8,.3,1)", fill: "forwards" };
+  const spin = ring.animate([{ transform: "scale(0) rotate(0deg)" }, { transform: "scale(1) rotate(360deg)" }], { duration: 900, easing: "cubic-bezier(.2,.8,.3,1)", fill: "forwards" });
+  let turning = spin.finished.then(() => ring.isConnected && ring.animate([{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }], { duration: 700, iterations: Infinity }));
+  veil.animate([{ transform: "scale(0)" }, { transform: "scale(1)" }], open);
+  core.animate([{ transform: "scale(0)" }, { transform: "scale(1)" }], open);
+  space.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 700, fill: "forwards" });
   body.style.transformOrigin = `${W / 2}px ${H / 2}px`;
   const pull = body.animate([
-    { transform: "none", filter: "none", opacity: 1 },
-    { transform: "rotate(-200deg) scale(.55)", filter: "blur(1px)", opacity: 1, offset: 0.55 },
-    { transform: "rotate(-560deg) scale(.02)", filter: "blur(4px)", opacity: 0 },
+    { transform: "rotate(0deg) scale(1)", opacity: 1 },
+    { transform: "rotate(-200deg) scale(.55)", opacity: 1, offset: 0.55 },
+    { transform: "rotate(-560deg) scale(.02)", opacity: 0 },
   ], { duration: 1400, easing: "cubic-bezier(.55,0,.85,.4)", fill: "forwards" });
   pull.finished.then(() => {
     // The hole swells over everything; behind it the page turns dark.
-    ring.animate([{ scale: 1, opacity: 1 }, { scale: cover * 0.6, opacity: 0 }], { duration: 350, easing: "ease-in", fill: "forwards" });
-    return core.animate([{ scale: 1 }, { scale: cover }], { duration: 350, easing: "cubic-bezier(.6,0,1,.6)", fill: "forwards" }).finished;
+    const swell = { duration: 350, easing: "cubic-bezier(.6,0,1,.6)", fill: "forwards" };
+    turning.then((a) => a && a.cancel());
+    ring.animate([{ transform: "scale(1)", opacity: 1 }, { transform: `scale(${cover * 0.6})`, opacity: 0 }], swell);
+    veil.animate([{ transform: "scale(1)", opacity: 1 }, { transform: `scale(${cover * 0.6})`, opacity: 0 }], swell);
+    return core.animate([{ transform: "scale(1)" }, { transform: `scale(${cover})` }], swell).finished;
   }).then(() => {
     go();
-    spin.cancel();
-    root.getAnimations().forEach((a) => a.cancel());
     pull.cancel();
+    space.remove();
     // The dark page comes back out while the hole shrinks to nothing.
-    body.animate([{ transform: "rotate(30deg) scale(.8)", filter: "blur(2px)" }, { transform: "none", filter: "none" }], { duration: 1150, easing: "cubic-bezier(.2,.7,.3,1)" });
-    core.animate([{ scale: cover }, { scale: 0 }], { duration: 1150, easing: "cubic-bezier(.5,0,.3,1)", fill: "forwards" }).finished.then(() => {
+    body.animate([{ transform: "rotate(30deg) scale(.8)" }, { transform: "rotate(0deg) scale(1)" }], { duration: 1150, easing: "cubic-bezier(.2,.7,.3,1)" });
+    core.animate([{ transform: `scale(${cover})` }, { transform: "scale(0)" }], { duration: 1150, easing: "cubic-bezier(.5,0,.3,1)", fill: "forwards" }).finished.then(() => {
       if (!o.isConnected) return; // cut short by the next switch (endThemeFx)
       o.remove();
       body.style.transformOrigin = "";
+      root.classList.remove("bh-on");
+      thawFrames();
     });
   });
 };
+// Show the newest live frame that came in while the hole played.
+function thawFrames() {
+  fxFreeze = false;
+  if (!document.hidden && hiddenFrame !== null) { const d = hiddenFrame; hiddenFrame = null; showFrame(d); }
+}
 
 // The theme the user asked for last: an animation that ends late switches to
 // it, not to the one it started with.
@@ -2736,10 +2759,12 @@ let themeWant = null;
 // short instead, so the next animation still plays.
 let themeFxPending = false;
 function endThemeFx() {
-  document.querySelectorAll(".fb, .bh").forEach((o) => o.remove());
+  document.querySelectorAll(".fb, .bh, .bhs").forEach((o) => o.remove());
   document.documentElement.getAnimations().forEach((a) => a.cancel());
   document.body.getAnimations().forEach((a) => a.cancel());
   Object.assign(document.body.style, { filter: "", transition: "", transformOrigin: "" });
+  document.documentElement.classList.remove("bh-on");
+  if (fxFreeze) thawFrames();
 }
 document.querySelectorAll("[data-theme-v]").forEach((b) => b.addEventListener("click", () => {
   const t = b.dataset.themeV;
@@ -4112,7 +4137,8 @@ function connect() {
     if (stopped) return;
     $("overlay").classList.remove("show");
     // In the tray (window hidden) or minimized: keep only the newest frame
-    if (document.hidden) { hiddenFrame = ev.data; return; }
+    // ... or while the black hole plays (#203): only the newest is shown after it
+    if (document.hidden || fxFreeze) { hiddenFrame = ev.data; return; }
     showFrame(ev.data);
   };
   // The browser tries again by itself when BananaSplit is not there, but
@@ -4130,7 +4156,7 @@ function showFrame(data) {
   if (S.ch) render(S);
 }
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && hiddenFrame !== null) { const d = hiddenFrame; hiddenFrame = null; showFrame(d); }
+  if (!document.hidden && !fxFreeze && hiddenFrame !== null) { const d = hiddenFrame; hiddenFrame = null; showFrame(d); }
 });
 setInterval(() => {
   if (!stopped && performance.now() - lastMsg > 2500) {

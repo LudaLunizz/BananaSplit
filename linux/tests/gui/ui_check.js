@@ -366,6 +366,10 @@ async function until(pred, what, ms = 4000) {
   await untilPage(async () => (await pageTheme()) === "dark", "page is dark", 4000);
   await untilPage(async () => (await page.locator(".bh").count()) === 0, "the black hole is gone", 5000);
   check(await page.evaluate(() => getComputedStyle(document.body).transform === "none" && document.body.style.transformOrigin === ""), "the page is back in place");
+  // Smooth (#203): nothing of it is left behind, and the live frames run again.
+  check(await page.evaluate(() => !document.querySelector(".bhs") && !document.documentElement.classList.contains("bh-on")), "the black layer and the GPU layer are gone");
+  await strip(3).locator(".fader").dblclick();
+  await until((s) => s.ch[3].gain === 0, "a fader works after the black hole");
   // Dark while the white flash still fades: the flash is cut short and the
   // black hole still plays (the page had already turned light).
   await page.locator("[data-theme-v=light]").click();
