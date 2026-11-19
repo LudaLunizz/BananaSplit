@@ -2721,6 +2721,7 @@ const blackhole = (go) => {
     // The dark page comes back out while the hole shrinks to nothing.
     body.animate([{ transform: "rotate(30deg) scale(.8)", filter: "blur(2px)" }, { transform: "none", filter: "none" }], { duration: 1150, easing: "cubic-bezier(.2,.7,.3,1)" });
     core.animate([{ scale: cover }, { scale: 0 }], { duration: 1150, easing: "cubic-bezier(.5,0,.3,1)", fill: "forwards" }).finished.then(() => {
+      if (!o.isConnected) return; // cut short by the next switch (endThemeFx)
       o.remove();
       body.style.transformOrigin = "";
     });
@@ -2730,20 +2731,32 @@ const blackhole = (go) => {
 // The theme the user asked for last: an animation that ends late switches to
 // it, not to the one it started with.
 let themeWant = null;
+// True from the start of an animation until it switches the page. Only then
+// is a click "busy": the tail (the flash fading, the hole shrinking) is cut
+// short instead, so the next animation still plays.
+let themeFxPending = false;
+function endThemeFx() {
+  document.querySelectorAll(".fb, .bh").forEach((o) => o.remove());
+  document.documentElement.getAnimations().forEach((a) => a.cancel());
+  document.body.getAnimations().forEach((a) => a.cancel());
+  Object.assign(document.body.style, { filter: "", transition: "", transformOrigin: "" });
+}
 document.querySelectorAll("[data-theme-v]").forEach((b) => b.addEventListener("click", () => {
   const t = b.dataset.themeV;
   const now = effectiveTheme(document.documentElement.dataset.theme || "auto");
   const toLight = effectiveTheme(t) === "light" && now !== "light";
   const toDark = effectiveTheme(t) === "dark" && now !== "dark";
-  const busy = document.querySelector(".fb, .bh");
+  const busy = themeFxPending;
   themeWant = t;
   hold("theme", (toLight || toDark) && !busy ? 2500 : 1500);
   send({ op: "theme", v: t }, true);
   if (busy || !(toLight || toDark)) { applyTheme(t); return; }
+  endThemeFx();
   // The page changes when the grenade goes off or the hole closes over it;
   // the buttons say so now.
   document.querySelectorAll("[data-theme-v]").forEach((x) => setPressed(x, x.dataset.themeV === t));
-  (toLight ? flashbang : blackhole)(() => applyTheme(themeWant));
+  themeFxPending = true;
+  (toLight ? flashbang : blackhole)(() => { themeFxPending = false; applyTheme(themeWant); });
 }));
 // The look (theme set): its own stylesheet, so sizes change: lay out again.
 function applyLook(l) {
