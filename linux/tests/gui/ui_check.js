@@ -366,6 +366,16 @@ async function until(pred, what, ms = 4000) {
   await untilPage(async () => (await pageTheme()) === "dark", "page is dark", 4000);
   await untilPage(async () => (await page.locator(".bh").count()) === 0, "the black hole is gone", 5000);
   check(await page.evaluate(() => getComputedStyle(document.body).transform === "none" && document.body.style.transformOrigin === ""), "the page is back in place");
+  // Dark while the white flash still fades: the flash is cut short and the
+  // black hole still plays (the page had already turned light).
+  await page.locator("[data-theme-v=light]").click();
+  await untilPage(async () => (await pageTheme()) === "light", "page is light again", 4000);
+  check((await page.locator(".fb").count()) === 1, "the white flash is still fading");
+  await page.locator("[data-theme-v=dark]").click();
+  check((await page.locator(".fb").count()) === 0 && (await page.locator(".bh").count()) === 1, "Dark during the fade plays the black hole");
+  await untilPage(async () => (await pageTheme()) === "dark", "page is dark after the fade", 4000);
+  await untilPage(async () => (await page.locator(".bh").count()) === 0, "the black hole is gone again", 5000);
+  check(await page.evaluate(() => getComputedStyle(document.body).transform === "none" && getComputedStyle(document.body).filter === "none"), "the page is back in place, no blur left");
   // A click while an animation plays switches at once, and the animation
   // ends on the last choice: Light, then Dark before the grenade goes off.
   await page.locator("[data-theme-v=light]").click();
