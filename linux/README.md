@@ -530,6 +530,10 @@ New in 2.6:
 
 The changes in each version, newest first.
 
+### What's new in 2.9.8
+
+* **Black hole for the Dark switch** (#199): MENU ▸ Mode ▸ Dark (and Auto when the system is dark) now plays a black hole, the counterpart of the flashbang: it opens in the middle of the page, the page spins into it, the hole swells over the window while the page turns dark, then it shrinks away as the dark page comes back out. It is our own animation (nothing new in `NOTICE`), and with reduced motion on the page switches at once. A click on Mode while an animation is still switching the page now ends on your last choice (before, Dark clicked while the grenade rolled ended on Light), and clicking Dark while the white flash is still fading cuts the flash short and plays the hole. Nothing else changes in how the mixer sounds or behaves.
+
 ### What's new in 2.9.7
 
 * **Recording apps keep their bus** (#195, Linux): the counterpart of `app-strips` for apps that record. A new file `app-buses` next to the config holds one rule per line: `<bus> <app>`, or `<bus> <app> @ <what the stream asks for>` when a program has two streams, for example `B2 vesktop @ vencord-screen-share` (Vesktop's screen share goes to B2 and its microphone stays on B1). BananaSplit moves a matching stream to that bus's virtual microphone when it first appears, at the start and when the app opens a new one. Ticking a recording app in a bus's menu writes the rule, unticking removes it, and you can edit the file while BananaSplit runs. A stream you move yourself afterwards is left alone. Nothing else changes in how the mixer sounds or behaves.
