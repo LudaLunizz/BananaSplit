@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "bananasplit"
-version = "2.9.7"
+version = "2.9.8"
 dependencies = [
  "bananasplit-core",
 ]
