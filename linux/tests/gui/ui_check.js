@@ -358,14 +358,30 @@ async function until(pred, what, ms = 4000) {
   await untilPage(async () => (await page.locator(".fb").count()) === 0, "the flashbang is gone", 7000);
   await page.locator("[data-theme-v=dark]").click();
   await until((s) => s.app.theme === "dark", "theme Dark");
-  check((await page.locator(".fb").count()) === 0 && (await pageTheme()) === "dark", "going dark has no flashbang");
-  // Reduced motion: Light switches at once, no grenade.
+  // The black hole (#199): going dark has no flashbang but a black hole; the
+  // page turns dark when the hole closes over it (about 1.75 s), and the
+  // overlay is gone after about 3 s.
+  check((await page.locator(".fb").count()) === 0 && (await page.locator(".bh").count()) === 1, "going dark plays the black hole, no flashbang");
+  check((await pageTheme()) === "light", "the page stays light while the hole opens");
+  await untilPage(async () => (await pageTheme()) === "dark", "page is dark", 4000);
+  await untilPage(async () => (await page.locator(".bh").count()) === 0, "the black hole is gone", 5000);
+  check(await page.evaluate(() => getComputedStyle(document.body).transform === "none" && document.body.style.transformOrigin === ""), "the page is back in place");
+  // A click while an animation plays switches at once, and the animation
+  // ends on the last choice: Light, then Dark before the grenade goes off.
+  await page.locator("[data-theme-v=light]").click();
+  await page.locator("[data-theme-v=dark]").click();
+  await until((s) => s.app.theme === "dark", "Dark during the flashbang");
+  await untilPage(async () => (await page.locator(".fb").count()) === 0, "the flashbang is gone again", 7000);
+  check((await pageTheme()) === "dark", "the flashbang ends on Dark, the last choice");
+  // Reduced motion: Light and Dark switch at once, no grenade, no hole.
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.locator("[data-theme-v=light]").click();
   await untilPage(async () => (await pageTheme()) === "light", "reduced motion: page is light at once", 800);
   check((await page.locator(".fb").count()) === 0, "reduced motion: no flashbang");
   await page.locator("[data-theme-v=dark]").click();
   await until((s) => s.app.theme === "dark", "theme Dark again");
+  await untilPage(async () => (await pageTheme()) === "dark", "reduced motion: page is dark at once", 800);
+  check((await page.locator(".bh").count()) === 0, "reduced motion: no black hole");
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.locator("#zoomin").click();
   await until((s) => s.app.zoom === 1.1, "zoom +");
