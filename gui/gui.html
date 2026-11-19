@@ -1209,6 +1209,18 @@ html:not([data-platform]) [data-only]:not([data-only~="linux"]) { display: none 
 .fbg { position: absolute; left: 0; top: 0; width: 56px; height: 104px; margin: -52px 0 0 -28px; image-rendering: pixelated; filter: drop-shadow(0 6px 6px rgba(0,0,0,.45)); }
 .fbw { position: absolute; inset: 0; background: #fff; opacity: 0; }
 </style>
+<!-- The black hole of the Dark switch (#199): our own, see `blackhole` in the
+     script below. The ring is a turning conic gradient cut to a band. -->
+<style id="blackhole-css">
+.bh { position: fixed; inset: 0; z-index: 100; pointer-events: none; overflow: hidden; }
+.bhr, .bhc { position: absolute; left: 50%; top: 50%; border-radius: 50%; }
+.bhr { width: 240px; height: 240px; margin: -120px 0 0 -120px; filter: blur(1.5px);
+  background: conic-gradient(from 0deg, #fff6e0, #ffb347 18%, #ff6a1a 34%, transparent 46%, #ffd18a 60%, #ff8a2a 76%, transparent 90%, #fff6e0);
+  -webkit-mask: radial-gradient(closest-side, transparent 40%, #000 44%, #000 58%, transparent 76%);
+  mask: radial-gradient(closest-side, transparent 40%, #000 44%, #000 58%, transparent 76%); }
+.bhc { width: 100px; height: 100px; margin: -50px 0 0 -50px; background: #000;
+  box-shadow: 0 0 0 2px rgba(255,214,150,.9), 0 0 28px 8px rgba(255,150,60,.55); }
+</style>
 <script>
 function useLook(l) {
   if (!document.querySelector('style[data-look="' + l + '"]')) l = "classic";
@@ -2670,16 +2682,68 @@ function applyTheme(t) {
   document.querySelectorAll("[data-theme-v]").forEach((b) => setPressed(b, b.dataset.themeV === t));
   drawWave();
 }
+
+// ---- the black hole ------------------------------------------------------------
+// Our own (#199), the Dark switch's answer to the flashbang: a black hole opens
+// in the middle, the page spins into it while the room goes black, the hole
+// swells over the whole window, the page turns dark (`go`), and the hole
+// shrinks away to show the dark page coming back out. About 2.9 s; `go` runs at
+// about 1.75 s. The page (body) turns around the middle of the window; the hole
+// hangs on <html>, so the body's transform does not move it.
+const blackhole = (go) => {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { go(); return; }
+  const o = document.createElement("div");
+  o.className = "bh";
+  o.innerHTML = `<div class="bhr"></div><div class="bhc"></div>`;
+  document.documentElement.appendChild(o);
+  const ring = o.firstChild, core = o.lastChild, root = document.documentElement, body = document.body;
+  const W = innerWidth, H = innerHeight, cover = Math.hypot(W, H) / 100 + 1;
+  const spin = ring.animate([{ rotate: "0deg" }, { rotate: "360deg" }], { duration: 900, iterations: Infinity });
+  // Grow, pull the page in, darken the room behind it.
+  ring.animate([{ scale: 0, opacity: 0 }, { scale: 1, opacity: 1 }], { duration: 900, easing: "cubic-bezier(.2,.8,.3,1)", fill: "forwards" });
+  core.animate([{ scale: 0 }, { scale: 1 }], { duration: 900, easing: "cubic-bezier(.2,.8,.3,1)", fill: "forwards" });
+  root.animate([{ backgroundColor: getComputedStyle(root).backgroundColor }, { backgroundColor: "#000" }], { duration: 700, fill: "forwards" });
+  body.style.transformOrigin = `${W / 2}px ${H / 2}px`;
+  const pull = body.animate([
+    { transform: "none", filter: "none", opacity: 1 },
+    { transform: "rotate(-200deg) scale(.55)", filter: "blur(1px)", opacity: 1, offset: 0.55 },
+    { transform: "rotate(-560deg) scale(.02)", filter: "blur(4px)", opacity: 0 },
+  ], { duration: 1400, easing: "cubic-bezier(.55,0,.85,.4)", fill: "forwards" });
+  pull.finished.then(() => {
+    // The hole swells over everything; behind it the page turns dark.
+    ring.animate([{ scale: 1, opacity: 1 }, { scale: cover * 0.6, opacity: 0 }], { duration: 350, easing: "ease-in", fill: "forwards" });
+    return core.animate([{ scale: 1 }, { scale: cover }], { duration: 350, easing: "cubic-bezier(.6,0,1,.6)", fill: "forwards" }).finished;
+  }).then(() => {
+    go();
+    spin.cancel();
+    root.getAnimations().forEach((a) => a.cancel());
+    pull.cancel();
+    // The dark page comes back out while the hole shrinks to nothing.
+    body.animate([{ transform: "rotate(30deg) scale(.8)", filter: "blur(2px)" }, { transform: "none", filter: "none" }], { duration: 1150, easing: "cubic-bezier(.2,.7,.3,1)" });
+    core.animate([{ scale: cover }, { scale: 0 }], { duration: 1150, easing: "cubic-bezier(.5,0,.3,1)", fill: "forwards" }).finished.then(() => {
+      o.remove();
+      body.style.transformOrigin = "";
+    });
+  });
+};
+
+// The theme the user asked for last: an animation that ends late switches to
+// it, not to the one it started with.
+let themeWant = null;
 document.querySelectorAll("[data-theme-v]").forEach((b) => b.addEventListener("click", () => {
   const t = b.dataset.themeV;
-  const toLight = effectiveTheme(t) === "light" && effectiveTheme(document.documentElement.dataset.theme || "auto") !== "light";
-  hold("theme", toLight ? 2500 : 1500);
+  const now = effectiveTheme(document.documentElement.dataset.theme || "auto");
+  const toLight = effectiveTheme(t) === "light" && now !== "light";
+  const toDark = effectiveTheme(t) === "dark" && now !== "dark";
+  const busy = document.querySelector(".fb, .bh");
+  themeWant = t;
+  hold("theme", (toLight || toDark) && !busy ? 2500 : 1500);
   send({ op: "theme", v: t }, true);
-  if (toLight) {
-    // The page turns light when the grenade goes off; the buttons say so now.
-    document.querySelectorAll("[data-theme-v]").forEach((x) => setPressed(x, x.dataset.themeV === t));
-    flashbang(() => applyTheme(t));
-  } else applyTheme(t);
+  if (busy || !(toLight || toDark)) { applyTheme(t); return; }
+  // The page changes when the grenade goes off or the hole closes over it;
+  // the buttons say so now.
+  document.querySelectorAll("[data-theme-v]").forEach((x) => setPressed(x, x.dataset.themeV === t));
+  (toLight ? flashbang : blackhole)(() => applyTheme(themeWant));
 }));
 // The look (theme set): its own stylesheet, so sizes change: lay out again.
 function applyLook(l) {
