@@ -29,6 +29,11 @@
     <category>Audio</category>
   </categories>
   <releases>
+    <release version="2.9.9" date="2026-11-20">
+      <description>
+        <p>The black hole of the Dark switch is smooth now: it looks the same but no longer stutters. Nothing else changes in how the mixer sounds or behaves.</p>
+      </description>
+    </release>
     <release version="2.9.8" date="2026-11-19">
       <description>
         <p>Turning the page dark plays a black hole, the counterpart of the flashbang, and the theme always ends on your last click. Nothing else changes in how the mixer sounds or behaves.</p>

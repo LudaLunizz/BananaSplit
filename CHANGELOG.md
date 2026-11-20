@@ -9,6 +9,10 @@ The text of each release is the "What's new" note of that release, kept in
 tag could not be found. Each release's files, checksums and signature are on
 the [releases page](https://github.com/LudaLunizz/BananaSplit/releases).
 
+## [2.9.9] - 2026-11-20
+
+* **Smoother black hole** (#203): the Dark switch's black hole stuttered in the app window. It now only moves and fades layers, which the graphics card does without painting the page again: no blur, the room darkens with a black layer instead of a colour change, and the meters wait until the hole is gone. It looks the same. Nothing else changes in how the mixer sounds or behaves.
+
 ## [2.9.8] - 2026-11-19
 
 * **Black hole for the Dark switch** (#199): MENU ▸ Mode ▸ Dark (and Auto when the system is dark) now plays a black hole, the counterpart of the flashbang: it opens in the middle of the page, the page spins into it, the hole swells over the window while the page turns dark, then it shrinks away as the dark page comes back out. It is our own animation (nothing new in `NOTICE`), and with reduced motion on the page switches at once. A click on Mode while an animation is still switching the page now ends on your last choice (before, Dark clicked while the grenade rolled ended on Light), and clicking Dark while the white flash is still fading cuts the flash short and plays the hole. Nothing else changes in how the mixer sounds or behaves.
