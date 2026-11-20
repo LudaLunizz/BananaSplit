@@ -370,6 +370,7 @@ async function until(pred, what, ms = 4000) {
   check(await page.evaluate(() => !document.querySelector(".bhs") && !document.documentElement.classList.contains("bh-on")), "the black layer and the GPU layer are gone");
   await strip(3).locator(".fader").dblclick();
   await until((s) => s.ch[3].gain === 0, "a fader works after the black hole");
+  await page.locator("#menubtn").click(); // the fader click closed the menu
   // Dark while the white flash still fades: the flash is cut short and the
   // black hole still plays (the page had already turned light).
   await page.locator("[data-theme-v=light]").click();
